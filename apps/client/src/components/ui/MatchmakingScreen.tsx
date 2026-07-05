@@ -220,7 +220,7 @@ export function MatchmakingScreen() {
   };
 
   return (
-    <div className="menu-screen bg-strike-bg">
+    <div className="matchmaking-screen menu-screen bg-strike-bg">
       <LobbyBackdrop />
 
       <div
@@ -231,23 +231,23 @@ export function MatchmakingScreen() {
       />
       <div className="absolute inset-0 pattern-grid opacity-20" />
 
-      <main className="relative z-10 flex h-full items-center justify-center px-5">
-        <section className="w-full max-w-xl text-center">
+      <main className="matchmaking-main relative z-10 flex h-full items-center justify-center px-5">
+        <section className="matchmaking-panel w-full max-w-xl text-center">
           <MatchmakingTeammateRow teammates={matchmakingTeammates} />
-          <p className="mb-3 font-body text-xs uppercase tracking-[0.32em] text-orange-200/70">
+          <p className="matchmaking-kicker mb-3 font-body text-xs uppercase tracking-[0.32em] text-orange-200/70">
             {matchmakingLabel}
           </p>
-          <h1 className="font-display text-4xl leading-none text-white sm:text-5xl lg:text-6xl">
+          <h1 className="matchmaking-title font-display text-4xl leading-none text-white sm:text-5xl lg:text-6xl">
             MATCHMAKING
           </h1>
-          <p className="mx-auto mt-4 max-w-md font-body text-sm leading-relaxed text-white/50 sm:text-base">
+          <p className="matchmaking-copy mx-auto mt-4 max-w-md font-body text-sm leading-relaxed text-white/50 sm:text-base">
             {capacityBlocked
               ? 'Servers are full. Your squad will launch when a match frees space.'
               : isRanked
               ? `${playerName ? `${playerName}, ` : ''}token holding verified. Building a ranked Battle Royal roster.`
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+          <div className="matchmaking-rank-row mt-5 flex flex-wrap items-center justify-center gap-2">
             <RankIcon rank={currentRank} size={30} labelled />
             <span className="font-body text-xs uppercase tracking-wider text-white/40">
               Searching near {searchLabel} +/-{displayedRankSearchDistance}
@@ -255,30 +255,30 @@ export function MatchmakingScreen() {
           </div>
 
           {showBotFillCountdown && (
-            <div className="mx-auto mt-6 flex min-h-16 max-w-sm items-center justify-between gap-4 border border-orange-300/20 bg-black/35 px-4 py-3 text-left shadow-[0_0_24px_rgba(251,146,60,0.10)] backdrop-blur-sm">
+            <div className="matchmaking-countdown-panel mx-auto mt-6 flex min-h-16 max-w-sm items-center justify-between gap-4 border border-orange-300/20 bg-black/35 px-4 py-3 text-left shadow-[0_0_24px_rgba(251,146,60,0.10)] backdrop-blur-sm">
               <div className="min-w-0">
-                <p className="font-body text-xs uppercase tracking-[0.22em] text-orange-200/60">
+                <p className="matchmaking-panel-kicker font-body text-xs uppercase tracking-[0.22em] text-orange-200/60">
                   {isRanked ? 'Automatic fill' : 'Bot fill'}
                 </p>
-                <p className="mt-1 font-body text-xs text-white/40">
+                <p className="matchmaking-panel-copy mt-1 font-body text-xs text-white/40">
                   {isRanked ? 'Completing the BR roster' : 'Waiting for players first'}
                 </p>
               </div>
-              <span className="min-w-20 text-right font-display text-2xl leading-none text-orange-100 tabular-nums">
+              <span className="matchmaking-countdown-value min-w-20 text-right font-display text-2xl leading-none text-orange-100 tabular-nums">
                 {formatCountdown(botFillCountdownSeconds)}
               </span>
             </div>
           )}
 
           {isRanked && (
-            <div className="mx-auto mt-7 max-w-md border border-amber-300/18 bg-black/35 p-4 text-left backdrop-blur-sm">
+            <div className="matchmaking-access-panel mx-auto mt-7 max-w-md border border-amber-300/18 bg-black/35 p-4 text-left backdrop-blur-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-body text-xs uppercase tracking-[0.22em] text-amber-200/55">Access</p>
-                  <p className="mt-1 font-display text-2xl text-amber-100">
+                  <p className="matchmaking-panel-kicker font-body text-xs uppercase tracking-[0.22em] text-amber-200/55">Access</p>
+                  <p className="matchmaking-access-title mt-1 font-display text-2xl text-amber-100">
                     {RANKED_TOKEN_HOLD_LABEL}
                   </p>
-                  <p className="mt-1 font-body text-xs text-white/35">Holding requirement verified</p>
+                  <p className="matchmaking-panel-copy mt-1 font-body text-xs text-white/35">Holding requirement verified</p>
                 </div>
                 <span className="border border-white/10 bg-white/5 px-2.5 py-1 font-display text-xs uppercase text-white/70">
                   queued
@@ -287,8 +287,8 @@ export function MatchmakingScreen() {
             </div>
           )}
 
-          <div className="mt-10">
-            <div className="mb-4 flex items-center justify-between font-display text-sm text-white/60">
+          <div className="matchmaking-slots-section mt-10">
+            <div className="matchmaking-slots-header mb-4 flex items-center justify-between font-display text-sm text-white/60">
               <span>{isRanked ? 'PLAYERS QUEUED' : 'PLAYERS FOUND'}</span>
               {isRanked && provisionalHumanCount > 0 && (
                 <span>{provisionalHumanCount} joining</span>
@@ -296,7 +296,7 @@ export function MatchmakingScreen() {
             </div>
 
             <div
-              className="grid gap-2"
+              className="matchmaking-slot-grid grid gap-2"
               style={{ gridTemplateColumns: `repeat(${slotColumnCount}, minmax(0, 1fr))` }}
             >
               {Array.from({ length: requiredPlayers }, (_, index) => {
@@ -305,7 +305,7 @@ export function MatchmakingScreen() {
                 return (
                   <div
                     key={index}
-                    className={`relative h-3 overflow-hidden rounded-full border transition-colors ${
+                    className={`matchmaking-slot relative h-3 overflow-hidden rounded-full border transition-colors ${
                       filled
                         ? 'border-orange-300/80 bg-orange-400 shadow-[0_0_18px_rgba(251,146,60,0.55)]'
                         : isSearchingSlot
@@ -322,11 +322,11 @@ export function MatchmakingScreen() {
             </div>
           </div>
 
-          <div className="mt-10 flex justify-center">
+          <div className="matchmaking-cancel-wrap mt-10 flex justify-center">
             <button
               type="button"
               onClick={handleCancel}
-              className="rounded-xl border border-white/10 bg-white/5 px-8 py-3 font-display text-sm text-white/70 transition hover:border-white/25 hover:bg-white/10 hover:text-white"
+              className="matchmaking-cancel-button rounded-xl border border-white/10 bg-white/5 px-8 py-3 font-display text-sm text-white/70 transition hover:border-white/25 hover:bg-white/10 hover:text-white"
             >
               CANCEL
             </button>
@@ -334,7 +334,7 @@ export function MatchmakingScreen() {
         </section>
       </main>
 
-      <div className="absolute inset-x-0 bottom-6 z-10 flex justify-center px-5">
+      <div className="matchmaking-queue-count absolute inset-x-0 bottom-6 z-10 flex justify-center px-5">
         <p className="font-display text-sm uppercase tracking-[0.22em] text-white/65">
           {displayedQueueCount} {queuePlayerLabel} in queue
         </p>
@@ -345,7 +345,7 @@ export function MatchmakingScreen() {
 
 function MatchmakingTeammateRow({ teammates }: { teammates: MatchmakingTeammate[] }) {
   return (
-    <div className="mb-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2" aria-label="Matchmaking teammates">
+    <div className="matchmaking-teammate-row mb-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2" aria-label="Matchmaking teammates">
       {teammates.map((teammate) => (
         <div key={teammate.id} className="flex min-w-0 items-center gap-2.5">
           <RankIcon rank={teammate.rank} size={24} labelled />

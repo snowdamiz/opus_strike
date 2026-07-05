@@ -95,7 +95,7 @@ const REMOTE_FONT_HOSTS = new Set([
 const FONT_FILE_EXTENSION_PATTERN = /\.(?:eot|otf|ttf|woff|woff2)$/i;
 const RECORDING_PLAYBACK_BOOT_TIMEOUT_MS = 30_000;
 const RECORDING_PLAYBACK_READY_TIMEOUT_MS = 120_000;
-const RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS = 120_000;
+const RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS = 45_000;
 
 // Playwright screenshots wait for document.fonts.ready; stalled web fonts can block every rendered frame.
 export function shouldAbortRecordingRenderRequest(input: {
@@ -370,6 +370,34 @@ async function writeBufferToStream(stream: NodeJS.WritableStream, buffer: Buffer
   });
 }
 
+export async function captureRecordingFrame(input: {
+  page: RenderPage;
+  frame: number;
+  recordingTimeMs: number;
+  previousFrame: Buffer | null;
+}): Promise<Buffer> {
+  await input.page.evaluate(async (timeMs) => {
+    await (window as RecordingBrowserWindow).__voxelRecording?.stepTo(timeMs);
+  }, input.recordingTimeMs);
+
+  try {
+    return await input.page.screenshot({
+      type: 'png',
+      animations: 'allow',
+      timeout: RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (!input.previousFrame) throw error;
+
+    console.warn('[recording-render] Reusing previous frame after screenshot failure', {
+      frame: input.frame,
+      recordingTimeMs: input.recordingTimeMs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return input.previousFrame;
+  }
+}
+
 async function renderFrames(input: {
   page: RenderPage;
   outputPath: string;
@@ -390,16 +418,16 @@ async function renderFrames(input: {
   ], { stdio: ['pipe', 'inherit', 'inherit'] });
 
   const frameCount = Math.max(1, Math.ceil((input.durationMs / 1000) * input.fps));
+  let previousFrame: Buffer | null = null;
   for (let frame = 0; frame < frameCount; frame++) {
     const recordingTimeMs = Math.min(input.durationMs, Math.round((frame / input.fps) * 1000));
-    await input.page.evaluate(async (timeMs) => {
-      await (window as RecordingBrowserWindow).__voxelRecording?.stepTo(timeMs);
-    }, recordingTimeMs);
-    const screenshot = await input.page.screenshot({
-      type: 'png',
-      animations: 'disabled',
-      timeout: RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS,
+    const screenshot = await captureRecordingFrame({
+      page: input.page,
+      frame,
+      recordingTimeMs,
+      previousFrame,
     });
+    previousFrame = screenshot;
     await writeBufferToStream(ffmpeg.stdin, screenshot);
   }
   ffmpeg.stdin.end();

@@ -93,27 +93,27 @@ export function MatchLoadingScreen({
   const percent = Math.round(progress);
 
   return (
-    <div className="absolute inset-0 z-overlay overflow-hidden bg-strike-bg">
+    <div className="match-loading-screen absolute inset-0 z-overlay overflow-hidden bg-strike-bg">
       <LobbyBackdrop />
 
-      <main className="absolute inset-0 z-10 flex items-center justify-center px-6">
-        <div className="w-full max-w-2xl">
-          <div className="mb-6 flex items-end justify-between gap-4">
+      <main className="match-loading-main absolute inset-0 z-10 flex items-center justify-center px-6">
+        <div className="match-loading-panel w-full max-w-2xl">
+          <div className="match-loading-header mb-6 flex items-end justify-between gap-4">
             <div className="min-w-0">
-              <p className="font-body text-[11px] uppercase tracking-[0.34em] text-white/35">
+              <p className="match-loading-eyebrow font-body text-[11px] uppercase tracking-[0.34em] text-white/35">
                 {eyebrow}
               </p>
-              <h1 className="mt-2 font-display text-5xl leading-none text-white sm:text-6xl">
+              <h1 className="match-loading-title mt-2 font-display text-5xl leading-none text-white sm:text-6xl">
                 {title}
               </h1>
             </div>
-            <div className="shrink-0 font-mono text-2xl font-semibold tabular-nums text-orange-400 sm:text-3xl">
+            <div className="match-loading-percent shrink-0 font-mono text-2xl font-semibold tabular-nums text-orange-400 sm:text-3xl">
               {percent.toString().padStart(2, '0')}%
             </div>
           </div>
 
           <div
-            className="relative h-4 overflow-hidden rounded-lg border border-white/10 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+            className="match-loading-progress relative h-4 overflow-hidden rounded-lg border border-white/10 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
             role="progressbar"
             aria-label={ariaLabel}
             aria-valuemin={0}
@@ -131,14 +131,14 @@ export function MatchLoadingScreen({
             <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent" />
           </div>
 
-          <div className="mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
+          <div className="match-loading-track mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
             <span>{trackStartLabel}</span>
             <span className="min-w-0 truncate text-center">{statusLabel}</span>
             <span>{trackEndLabel}</span>
           </div>
 
           {stages?.length ? (
-            <div className="mt-6 grid gap-2 sm:grid-cols-3">
+            <div className="match-loading-stages mt-6 grid gap-2 sm:grid-cols-3">
               {stages.map((stage) => {
                 const isActive = stage.id === activeStage?.id && !stage.done;
                 const stageProgress = stage.done
@@ -147,17 +147,17 @@ export function MatchLoadingScreen({
                 return (
                   <div
                     key={stage.id}
-                    className={`border border-white/10 bg-black/35 px-3 py-2 ${isActive ? 'text-white' : 'text-white/40'}`}
+                    className={`match-loading-stage border border-white/10 bg-black/35 px-3 py-2 ${isActive ? 'text-white' : 'text-white/40'}`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <span className="min-w-0 truncate font-body text-[10px] uppercase tracking-[0.22em]">
+                      <span className="match-loading-stage-label min-w-0 truncate font-body text-[10px] uppercase tracking-[0.22em]">
                         {stage.label}
                       </span>
-                      <span className="shrink-0 font-mono text-[10px] tabular-nums">
+                      <span className="match-loading-stage-value shrink-0 font-mono text-[10px] tabular-nums">
                         {stage.done ? 'OK' : `${stageProgress}%`}
                       </span>
                     </div>
-                    <div className="mt-2 h-1 overflow-hidden bg-white/10">
+                    <div className="match-loading-stage-progress mt-2 h-1 overflow-hidden bg-white/10">
                       <div
                         className={`h-full ${stage.done ? 'bg-cyan-300' : isActive ? 'bg-orange-400' : 'bg-white/25'}`}
                         style={{ width: `${stage.done ? 100 : stageProgress}%` }}
@@ -170,11 +170,11 @@ export function MatchLoadingScreen({
           ) : null}
 
           {actionLabel && onAction ? (
-            <div className="mt-7 flex justify-center">
+            <div className="match-loading-action mt-7 flex justify-center">
               <button
                 type="button"
                 onClick={onAction}
-                className="inline-flex h-10 items-center gap-2 border border-white/15 bg-black/45 px-4 font-display text-xs uppercase tracking-[0.18em] text-white/80 shadow-[0_12px_30px_rgba(0,0,0,0.3)] transition hover:border-orange-300/70 hover:bg-orange-500/15 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
+                className="match-loading-action-button inline-flex h-10 items-center gap-2 border border-white/15 bg-black/45 px-4 font-display text-xs uppercase tracking-[0.18em] text-white/80 shadow-[0_12px_30px_rgba(0,0,0,0.3)] transition hover:border-orange-300/70 hover:bg-orange-500/15 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
               >
                 <LogOut className="h-4 w-4" aria-hidden="true" />
                 <span>{actionLabel}</span>

@@ -47,8 +47,8 @@ export function GameDialog({
   const titleId = useId();
 
   return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,1.8vw,1.75rem)]">
-      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
+    <div className="game-dialog-overlay fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,1.8vw,1.75rem)]">
+      <div className="game-dialog-scrim absolute inset-0 bg-black/80" onClick={onClose} />
 
       <section
         role="dialog"
@@ -61,15 +61,15 @@ export function GameDialog({
         )}
         style={style}
       >
-        <header className="flex items-center justify-between gap-4 px-[clamp(1.125rem,1.45vw,1.5rem)] py-[clamp(0.75rem,1vw,1rem)] border-b border-white/5">
+        <header className="game-dialog-header flex items-center justify-between gap-4 px-[clamp(1.125rem,1.45vw,1.5rem)] py-[clamp(0.75rem,1vw,1rem)] border-b border-white/5">
           <div className="flex min-w-0 items-center gap-[clamp(0.75rem,1vw,1rem)]">
             {icon && (
-              <div className={cn('w-[clamp(2rem,1.75vw,2.25rem)] h-[clamp(2rem,1.75vw,2.25rem)] rounded-lg flex shrink-0 items-center justify-center [&_svg]:h-[clamp(1rem,0.9vw,1.125rem)] [&_svg]:w-[clamp(1rem,0.9vw,1.125rem)]', iconClassName)}>
+              <div className={cn('game-dialog-icon w-[clamp(2rem,1.75vw,2.25rem)] h-[clamp(2rem,1.75vw,2.25rem)] rounded-lg flex shrink-0 items-center justify-center [&_svg]:h-[clamp(1rem,0.9vw,1.125rem)] [&_svg]:w-[clamp(1rem,0.9vw,1.125rem)]', iconClassName)}>
                 {icon}
               </div>
             )}
             <div className="min-w-0">
-              <h2 id={titleId} className="font-display text-lg text-white truncate">
+              <h2 id={titleId} className="game-dialog-title font-display text-lg text-white truncate">
                 {title}
               </h2>
             </div>
@@ -79,7 +79,7 @@ export function GameDialog({
             <button
               type="button"
               onClick={onClose}
-              className="w-[clamp(2rem,1.75vw,2.25rem)] h-[clamp(2rem,1.75vw,2.25rem)] rounded-lg bg-white/5 flex shrink-0 items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
+              className="game-dialog-close w-[clamp(2rem,1.75vw,2.25rem)] h-[clamp(2rem,1.75vw,2.25rem)] rounded-lg bg-white/5 flex shrink-0 items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
               aria-label={closeLabel}
             >
               <svg className="w-[clamp(1rem,0.9vw,1.125rem)] h-[clamp(1rem,0.9vw,1.125rem)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -1074,8 +1074,8 @@ function BattleRoyalLobbyGrid({
   pickedHeroIdsByTeam,
 }: BattleRoyalLobbyGridProps) {
   return (
-    <div className="menu-content-wide flex h-full min-h-0 flex-col gap-3 px-2 py-2 xl:gap-4">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/25 px-3 py-2 backdrop-blur-xl">
+    <div className="battle-royal-lobby-grid menu-content-wide flex h-full min-h-0 flex-col gap-3 px-2 py-2 xl:gap-4">
+      <div className="battle-royal-lobby-summary flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/25 px-3 py-2 backdrop-blur-xl">
         <div className="min-w-0">
           <p className="font-body text-[10px] uppercase tracking-widest text-white/35">Battle Royal Squads</p>
           <p className="mt-1 font-display text-lg leading-none text-white">
@@ -1084,15 +1084,15 @@ function BattleRoyalLobbyGrid({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="battle-royal-lobby-scroll min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="battle-royal-lobby-teams grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
           {teamEntries.map((entry) => {
             const faction = factionFromCatalog(entry.id);
             const players = teamPlayers.get(entry.id) ?? [];
             return (
               <section
                 key={entry.id}
-                className="min-h-[15rem] rounded-lg border border-white/10 bg-black/20 p-2 backdrop-blur-xl"
+                className="battle-royal-lobby-team-card min-h-[15rem] rounded-lg border border-white/10 bg-black/20 p-2 backdrop-blur-xl"
                 style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 28px ${faction.primaryColor}10` }}
               >
                 <FactionHeader

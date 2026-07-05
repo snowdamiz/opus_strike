@@ -79,7 +79,8 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
         size="sm"
         onClose={handleResume}
         showCloseButton={false}
-        bodyClassName="p-4 space-y-2"
+        panelClassName="pause-menu-dialog"
+        bodyClassName="pause-menu-body p-4 space-y-2"
       >
         <MenuButton onClick={handleResume} primary>
           RESUME
@@ -93,7 +94,7 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
           {unstuckRequested ? 'UNSTUCK REQUESTED' : 'UNSTUCK'}
         </MenuButton>
 
-        <div className="pt-2 border-t border-strike-border">
+        <div className="pause-menu-separator pt-2 border-t border-strike-border">
           <MenuButton onClick={handleLeaveGame} danger>
             LEAVE GAME
           </MenuButton>
@@ -101,8 +102,8 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
       </GameDialog>
 
       {/* Player info */}
-      <div className="fixed bottom-4 left-4 z-modal">
-        <div className="px-4 py-2 bg-strike-surface/90 border border-strike-border rounded-lg backdrop-blur-sm">
+      <div className="pause-player-info fixed bottom-4 left-4 z-modal">
+        <div className="pause-player-card px-4 py-2 bg-strike-surface/90 border border-strike-border rounded-lg backdrop-blur-sm">
           <span className="font-body text-white/40 text-sm">Playing as </span>
           <span className="font-display text-orange-400">{playerName}</span>
         </div>
@@ -124,7 +125,7 @@ interface MenuButtonProps {
 
 function MenuButton({ children, onClick, primary, danger, disabled = false }: MenuButtonProps) {
   let className = `
-    w-full py-3 font-display text-lg rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45
+    pause-menu-button w-full py-3 font-display text-lg rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45
   `;
 
   if (primary) {

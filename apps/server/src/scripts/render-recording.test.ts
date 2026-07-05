@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { shouldAbortRecordingRenderRequest } from './render-recording';
+import { captureRecordingFrame, shouldAbortRecordingRenderRequest } from './render-recording';
 
-function main(): void {
+async function main(): Promise<void> {
   assert.equal(
     shouldAbortRecordingRenderRequest({
       resourceType: 'stylesheet',
@@ -45,7 +45,44 @@ function main(): void {
     false
   );
 
+  const previousFrame = Buffer.from('previous-frame');
+  let evaluatedTimeMs: number | null = null;
+  const reusedFrame = await captureRecordingFrame({
+    frame: 12,
+    recordingTimeMs: 200,
+    previousFrame,
+    page: {
+      evaluate: async (_pageFunction: (...args: any[]) => unknown, arg?: unknown) => {
+        evaluatedTimeMs = typeof arg === 'number' ? arg : null;
+        return undefined;
+      },
+      screenshot: async () => {
+        throw new Error('page.screenshot: Timeout 45000ms exceeded');
+      },
+    } as any,
+  });
+  assert.equal(evaluatedTimeMs, 200);
+  assert.equal(reusedFrame, previousFrame);
+
+  await assert.rejects(
+    () => captureRecordingFrame({
+      frame: 0,
+      recordingTimeMs: 0,
+      previousFrame: null,
+      page: {
+        evaluate: async () => undefined,
+        screenshot: async () => {
+          throw new Error('page.screenshot: Timeout 45000ms exceeded');
+        },
+      } as any,
+    }),
+    /Timeout 45000ms exceeded/
+  );
+
   console.log('render recording tests passed');
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
