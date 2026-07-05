@@ -37,7 +37,8 @@ class RecordingPlaybackBus implements GameMessageBus {
 
   constructor(
     readonly id: string,
-    readonly sessionId: string
+    readonly sessionId: string,
+    private readonly onMessageError?: (type: string, error: unknown) => void
   ) {}
 
   onMessage<T = unknown>(type: string, callback: RecordingMessageCallback<T>): void {
@@ -54,7 +55,11 @@ class RecordingPlaybackBus implements GameMessageBus {
     const callbacks = this.callbacks.get(type);
     if (!callbacks) return;
     for (const callback of callbacks) {
-      callback(payload);
+      try {
+        callback(payload);
+      } catch (error) {
+        this.onMessageError?.(type, error);
+      }
     }
   }
 
@@ -204,6 +209,10 @@ function waitForNextFrame(): Promise<void> {
   });
 }
 
+function formatPlaybackError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function startRecordingPlayback(options: RecordingPlaybackStartOptions): Promise<() => void> {
   const manifest = await fetchJson<RecordingManifest>(options.manifestUrl);
   const events = sortRecordingEvents(await fetchNdjsonRows<RecordingEventRow>(options.eventsUrl));
@@ -211,8 +220,6 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
   const hudSubjectPlayerId = getHudSubjectPlayerId(manifest, options.preferredHudSubjectPlayerId);
   const hudSubjectName = getHudSubjectName(manifest, hudSubjectPlayerId);
   const durationMs = getRecordingDurationMs(manifest, events);
-  const bus = new RecordingPlaybackBus(manifest.roomId || manifest.id, hudSubjectPlayerId);
-  const gameRoomRef = { current: bus };
   let eventIndex = 0;
   let currentTimeMs = 0;
   let frameHandle = 0;
@@ -222,8 +229,25 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
   let playbackReadyResolved = false;
   let sceneReadyResolved = false;
   let finishResolved = false;
-  const finishResolvers = new Set<() => void>();
+  let playbackError: string | null = null;
+  let playbackWarningCount = 0;
+  const finishResolvers = new Set<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }>();
   let recordingControls: NonNullable<Window['__voxelRecording']> | null = null;
+
+  const recordPlaybackWarning = (type: string, error: unknown) => {
+    playbackWarningCount += 1;
+    if (recordingControls) {
+      recordingControls.playbackWarningCount = playbackWarningCount;
+    }
+    if (playbackWarningCount <= 10 || playbackWarningCount % 100 === 0) {
+      console.warn(`[recording-playback] ignored ${type} handler error`, error);
+    }
+  };
+  const bus = new RecordingPlaybackBus(manifest.roomId || manifest.id, hudSubjectPlayerId, recordPlaybackWarning);
+  const gameRoomRef = { current: bus };
 
   const playbackStore = useRecordingPlaybackStore.getState();
   playbackStore.setActive({
@@ -247,10 +271,22 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     if (!recordingControls) return;
     recordingControls.currentTimeMs = currentTimeMs;
     recordingControls.progress = durationMs > 0 ? Math.min(1, currentTimeMs / durationMs) : 1;
+    recordingControls.playbackError = playbackError;
+    recordingControls.playbackWarningCount = playbackWarningCount;
     if (currentTimeMs < durationMs) return;
 
     finishResolved = true;
-    for (const resolve of finishResolvers) resolve();
+    for (const { resolve } of finishResolvers) resolve();
+    finishResolvers.clear();
+  };
+
+  const failPlayback = (error: unknown) => {
+    if (finishResolved) return;
+    playbackError = formatPlaybackError(error);
+    if (recordingControls) recordingControls.playbackError = playbackError;
+    pause();
+    const rejection = error instanceof Error ? error : new Error(playbackError);
+    for (const { reject } of finishResolvers) reject(rejection);
     finishResolvers.clear();
   };
 
@@ -274,12 +310,17 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
 
   const stepTo = async (targetTimeMs: number) => {
     if (disposed) return;
-    const normalizedTarget = Math.max(0, Math.min(durationMs, Math.trunc(targetTimeMs)));
-    if (normalizedTarget < currentTimeMs) {
-      resetToStart();
+    try {
+      const normalizedTarget = Math.max(0, Math.min(durationMs, Math.trunc(targetTimeMs)));
+      if (normalizedTarget < currentTimeMs) {
+        resetToStart();
+      }
+      emitThrough(normalizedTarget);
+      await waitForNextFrame();
+    } catch (error) {
+      failPlayback(error);
+      throw error;
     }
-    emitThrough(normalizedTarget);
-    await waitForNextFrame();
   };
 
   const pause = () => {
@@ -294,13 +335,17 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     if (!playing || disposed) return;
     const delta = lastWallTime ? wallTime - lastWallTime : 0;
     lastWallTime = wallTime;
-    void stepTo(currentTimeMs + delta).then(() => {
-      if (currentTimeMs >= durationMs) {
-        pause();
-        return;
-      }
-      frameHandle = window.requestAnimationFrame(playFrame);
-    });
+    void stepTo(currentTimeMs + delta)
+      .then(() => {
+        if (currentTimeMs >= durationMs) {
+          pause();
+          return;
+        }
+        frameHandle = window.requestAnimationFrame(playFrame);
+      })
+      .catch((error) => {
+        failPlayback(error);
+      });
   };
 
   const play = () => {
@@ -312,8 +357,9 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
 
   const waitUntilFinished = () => {
     if (finishResolved || currentTimeMs >= durationMs) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      finishResolvers.add(resolve);
+    if (playbackError) return Promise.reject(new Error(playbackError));
+    return new Promise<void>((resolve, reject) => {
+      finishResolvers.add({ resolve, reject });
     });
   };
   const resolveRecordingReady = () => {
@@ -328,6 +374,8 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     fps: manifest.fps,
     currentTimeMs: 0,
     progress: 0,
+    playbackError: null,
+    playbackWarningCount: 0,
     stepTo,
     play,
     pause,

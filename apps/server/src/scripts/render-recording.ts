@@ -41,9 +41,16 @@ interface LocalPlaybackServer {
 interface RenderPage {
   evaluate<T = unknown>(pageFunction: (...args: any[]) => T | Promise<T>, arg?: unknown): Promise<T>;
   goto(url: string, options?: { waitUntil?: 'networkidle' | 'load' | 'domcontentloaded'; timeout?: number }): Promise<unknown>;
+  on?(event: 'console', handler: (message: RenderConsoleMessage) => void): void;
+  on?(event: 'pageerror', handler: (error: Error) => void): void;
   route(url: string, handler: (route: RenderRoute) => Promise<void> | void): Promise<void>;
   waitForFunction(pageFunction: (...args: any[]) => unknown, arg?: unknown, options?: { timeout?: number }): Promise<unknown>;
   video(): RenderVideo | null;
+}
+
+interface RenderConsoleMessage {
+  type(): string;
+  text(): string;
 }
 
 interface RenderVideo {
@@ -89,6 +96,8 @@ type RecordingBrowserWindow = Window & {
     durationMs: number;
     currentTimeMs: number;
     progress: number;
+    playbackError: string | null;
+    playbackWarningCount: number;
     play: () => void;
     pause: () => void;
     waitUntilFinished: () => Promise<void>;
@@ -127,6 +136,9 @@ const RECORDING_PLAYBACK_BOOT_TIMEOUT_MS = 30_000;
 const RECORDING_PLAYBACK_READY_TIMEOUT_MS = 120_000;
 const RECORDING_RENDER_HEARTBEAT_MS = 5_000;
 const RECORDING_CAPTURE_TIMEOUT_BUFFER_MS = 90_000;
+const RECORDING_CAPTURE_POLL_MS = 1_000;
+const RECORDING_CAPTURE_PROGRESS_READ_TIMEOUT_MS = 3_000;
+const RECORDING_CAPTURE_PROGRESS_STALE_MS = 60_000;
 const RECORDING_TRANSCODE_MIN_TIMEOUT_MS = 120_000;
 const RECORDING_TRANSCODE_TIMEOUT_MULTIPLIER = 2.5;
 
@@ -365,6 +377,17 @@ async function installRenderRequestGuards(page: RenderPage): Promise<void> {
   });
 }
 
+function installRenderPageDiagnostics(page: RenderPage): void {
+  page.on?.('console', (message) => {
+    const type = message.type();
+    if (type !== 'warning' && type !== 'error') return;
+    console.warn(`[recording-render:${type}] ${message.text()}`);
+  });
+  page.on?.('pageerror', (error) => {
+    console.warn(`[recording-render:pageerror] ${error.stack ?? error.message}`);
+  });
+}
+
 function updateRender(summary: RecordingSummary, renderId: string | null, patch: Partial<RecordingRenderArtifact>): RecordingSummary {
   if (!renderId) return summary;
   return {
@@ -473,10 +496,16 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function readRecordingPlaybackProgress(page: Pick<RenderPage, 'evaluate'>): Promise<{
   currentTimeMs: number;
   durationMs: number;
   progress: number;
+  playbackError: string | null;
+  playbackWarningCount: number;
 }> {
   return page.evaluate(() => {
     const recording = (window as RecordingBrowserWindow).__voxelRecording;
@@ -484,6 +513,8 @@ export async function readRecordingPlaybackProgress(page: Pick<RenderPage, 'eval
       currentTimeMs: recording?.currentTimeMs ?? 0,
       durationMs: recording?.durationMs ?? 0,
       progress: recording?.progress ?? 0,
+      playbackError: recording?.playbackError ?? null,
+      playbackWarningCount: recording?.playbackWarningCount ?? 0,
     };
   });
 }
@@ -493,36 +524,76 @@ async function waitForRecordingPlayback(input: {
   durationMs: number;
   onProgress: (progress: number, message: string) => Promise<void>;
 }): Promise<void> {
-  let heartbeatInFlight = false;
-  const heartbeat = setInterval(() => {
-    if (heartbeatInFlight) return;
-    heartbeatInFlight = true;
-    void readRecordingPlaybackProgress(input.page)
-      .then((progress) => input.onProgress(
-        clampProgress(progress.progress || (progress.durationMs > 0 ? progress.currentTimeMs / progress.durationMs : 0)),
-        `Captured ${Math.round(progress.currentTimeMs / 1000)}s of ${Math.round((progress.durationMs || input.durationMs) / 1000)}s`
-      ))
-      .catch(() => {})
-      .finally(() => {
-        heartbeatInFlight = false;
-      });
-  }, RECORDING_RENDER_HEARTBEAT_MS);
-  heartbeat.unref?.();
-
+  const startedAt = Date.now();
+  const deadline = startedAt + captureTimeoutMs(input.durationMs);
+  let lastProgressMs = 0;
+  let lastProgressWallTime = startedAt;
+  let lastHeartbeatTime = 0;
   try {
-    await withTimeout(
-      input.page.evaluate(async () => {
-        const recording = (window as RecordingBrowserWindow).__voxelRecording;
-        if (!recording) throw new Error('Recording playback controls were not initialized');
-        recording.play();
-        await recording.waitUntilFinished();
-      }),
-      captureTimeoutMs(input.durationMs),
-      'Recording viewport capture'
-    );
-    await input.onProgress(1, 'Capture complete');
+    await input.page.evaluate(() => {
+      const recording = (window as RecordingBrowserWindow).__voxelRecording;
+      if (!recording) throw new Error('Recording playback controls were not initialized');
+      recording.play();
+    });
+
+    while (Date.now() <= deadline) {
+      await sleep(RECORDING_CAPTURE_POLL_MS);
+      const now = Date.now();
+      let progress: Awaited<ReturnType<typeof readRecordingPlaybackProgress>>;
+      try {
+        progress = await withTimeout(
+          readRecordingPlaybackProgress(input.page),
+          RECORDING_CAPTURE_PROGRESS_READ_TIMEOUT_MS,
+          'Recording playback progress read'
+        );
+      } catch (error) {
+        if (now - lastProgressWallTime > RECORDING_CAPTURE_PROGRESS_STALE_MS) {
+          throw new Error(
+            `Recording playback stopped responding near ${Math.round(lastProgressMs / 1000)}s: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+        continue;
+      }
+
+      if (progress.playbackError) {
+        throw new Error(`Recording playback failed: ${progress.playbackError}`);
+      }
+
+      const progressDurationMs = progress.durationMs || input.durationMs;
+      const currentTimeMs = Math.max(0, Math.min(progressDurationMs, progress.currentTimeMs));
+      const ratio = clampProgress(progress.progress || (progressDurationMs > 0 ? currentTimeMs / progressDurationMs : 0));
+      if (currentTimeMs > lastProgressMs + 50 || ratio >= 1) {
+        lastProgressMs = currentTimeMs;
+        lastProgressWallTime = now;
+      }
+
+      if (now - lastHeartbeatTime >= RECORDING_RENDER_HEARTBEAT_MS || ratio >= 1) {
+        lastHeartbeatTime = now;
+        const warningSuffix = progress.playbackWarningCount > 0
+          ? ` (${progress.playbackWarningCount} replay warnings)`
+          : '';
+        await input.onProgress(
+          ratio,
+          `Captured ${Math.round(currentTimeMs / 1000)}s of ${Math.round(progressDurationMs / 1000)}s${warningSuffix}`
+        );
+      }
+
+      if (ratio >= 1 || currentTimeMs >= progressDurationMs) {
+        await input.onProgress(1, 'Capture complete');
+        return;
+      }
+
+      if (now - lastProgressWallTime > RECORDING_CAPTURE_PROGRESS_STALE_MS) {
+        throw new Error(
+          `Recording playback stalled at ${Math.round(currentTimeMs / 1000)}s of ${Math.round(progressDurationMs / 1000)}s`
+        );
+      }
+    }
+
+    throw new Error(`Recording viewport capture timed out after ${captureTimeoutMs(input.durationMs)}ms`);
   } finally {
-    clearInterval(heartbeat);
     void input.page.evaluate(() => {
       (window as RecordingBrowserWindow).__voxelRecording?.pause();
     }).catch(() => {});
@@ -734,6 +805,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
     const video = page.video();
     if (!video) throw new Error('Playwright video recorder was not initialized');
 
+    installRenderPageDiagnostics(page);
     await installRenderRequestGuards(page);
     await reportProgress('preparing', 0.03, 'Loading replay');
     await page.goto(playbackUrl, { waitUntil: 'networkidle', timeout: RECORDING_PLAYBACK_BOOT_TIMEOUT_MS });

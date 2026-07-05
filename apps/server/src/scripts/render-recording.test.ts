@@ -50,12 +50,16 @@ async function main(): Promise<void> {
       currentTimeMs: 12_500,
       durationMs: 50_000,
       progress: 0.25,
+      playbackError: null,
+      playbackWarningCount: 2,
     }),
   } as any);
   assert.deepEqual(progress, {
     currentTimeMs: 12_500,
     durationMs: 50_000,
     progress: 0.25,
+    playbackError: null,
+    playbackWarningCount: 2,
   });
 
   console.log('render recording tests passed');

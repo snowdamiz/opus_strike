@@ -11,6 +11,8 @@ declare global {
       fps: number;
       currentTimeMs: number;
       progress: number;
+      playbackError: string | null;
+      playbackWarningCount: number;
       stepTo: (recordingTimeMs: number) => Promise<void>;
       play: () => void;
       pause: () => void;
