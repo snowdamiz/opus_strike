@@ -829,6 +829,10 @@ body,
   touch-action: none;
 }
 
+.mobile-look-zone.is-disabled {
+  pointer-events: none;
+}
+
 .mobile-hud-layout-item {
   position: absolute;
   display: grid;

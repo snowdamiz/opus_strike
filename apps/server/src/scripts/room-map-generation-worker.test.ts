@@ -25,7 +25,8 @@ import { getRoomMapGenerationWorkerSpec } from '../rooms/roomMapGeneration';
     NODE_ENV: 'development',
   });
 
-  assert.equal(worker, null);
+  assert.ok(worker, 'all map profiles should use a worker so generation never blocks the event loop');
+  assert.equal(worker.source, 'tsx');
 }
 
 {

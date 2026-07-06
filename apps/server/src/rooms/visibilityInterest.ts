@@ -67,6 +67,35 @@ interface CachedLineOfSight {
   result: boolean;
   expiresAt: number;
   collisionRevision: number;
+  qfx: number;
+  qfy: number;
+  qfz: number;
+  qtx: number;
+  qty: number;
+  qtz: number;
+}
+
+// FNV-style integer hash over quantized LOS endpoints. Entries verify their
+// stored components before being trusted, so a hash collision only forces a
+// recompute — never a wrong answer.
+function hashLineOfSightKey(
+  collisionRevision: number,
+  qfx: number,
+  qfy: number,
+  qfz: number,
+  qtx: number,
+  qty: number,
+  qtz: number
+): number {
+  let hash = 0x811c9dc5 | 0;
+  hash = Math.imul(hash ^ collisionRevision, 0x01000193);
+  hash = Math.imul(hash ^ qfx, 0x01000193);
+  hash = Math.imul(hash ^ qfy, 0x01000193);
+  hash = Math.imul(hash ^ qfz, 0x01000193);
+  hash = Math.imul(hash ^ qtx, 0x01000193);
+  hash = Math.imul(hash ^ qty, 0x01000193);
+  hash = Math.imul(hash ^ qtz, 0x01000193);
+  return hash | 0;
 }
 
 export interface VisibilityInterestOptions {
@@ -148,7 +177,7 @@ export class VisibilityInterestManager {
   private readonly losQuantizationMeters: number;
   private readonly maxLineOfSightCacheEntries: number;
   private readonly interestCache = new Map<string, Map<string, CachedInterestDecision>>();
-  private readonly lineOfSightCache = new Map<string, CachedLineOfSight>();
+  private readonly lineOfSightCache = new Map<number, CachedLineOfSight>();
   private lastMetrics: VisibilityInterestMetrics = makeEmptyMetrics();
 
   constructor(options: VisibilityInterestOptions = {}) {
@@ -225,11 +254,9 @@ export class VisibilityInterestManager {
 
     const start = performance.now();
     const decision = this.computeRecipientInterest(recipient, target, context, previous);
+    decision.collisionRevision = context.collisionRevision;
     if (recipient) {
-      this.setCachedInterest(recipient.id, target.id, {
-        ...decision,
-        collisionRevision: context.collisionRevision,
-      });
+      this.setCachedInterest(recipient.id, target.id, decision);
     }
     this.recordDecision(decision, performance.now() - start);
     return decision;
@@ -240,7 +267,7 @@ export class VisibilityInterestManager {
     target: VisibilityInterestPlayer,
     context: VisibilityInterestContext,
     previous?: RecipientInterestDecision
-  ): RecipientInterestDecision {
+  ): CachedInterestDecision {
     if (!recipient) {
       return this.visibleDecision('', target.id, context.now, 'self', target.position, previous);
     }
@@ -301,7 +328,7 @@ export class VisibilityInterestManager {
     reason: InterestReason,
     position: Vec3,
     previous?: RecipientInterestDecision
-  ): RecipientInterestDecision {
+  ): CachedInterestDecision {
     return {
       recipientId,
       targetId,
@@ -311,6 +338,7 @@ export class VisibilityInterestManager {
       lastVisibleAt: now,
       lastKnownPosition: cloneVec3(position),
       reason,
+      collisionRevision: 0,
     };
   }
 
@@ -320,7 +348,7 @@ export class VisibilityInterestManager {
     now: number,
     reason: InterestReason,
     previous?: RecipientInterestDecision
-  ): RecipientInterestDecision {
+  ): CachedInterestDecision {
     const lastVisibleAt = previous?.lastVisibleAt ?? 0;
     const lastKnownPosition = previous?.lastKnownPosition ? cloneVec3(previous.lastKnownPosition) : null;
     if (lastVisibleAt > 0 && now - lastVisibleAt <= this.lastKnownTtlMs && lastKnownPosition) {
@@ -333,6 +361,7 @@ export class VisibilityInterestManager {
         lastVisibleAt,
         lastKnownPosition,
         reason: 'last_known',
+        collisionRevision: 0,
       };
     }
 
@@ -345,6 +374,7 @@ export class VisibilityInterestManager {
       lastVisibleAt,
       lastKnownPosition,
       reason,
+      collisionRevision: 0,
     };
   }
 
@@ -362,7 +392,7 @@ export class VisibilityInterestManager {
     targetId: string,
     now: number,
     previous: RecipientInterestDecision
-  ): RecipientInterestDecision {
+  ): CachedInterestDecision {
     return {
       recipientId,
       targetId,
@@ -372,6 +402,7 @@ export class VisibilityInterestManager {
       lastVisibleAt: previous.lastVisibleAt,
       lastKnownPosition: previous.lastKnownPosition ? cloneVec3(previous.lastKnownPosition) : null,
       reason: 'line_of_sight',
+      collisionRevision: 0,
     };
   }
 
@@ -387,26 +418,51 @@ export class VisibilityInterestManager {
   }
 
   private hasCachedLineOfSight(from: Vec3, to: Vec3, context: VisibilityInterestContext): boolean {
-    const key = this.getLineOfSightCacheKey(from, to, context.collisionRevision);
+    const step = this.losQuantizationMeters;
+    const qfx = quantize(from.x, step);
+    const qfy = quantize(from.y, step);
+    const qfz = quantize(from.z, step);
+    const qtx = quantize(to.x, step);
+    const qty = quantize(to.y, step);
+    const qtz = quantize(to.z, step);
+    const key = hashLineOfSightKey(context.collisionRevision, qfx, qfy, qfz, qtx, qty, qtz);
     const cached = this.lineOfSightCache.get(key);
-    if (cached && cached.expiresAt > context.now && cached.collisionRevision === context.collisionRevision) {
+    const cachedMatches =
+      cached !== undefined &&
+      cached.collisionRevision === context.collisionRevision &&
+      cached.qfx === qfx && cached.qfy === qfy && cached.qfz === qfz &&
+      cached.qtx === qtx && cached.qty === qty && cached.qtz === qtz;
+    if (cached && cachedMatches && cached.expiresAt > context.now) {
       return cached.result;
     }
 
     const result = context.hasLineOfSight(from, to);
     this.lastMetrics.losChecks++;
     this.pruneLineOfSightCache(context.now);
-    this.lineOfSightCache.set(key, {
-      result,
-      expiresAt: context.now + this.lineOfSightTtlMs,
-      collisionRevision: context.collisionRevision,
-    });
+    if (cached) {
+      cached.result = result;
+      cached.expiresAt = context.now + this.lineOfSightTtlMs;
+      cached.collisionRevision = context.collisionRevision;
+      cached.qfx = qfx;
+      cached.qfy = qfy;
+      cached.qfz = qfz;
+      cached.qtx = qtx;
+      cached.qty = qty;
+      cached.qtz = qtz;
+    } else {
+      this.lineOfSightCache.set(key, {
+        result,
+        expiresAt: context.now + this.lineOfSightTtlMs,
+        collisionRevision: context.collisionRevision,
+        qfx,
+        qfy,
+        qfz,
+        qtx,
+        qty,
+        qtz,
+      });
+    }
     return result;
-  }
-
-  private getLineOfSightCacheKey(from: Vec3, to: Vec3, collisionRevision: number): string {
-    const step = this.losQuantizationMeters;
-    return `${collisionRevision}:${quantize(from.x, step)}:${quantize(from.y, step)}:${quantize(from.z, step)}:${quantize(to.x, step)}:${quantize(to.y, step)}:${quantize(to.z, step)}`;
   }
 
   private getCachedInterest(recipientId: string, targetId: string): CachedInterestDecision | undefined {
