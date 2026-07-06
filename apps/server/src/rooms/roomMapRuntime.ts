@@ -105,6 +105,27 @@ export class RoomMapRuntime {
     return this.applyMapManifest(manifest);
   }
 
+  /**
+   * Generate a manifest off-thread WITHOUT applying it. Lets callers finish
+   * worker generation for an upcoming map config (e.g. post-game reset seed)
+   * while the current map stays live, then swap synchronously via
+   * applyGeneratedMapManifest — avoiding any window where room state and the
+   * loaded manifest disagree (which would trigger a blocking sync regen).
+   */
+  generateMapManifestAsync(overrides: Partial<RoomMapRuntimeConfig> = {}): Promise<VoxelMapManifest> {
+    const base = this.resolveMapConfig();
+    return generateRoomMapManifest({
+      mapSeed: overrides.mapSeed ?? base.mapSeed,
+      mapThemeId: overrides.mapThemeId !== undefined ? overrides.mapThemeId : base.mapThemeId,
+      mapSize: overrides.mapSize !== undefined ? overrides.mapSize : base.mapSize,
+      mapProfileId: overrides.mapProfileId !== undefined ? overrides.mapProfileId : base.mapProfileId,
+    });
+  }
+
+  applyGeneratedMapManifest(manifest: VoxelMapManifest): VoxelMapManifest {
+    return this.applyMapManifest(manifest);
+  }
+
   async refreshMapAsync(): Promise<VoxelMapManifest> {
     const config = this.resolveMapConfig();
     if (config.pregeneratedMapId) {

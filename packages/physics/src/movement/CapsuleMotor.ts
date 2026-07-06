@@ -181,6 +181,18 @@ const SLIDE_GRADE_SNAP_DISTANCE = STEP_HEIGHT + GROUND_SNAP_DISTANCE;
 const SLIDE_DOWNHILL_MIN_DROP = 0.025;
 const STATIC_AABB_VERTICAL_CACHE_BUCKET = 0.025;
 
+interface StaticAabbCacheEntry {
+  gx0: number;
+  gy0: number;
+  gz0: number;
+  gx1: number;
+  gy1: number;
+  gz1: number;
+  y0: number;
+  y1: number;
+  aabbs: readonly MovementAabb[];
+}
+
 type SlideExitPosture = 'stand' | 'crouch';
 
 interface SlideExitResolution {
@@ -353,53 +365,54 @@ function applySlideExit(
   return nextVelocity;
 }
 
-function capsuleBounds(position: Vec3, height: number, radius: number): MovementCollisionBounds {
-  return {
-    min: {
-      x: position.x - radius,
-      y: feetY(position),
-      z: position.z - radius,
-    },
-    max: {
-      x: position.x + radius,
-      y: feetY(position) + height,
-      z: position.z + radius,
-    },
-  };
+function capsuleBoundsInto(
+  out: MovementCollisionBounds,
+  position: Vec3,
+  height: number,
+  radius: number
+): MovementCollisionBounds {
+  const feet = feetY(position);
+  out.min.x = position.x - radius;
+  out.min.y = feet;
+  out.min.z = position.z - radius;
+  out.max.x = position.x + radius;
+  out.max.y = feet + height;
+  out.max.z = position.z + radius;
+  return out;
 }
 
-function expandBounds(bounds: MovementCollisionBounds, amount: Vec3): MovementCollisionBounds {
-  return {
-    min: {
-      x: bounds.min.x - amount.x,
-      y: bounds.min.y - amount.y,
-      z: bounds.min.z - amount.z,
-    },
-    max: {
-      x: bounds.max.x + amount.x,
-      y: bounds.max.y + amount.y,
-      z: bounds.max.z + amount.z,
-    },
-  };
-}
-
-function sweptCapsuleBounds(position: Vec3, delta: Vec3, height: number, radius: number): MovementCollisionBounds {
-  const start = capsuleBounds(position, height, radius);
+function sweptCapsuleBoundsInto(
+  out: MovementCollisionBounds,
+  position: Vec3,
+  delta: Vec3,
+  height: number,
+  radius: number
+): MovementCollisionBounds {
+  const feet = feetY(position);
   const endX = position.x + delta.x;
-  const endFeetY = feetY(position) + delta.y;
+  const endFeetY = feet + delta.y;
   const endZ = position.z + delta.z;
-  return {
-    min: {
-      x: Math.min(start.min.x, endX - radius),
-      y: Math.min(start.min.y, endFeetY),
-      z: Math.min(start.min.z, endZ - radius),
-    },
-    max: {
-      x: Math.max(start.max.x, endX + radius),
-      y: Math.max(start.max.y, endFeetY + height),
-      z: Math.max(start.max.z, endZ + radius),
-    },
-  };
+  out.min.x = Math.min(position.x - radius, endX - radius);
+  out.min.y = Math.min(feet, endFeetY);
+  out.min.z = Math.min(position.z - radius, endZ - radius);
+  out.max.x = Math.max(position.x + radius, endX + radius);
+  out.max.y = Math.max(feet + height, endFeetY + height);
+  out.max.z = Math.max(position.z + radius, endZ + radius);
+  return out;
+}
+
+function expandBoundsInto(
+  out: MovementCollisionBounds,
+  bounds: MovementCollisionBounds,
+  amount: Vec3
+): MovementCollisionBounds {
+  out.min.x = bounds.min.x - amount.x;
+  out.min.y = bounds.min.y - amount.y;
+  out.min.z = bounds.min.z - amount.z;
+  out.max.x = bounds.max.x + amount.x;
+  out.max.y = bounds.max.y + amount.y;
+  out.max.z = bounds.max.z + amount.z;
+  return out;
 }
 
 function closestIntervalVector(value: number, min: number, max: number): number {
@@ -420,7 +433,18 @@ function normalKind(normal: Vec3): MovementContact['kind'] {
   return 'wall';
 }
 
-function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb: MovementAabb): MovementOverlap | null {
+function capsuleOverlapsAabb(position: Vec3, height: number, radius: number, aabb: MovementAabb): boolean {
+  const bottom = feetY(position) + radius;
+  const top = feetY(position) + Math.max(radius, height - radius);
+  const segmentMinY = Math.min(bottom, top);
+  const segmentMaxY = Math.max(bottom, top);
+  const vectorX = closestIntervalVector(position.x, aabb.min.x, aabb.max.x);
+  const vectorY = intervalGap(segmentMinY, segmentMaxY, aabb.min.y, aabb.max.y);
+  const vectorZ = closestIntervalVector(position.z, aabb.min.z, aabb.max.z);
+  return vectorX * vectorX + vectorY * vectorY + vectorZ * vectorZ < radius * radius;
+}
+
+function overlapCapsuleAabbInto(out: MovementOverlap, position: Vec3, height: number, radius: number, aabb: MovementAabb): boolean {
   const bottom = feetY(position) + radius;
   const top = feetY(position) + Math.max(radius, height - radius);
   const segmentMinY = Math.min(bottom, top);
@@ -431,7 +455,7 @@ function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb
   const distanceSq = vectorX * vectorX + vectorY * vectorY + vectorZ * vectorZ;
   const radiusSq = radius * radius;
 
-  if (distanceSq >= radiusSq) return null;
+  if (distanceSq >= radiusSq) return false;
 
   if (aabb.pushCapsuleUpFromTop) {
     const capsuleFeetY = feetY(position);
@@ -442,25 +466,23 @@ function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb
       position.z <= aabb.max.z + radius;
     const canLiftOntoTop = horizontalInside && capsuleFeetY <= aabb.max.y + SKIN_WIDTH;
     if (canLiftOntoTop) {
-      return {
-        normal: { x: 0, y: 1, z: 0 },
-        depth: Math.max(0, aabb.max.y - capsuleFeetY),
-        aabb,
-      };
+      out.normal.x = 0;
+      out.normal.y = 1;
+      out.normal.z = 0;
+      out.depth = Math.max(0, aabb.max.y - capsuleFeetY);
+      out.aabb = aabb;
+      return true;
     }
   }
 
   if (distanceSq > EPSILON) {
     const distance = Math.sqrt(distanceSq);
-    return {
-      normal: {
-        x: vectorX / distance,
-        y: vectorY / distance,
-        z: vectorZ / distance,
-      },
-      depth: radius - distance,
-      aabb,
-    };
+    out.normal.x = vectorX / distance;
+    out.normal.y = vectorY / distance;
+    out.normal.z = vectorZ / distance;
+    out.depth = radius - distance;
+    out.aabb = aabb;
+    return true;
   }
 
   const centerY = (segmentMinY + segmentMaxY) * 0.5;
@@ -512,11 +534,17 @@ function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb
     bestNormalZ = 0;
   }
 
-  return {
-    normal: { x: bestNormalX, y: bestNormalY, z: bestNormalZ },
-    depth: Number.isFinite(bestDepth) ? bestDepth : radius,
-    aabb,
-  };
+  out.normal.x = bestNormalX;
+  out.normal.y = bestNormalY;
+  out.normal.z = bestNormalZ;
+  out.depth = Number.isFinite(bestDepth) ? bestDepth : radius;
+  out.aabb = aabb;
+  return true;
+}
+
+function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb: MovementAabb): MovementOverlap | null {
+  const out: MovementOverlap = { normal: { x: 0, y: 0, z: 0 }, depth: 0, aabb };
+  return overlapCapsuleAabbInto(out, position, height, radius, aabb) ? out : null;
 }
 
 function boundsOverlap(a: MovementCollisionBounds, b: MovementCollisionBounds): boolean {
@@ -582,7 +610,15 @@ function collectVoxelAabbs(
             }
           }
 
-          if (solid && walkableBlock && getGroundY) {
+          // climbableGround requires groundY <= bounds.min.y + STEP_HEIGHT + SKIN_WIDTH
+          // and blockTopY <= groundY + SKIN_WIDTH, so blocks with tops above
+          // bounds.min.y + STEP_HEIGHT + 2 * SKIN_WIDTH can never qualify — skip their probes.
+          if (
+            solid &&
+            walkableBlock &&
+            getGroundY &&
+            blockTopY <= bounds.min.y + STEP_HEIGHT + SKIN_WIDTH * 2
+          ) {
             groundProbe.x = sample.x;
             groundProbe.y = bounds.min.y + STEP_HEIGHT + SKIN_WIDTH;
             groundProbe.z = sample.z;
@@ -714,49 +750,86 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     0.04,
     Math.min(voxelSize.x, voxelSize.y, voxelSize.z, PLAYER_RADIUS * 0.35)
   );
-  const staticAabbCache = new Map<string, readonly MovementAabb[]>();
+  const staticAabbCache = new Map<number, StaticAabbCacheEntry>();
+  let staticAabbCacheRevision = terrain.collisionRevision ?? 0;
   const combinedAabbScratch: MovementAabb[] = [];
   const heightfieldGroundProbeScratch: Vec3 = { x: 0, y: 0, z: 0 };
   const sweepProbeScratch: Vec3 = { x: 0, y: 0, z: 0 };
   const sweepMiddleScratch: Vec3 = { x: 0, y: 0, z: 0 };
   const sweepHitScratch: Vec3 = { x: 0, y: 0, z: 0 };
-
-  function staticAabbCacheKey(bounds: MovementCollisionBounds): string {
-    const gx0 = Math.floor((bounds.min.x - origin.x) / voxelSize.x) - 1;
-    const gy0 = Math.floor((bounds.min.y - origin.y) / voxelSize.y) - 1;
-    const gz0 = Math.floor((bounds.min.z - origin.z) / voxelSize.z) - 1;
-    const gx1 = Math.floor((bounds.max.x - origin.x) / voxelSize.x) + 1;
-    const gy1 = Math.floor((bounds.max.y - origin.y) / voxelSize.y) + 1;
-    const gz1 = Math.floor((bounds.max.z - origin.z) / voxelSize.z) + 1;
-    const y0 = Math.floor((bounds.min.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
-    const y1 = Math.floor((bounds.max.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
-    return `${terrain.collisionRevision ?? 0}:${gx0},${gy0},${gz0}:${gx1},${gy1},${gz1}:${y0}:${y1}`;
-  }
+  // Reused by findDeepestCapsuleOverlap: results are only valid until the next
+  // collision query, so escaping normals must be cloned at the escape point.
+  const overlapScratchDummyAabb: MovementAabb = {
+    min: { x: 0, y: 0, z: 0 },
+    max: { x: 0, y: 0, z: 0 },
+  };
+  const overlapScratchA: MovementOverlap = { normal: { x: 0, y: 0, z: 0 }, depth: 0, aabb: overlapScratchDummyAabb };
+  const overlapScratchB: MovementOverlap = { normal: { x: 0, y: 0, z: 0 }, depth: 0, aabb: overlapScratchDummyAabb };
+  // Bounds scratch: valid only until the next collision query on this world.
+  const queryBoundsScratch: MovementCollisionBounds = {
+    min: { x: 0, y: 0, z: 0 },
+    max: { x: 0, y: 0, z: 0 },
+  };
+  const expandedBoundsScratch: MovementCollisionBounds = {
+    min: { x: 0, y: 0, z: 0 },
+    max: { x: 0, y: 0, z: 0 },
+  };
+  const groundStartScratch: Vec3 = { x: 0, y: 0, z: 0 };
+  const groundDeltaScratch: Vec3 = { x: 0, y: 0, z: 0 };
 
   function collectStaticAabbs(expanded: MovementCollisionBounds): readonly MovementAabb[] {
     if (!terrain.getBlockAtWorld) return EMPTY_MOVEMENT_AABBS;
 
-    const cacheKey = staticAabbCacheKey(expanded);
-    const cached = staticAabbCache.get(cacheKey);
-    if (cached) {
-      staticAabbCache.delete(cacheKey);
-      staticAabbCache.set(cacheKey, cached);
-      return cached;
+    const revision = terrain.collisionRevision ?? 0;
+    if (revision !== staticAabbCacheRevision) {
+      staticAabbCache.clear();
+      staticAabbCacheRevision = revision;
+    }
+
+    const gx0 = Math.floor((expanded.min.x - origin.x) / voxelSize.x) - 1;
+    const gy0 = Math.floor((expanded.min.y - origin.y) / voxelSize.y) - 1;
+    const gz0 = Math.floor((expanded.min.z - origin.z) / voxelSize.z) - 1;
+    const gx1 = Math.floor((expanded.max.x - origin.x) / voxelSize.x) + 1;
+    const gy1 = Math.floor((expanded.max.y - origin.y) / voxelSize.y) + 1;
+    const gz1 = Math.floor((expanded.max.z - origin.z) / voxelSize.z) + 1;
+    const y0 = Math.floor((expanded.min.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
+    const y1 = Math.floor((expanded.max.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
+
+    let hash = 0x811c9dc5 | 0;
+    hash = Math.imul(hash ^ gx0, 0x01000193);
+    hash = Math.imul(hash ^ gy0, 0x01000193);
+    hash = Math.imul(hash ^ gz0, 0x01000193);
+    hash = Math.imul(hash ^ gx1, 0x01000193);
+    hash = Math.imul(hash ^ gy1, 0x01000193);
+    hash = Math.imul(hash ^ gz1, 0x01000193);
+    hash = Math.imul(hash ^ y0, 0x01000193);
+    hash = Math.imul(hash ^ y1, 0x01000193);
+
+    const cached = staticAabbCache.get(hash);
+    if (
+      cached &&
+      cached.gx0 === gx0 && cached.gy0 === gy0 && cached.gz0 === gz0 &&
+      cached.gx1 === gx1 && cached.gy1 === gy1 && cached.gz1 === gz1 &&
+      cached.y0 === y0 && cached.y1 === y1
+    ) {
+      staticAabbCache.delete(hash);
+      staticAabbCache.set(hash, cached);
+      return cached.aabbs;
     }
 
     const staticAabbs = mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
-    if (staticAabbCache.size >= STATIC_AABB_CACHE_LIMIT) {
+    if (!cached && staticAabbCache.size >= STATIC_AABB_CACHE_LIMIT) {
       const oldestKey = staticAabbCache.keys().next().value;
-      if (oldestKey) {
+      if (oldestKey !== undefined) {
         staticAabbCache.delete(oldestKey);
       }
     }
-    staticAabbCache.set(cacheKey, staticAabbs);
+    staticAabbCache.set(hash, { gx0, gy0, gz0, gx1, gy1, gz1, y0, y1, aabbs: staticAabbs });
     return staticAabbs;
   }
 
   function collectAabbs(bounds: MovementCollisionBounds): readonly MovementAabb[] {
-    const expanded = expandBounds(bounds, SKIN_WIDTH_EXPANSION);
+    const expanded = expandBoundsInto(expandedBoundsScratch, bounds, SKIN_WIDTH_EXPANSION);
     const staticAabbs = terrain.getBlockAtWorld
       ? terrain.cacheStaticAabbs
         ? collectStaticAabbs(expanded)
@@ -777,7 +850,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
 
   function hasDynamicAabbs(bounds: MovementCollisionBounds): boolean {
     if (!terrain.getCollisionAabbs) return false;
-    return terrain.getCollisionAabbs(expandBounds(bounds, SKIN_WIDTH_EXPANSION)).length > 0;
+    return terrain.getCollisionAabbs(expandBoundsInto(expandedBoundsScratch, bounds, SKIN_WIDTH_EXPANSION)).length > 0;
   }
 
   function testCapsuleAgainstAabbs(position: Vec3, height: number, radius: number, aabbs: readonly MovementAabb[]): MovementOverlap[] {
@@ -802,13 +875,27 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
   }
 
   function testCapsule(position: Vec3, height: number, radius: number): MovementOverlap[] {
-    return testCapsuleAgainstAabbs(position, height, radius, collectAabbs(capsuleBounds(position, height, radius)));
+    return testCapsuleAgainstAabbs(
+      position,
+      height,
+      radius,
+      collectAabbs(capsuleBoundsInto(queryBoundsScratch, position, height, radius))
+    );
   }
 
   function hasCapsuleOverlap(position: Vec3, height: number, radius: number): boolean {
-    const aabbs = collectAabbs(capsuleBounds(position, height, radius));
+    const aabbs = collectAabbs(capsuleBoundsInto(queryBoundsScratch, position, height, radius));
+    return anyCapsuleOverlapAgainst(position, height, radius, aabbs);
+  }
+
+  function anyCapsuleOverlapAgainst(
+    position: Vec3,
+    height: number,
+    radius: number,
+    aabbs: readonly MovementAabb[]
+  ): boolean {
     for (const aabb of aabbs) {
-      if (overlapCapsuleAabb(position, height, radius, aabb)) return true;
+      if (capsuleOverlapsAabb(position, height, radius, aabb)) return true;
     }
     return false;
   }
@@ -820,12 +907,14 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     aabbs: readonly MovementAabb[]
   ): MovementOverlap | null {
     let bestOverlap: MovementOverlap | null = null;
-    let bestDepth = -Infinity;
+    let candidate = overlapScratchA;
     for (const aabb of aabbs) {
-      const overlap = overlapCapsuleAabb(position, height, radius, aabb);
-      if (!overlap || overlap.depth <= bestDepth) continue;
-      bestDepth = overlap.depth;
-      bestOverlap = overlap;
+      if (!overlapCapsuleAabbInto(candidate, position, height, radius, aabb)) continue;
+      if (bestOverlap === null || candidate.depth > bestOverlap.depth) {
+        const next = bestOverlap ?? overlapScratchB;
+        bestOverlap = candidate;
+        candidate = next;
+      }
     }
     return bestOverlap;
   }
@@ -835,7 +924,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
       position,
       height,
       radius,
-      collectAabbs(capsuleBounds(position, height, radius))
+      collectAabbs(capsuleBoundsInto(queryBoundsScratch, position, height, radius))
     );
   }
 
@@ -843,7 +932,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     const travelDistance = length(delta);
     if (travelDistance <= EPSILON) return null;
 
-    const aabbs = collectAabbs(sweptCapsuleBounds(position, delta, height, radius));
+    const aabbs = collectAabbs(sweptCapsuleBoundsInto(queryBoundsScratch, position, delta, height, radius));
     if (aabbs.length === 0) return null;
 
     const startOverlap = findDeepestCapsuleOverlap(position, height, radius, aabbs);
@@ -851,7 +940,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
       return {
         time: 0,
         position: cloneVec3(position),
-        normal: startOverlap.normal,
+        normal: cloneVec3(startOverlap.normal),
         distance: 0,
         aabb: startOverlap.aabb,
       };
@@ -863,8 +952,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     for (let step = 1; step <= steps; step++) {
       const high = step / steps;
       const probe = setAddScaled(sweepProbeScratch, position, delta, high);
-      const hitOverlap = findDeepestCapsuleOverlap(probe, height, radius, aabbs);
-      if (!hitOverlap) {
+      if (!anyCapsuleOverlapAgainst(probe, height, radius, aabbs)) {
         low = high;
         continue;
       }
@@ -873,8 +961,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
       for (let iteration = 0; iteration < 10; iteration++) {
         const middle = (low + hitTime) * 0.5;
         const middlePosition = setAddScaled(sweepMiddleScratch, position, delta, middle);
-        const middleOverlap = findDeepestCapsuleOverlap(middlePosition, height, radius, aabbs);
-        if (middleOverlap) {
+        if (anyCapsuleOverlapAgainst(middlePosition, height, radius, aabbs)) {
           hitTime = middle;
         } else {
           low = middle;
@@ -882,11 +969,18 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
       }
 
       const hitPosition = setAddScaled(sweepHitScratch, position, delta, hitTime);
-      const overlap = findDeepestCapsuleOverlap(hitPosition, height, radius, aabbs) ?? hitOverlap;
+      let overlap = findDeepestCapsuleOverlap(hitPosition, height, radius, aabbs);
+      if (!overlap) {
+        // hitTime always retains a time that overlapped, so this fallback to the
+        // first overlapping march probe is unreachable in practice.
+        const highProbe = setAddScaled(sweepProbeScratch, position, delta, high);
+        overlap = findDeepestCapsuleOverlap(highProbe, height, radius, aabbs);
+      }
+      if (!overlap) return null;
       return {
         time: hitTime,
         position: cloneVec3(hitPosition),
-        normal: overlap.normal,
+        normal: cloneVec3(overlap.normal),
         distance: hitTime * travelDistance,
         aabb: overlap.aabb,
       };
@@ -946,13 +1040,18 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
 
   function findGround(position: Vec3, snapDistance: number, radius: number, height: number): MovementGroundHit | null {
     const probeDistance = Math.max(0, snapDistance) + GROUND_PROBE_UP;
-    const start = { x: position.x, y: position.y + GROUND_PROBE_UP, z: position.z };
-    const groundProbeBounds = sweptCapsuleBounds(start, { x: 0, y: -probeDistance, z: 0 }, height, radius);
+    groundStartScratch.x = position.x;
+    groundStartScratch.y = position.y + GROUND_PROBE_UP;
+    groundStartScratch.z = position.z;
+    groundDeltaScratch.x = 0;
+    groundDeltaScratch.y = -probeDistance;
+    groundDeltaScratch.z = 0;
+    const groundProbeBounds = sweptCapsuleBoundsInto(queryBoundsScratch, groundStartScratch, groundDeltaScratch, height, radius);
     const heightfieldGround = findHeightfieldGround(position, snapDistance, radius);
     if (heightfieldGround && !hasDynamicAabbs(groundProbeBounds)) {
       return heightfieldGround;
     }
-    const hit = sweepCapsule(start, { x: 0, y: -probeDistance, z: 0 }, height, radius);
+    const hit = sweepCapsule(groundStartScratch, groundDeltaScratch, height, radius);
     if (!hit || hit.normal.y < WALKABLE_NORMAL_Y) {
       return heightfieldGround;
     }
@@ -1217,7 +1316,7 @@ function depenetrate(
     if (overlap.normal.y >= WALKABLE_NORMAL_Y) hasGroundContact = true;
     if (contacts) {
       contacts.push({
-        normal: overlap.normal,
+        normal: cloneVec3(overlap.normal),
         position: cloneVec3(nextPosition),
         time: 0,
         kind: 'depenetration',

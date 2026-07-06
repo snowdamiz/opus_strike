@@ -47,7 +47,6 @@ export function getRoomMapGenerationWorkerSpec(
   env: NodeJS.ProcessEnv = process.env
 ): RoomMapGenerationWorkerSpec | null {
   if (env.SERVER_MAP_GENERATION_WORKER === '0') return null;
-  if (input.mapProfileId !== 'battle_royal_large') return null;
 
   const compiledWorker = path.join(__dirname, 'roomMapGenerationWorker.js');
   if (existsSync(compiledWorker)) {

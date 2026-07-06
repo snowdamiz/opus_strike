@@ -56,7 +56,7 @@ function TouchAimZone({ disabled }: { disabled: boolean }) {
   return (
     <div
       ref={zoneRef}
-      className="mobile-look-zone"
+      className={`mobile-look-zone ${disabled ? 'is-disabled' : ''}`}
       aria-hidden="true"
       onPointerDown={(e) => {
         if (disabled || activePointerIdRef.current !== null) return;

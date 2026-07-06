@@ -368,6 +368,62 @@ function createRemoteTransformHistory(serverTime: number, receivedAtMs: number):
   };
 }
 
+// Pool for RemoteTransformSnapshot objects: snapshots arrive per remote player
+// at tick rate, so recycling evicted ones avoids steady GC churn in full
+// lobbies. Snapshots are only referenced from history buffers (sampling copies
+// into scratch), so an evicted snapshot is safe to reuse.
+const remoteSnapshotPool: RemoteTransformSnapshot[] = [];
+const REMOTE_SNAPSHOT_POOL_LIMIT = 128;
+
+function releaseRemoteSnapshot(snapshot: RemoteTransformSnapshot): void {
+  if (remoteSnapshotPool.length < REMOTE_SNAPSHOT_POOL_LIMIT) {
+    remoteSnapshotPool.push(snapshot);
+  }
+}
+
+function releaseRemoteHistorySnapshots(history: RemoteTransformHistory): void {
+  for (const snapshot of history.snapshots) {
+    releaseRemoteSnapshot(snapshot);
+  }
+  history.snapshots.length = 0;
+}
+
+function acquireRemoteSnapshot(
+  source: Omit<RemoteTransformSnapshot, 'receivedAtMs'>,
+  receivedAtMs: number
+): RemoteTransformSnapshot {
+  const pooled = remoteSnapshotPool.pop();
+  if (!pooled) {
+    return {
+      serverTick: source.serverTick,
+      serverTime: source.serverTime,
+      receivedAtMs,
+      position: { x: source.position.x, y: source.position.y, z: source.position.z },
+      velocity: { x: source.velocity.x, y: source.velocity.y, z: source.velocity.z },
+      lookYaw: source.lookYaw,
+      lookPitch: source.lookPitch,
+      movementBits: source.movementBits,
+      wallRunSide: source.wallRunSide,
+      movementEpoch: source.movementEpoch,
+    };
+  }
+  pooled.serverTick = source.serverTick;
+  pooled.serverTime = source.serverTime;
+  pooled.receivedAtMs = receivedAtMs;
+  pooled.position.x = source.position.x;
+  pooled.position.y = source.position.y;
+  pooled.position.z = source.position.z;
+  pooled.velocity.x = source.velocity.x;
+  pooled.velocity.y = source.velocity.y;
+  pooled.velocity.z = source.velocity.z;
+  pooled.lookYaw = source.lookYaw;
+  pooled.lookPitch = source.lookPitch;
+  pooled.movementBits = source.movementBits;
+  pooled.wallRunSide = source.wallRunSide;
+  pooled.movementEpoch = source.movementEpoch;
+  return pooled;
+}
+
 function updateRemoteTransformTiming(
   history: RemoteTransformHistory,
   previousLatest: RemoteTransformSnapshot,
@@ -627,16 +683,12 @@ export const addRemoteTransformSnapshot = (
   let history = histories.get(playerId);
   const last = history?.snapshots[history.snapshots.length - 1] ?? null;
   if (!history || (last && last.movementEpoch !== snapshot.movementEpoch)) {
+    if (history) releaseRemoteHistorySnapshots(history);
     history = createRemoteTransformHistory(snapshot.serverTime, receivedAtMs);
     histories.set(playerId, history);
   }
 
-  const fullSnapshot = {
-    ...snapshot,
-    position: { ...snapshot.position },
-    velocity: { ...snapshot.velocity },
-    receivedAtMs,
-  };
+  const fullSnapshot = acquireRemoteSnapshot(snapshot, receivedAtMs);
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
   const isNewestSnapshot = !latest || fullSnapshot.serverTime >= latest.serverTime;
@@ -655,8 +707,9 @@ export const addRemoteTransformSnapshot = (
     }
     snapshots.splice(low, 0, fullSnapshot);
   }
-  if (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
-    history.snapshots.splice(0, history.snapshots.length - REMOTE_HISTORY_LIMIT);
+  while (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
+    const evicted = history.snapshots.shift();
+    if (evicted) releaseRemoteSnapshot(evicted);
   }
   if (isNewestSnapshot) {
     if (latest) {
@@ -669,8 +722,9 @@ export const addRemoteTransformSnapshot = (
 
 export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<string>): void => {
   const state = visualStore.getState();
-  for (const playerId of state.remoteTransformHistories.keys()) {
+  for (const [playerId, history] of state.remoteTransformHistories) {
     if (!activePlayerIds.has(playerId)) {
+      releaseRemoteHistorySnapshots(history);
       state.remoteTransformHistories.delete(playerId);
       state.interpolationTargets.delete(playerId);
       state.playerPositions.delete(playerId);

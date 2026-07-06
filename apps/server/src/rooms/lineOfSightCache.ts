@@ -9,19 +9,43 @@ const LINE_OF_SIGHT_CACHE_EVICT_BATCH = 150;
 
 type BlockedPositionPredicate = (position: PlainVec3) => boolean;
 
-function getLineOfSightCacheKey(start: PlainVec3, end: PlainVec3, collisionRevision: number): string {
-  const q = (value: number) => Math.round(value * 2);
-  return `${collisionRevision}:${q(start.x)}:${q(start.y)}:${q(start.z)}>${q(end.x)}:${q(end.y)}:${q(end.z)}`;
+// FNV-style integer hash over the quantized endpoints. Collisions are handled
+// by verifying the stored quantized components before trusting an entry, so a
+// hash clash only costs a recompute — never a wrong answer.
+function hashLineOfSightKey(
+  collisionRevision: number,
+  qsx: number,
+  qsy: number,
+  qsz: number,
+  qex: number,
+  qey: number,
+  qez: number
+): number {
+  let hash = 0x811c9dc5 | 0;
+  hash = Math.imul(hash ^ collisionRevision, 0x01000193);
+  hash = Math.imul(hash ^ qsx, 0x01000193);
+  hash = Math.imul(hash ^ qsy, 0x01000193);
+  hash = Math.imul(hash ^ qsz, 0x01000193);
+  hash = Math.imul(hash ^ qex, 0x01000193);
+  hash = Math.imul(hash ^ qey, 0x01000193);
+  hash = Math.imul(hash ^ qez, 0x01000193);
+  return hash | 0;
 }
 
 interface CachedLineOfSightResult {
   result: boolean;
   expiresAt: number;
   collisionRevision: number;
+  qsx: number;
+  qsy: number;
+  qsz: number;
+  qex: number;
+  qey: number;
+  qez: number;
 }
 
 export class LineOfSightCache {
-  private readonly cache = new Map<string, CachedLineOfSightResult>();
+  private readonly cache = new Map<number, CachedLineOfSightResult>();
   private readonly samplePoint: PlainVec3 = { x: 0, y: 0, z: 0 };
 
   private pruneCache(now: number): void {
@@ -47,9 +71,20 @@ export class LineOfSightCache {
     collisionRevision: number,
     isBlockedAtPosition: BlockedPositionPredicate
   ): boolean {
-    const cacheKey = getLineOfSightCacheKey(start, end, collisionRevision);
+    const qsx = Math.round(start.x * 2);
+    const qsy = Math.round(start.y * 2);
+    const qsz = Math.round(start.z * 2);
+    const qex = Math.round(end.x * 2);
+    const qey = Math.round(end.y * 2);
+    const qez = Math.round(end.z * 2);
+    const cacheKey = hashLineOfSightKey(collisionRevision, qsx, qsy, qsz, qex, qey, qez);
     const cached = this.cache.get(cacheKey);
-    if (cached && cached.expiresAt > now && cached.collisionRevision === collisionRevision) {
+    const cachedMatches =
+      cached !== undefined &&
+      cached.collisionRevision === collisionRevision &&
+      cached.qsx === qsx && cached.qsy === qsy && cached.qsz === qsz &&
+      cached.qex === qex && cached.qey === qey && cached.qez === qez;
+    if (cached && cachedMatches && cached.expiresAt > now) {
       return cached.result;
     }
 
@@ -73,11 +108,29 @@ export class LineOfSightCache {
     }
 
     this.pruneCache(now);
-    this.cache.set(cacheKey, {
-      result,
-      expiresAt: now + LINE_OF_SIGHT_CACHE_TTL_MS,
-      collisionRevision,
-    });
+    if (cached) {
+      cached.result = result;
+      cached.expiresAt = now + LINE_OF_SIGHT_CACHE_TTL_MS;
+      cached.collisionRevision = collisionRevision;
+      cached.qsx = qsx;
+      cached.qsy = qsy;
+      cached.qsz = qsz;
+      cached.qex = qex;
+      cached.qey = qey;
+      cached.qez = qez;
+    } else {
+      this.cache.set(cacheKey, {
+        result,
+        expiresAt: now + LINE_OF_SIGHT_CACHE_TTL_MS,
+        collisionRevision,
+        qsx,
+        qsy,
+        qsz,
+        qex,
+        qey,
+        qez,
+      });
+    }
     return result;
   }
 

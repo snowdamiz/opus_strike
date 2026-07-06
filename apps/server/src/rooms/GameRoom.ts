@@ -1343,6 +1343,7 @@ export class GameRoom extends Room<GameState> {
   private streamerFeedMode: string | null = null;
   private streamerCameraMode: string | null = null;
   private streamerMapRotationStartedAt: number | null = null;
+  private streamerMapRotationInFlight = false;
   private endlessMatch = false;
   private readonly streamerObservers = new Map<string, StreamerObserverSession>();
   private recordingOptions: GameRoomRecordingOptions | null = null;
@@ -10589,11 +10590,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private refreshMapManifest(): void {
-    const mapManifest = this.mapRuntime.refreshMap();
-    this.applyMapManifestRefresh(mapManifest);
-  }
-
   private async refreshMapManifestAsync(): Promise<void> {
     const mapManifest = await this.mapRuntime.refreshMapAsync();
     this.applyMapManifestRefresh(mapManifest);
@@ -11687,10 +11683,26 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetAfterGame(): void {
-    this.resetRoomForNewMap(createRandomSeed());
+    void this.resetRoomForNewMap(createRandomSeed()).catch((error) => {
+      loggers.room.error('Post-game map reset failed', {
+        roomId: this.roomId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
-  private resetRoomForNewMap(mapSeed: number): void {
+  private async resetRoomForNewMap(mapSeed: number): Promise<void> {
+    const patch = buildPostGameResetStatePatch(mapSeed);
+    // Generate the next map in the worker thread BEFORE touching room state, so
+    // ticks during generation still see a consistent (old) seed + manifest and
+    // never fall back to a blocking synchronous regeneration.
+    const manifest = await this.mapRuntime.generateMapManifestAsync({
+      mapSeed: patch.mapSeed,
+      mapThemeId: patch.mapThemeId as VoxelMapTheme['id'],
+      mapSize: patch.mapSize,
+      mapProfileId: getGameplayModeRules(this.gameplayMode).mapProfileId,
+    });
+
     if (this.state.pregeneratedMapId) {
       void pregeneratedMapCatalogService.releaseMapAfterLaunch({
         mapId: this.state.pregeneratedMapId,
@@ -11700,8 +11712,8 @@ export class GameRoom extends Room<GameState> {
     }
     this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
     this.battleRoyalSouls.clearAll();
-    this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(mapSeed));
-    this.refreshMapManifest();
+    this.applyPostGameResetStatePatch(patch);
+    this.applyMapManifestRefresh(this.mapRuntime.applyGeneratedMapManifest(manifest));
     resetFlagsFromManifest(this.state, this.getMapManifest());
 
     this.state.players.forEach(resetPostGamePlayer);
@@ -11714,6 +11726,7 @@ export class GameRoom extends Room<GameState> {
   private rotateStreamerBotDeathmatchMapIfDue(now: number): boolean {
     if (!this.isStreamerBotDeathmatchFeed()) return false;
     if (this.state.phase !== 'playing') return false;
+    if (this.streamerMapRotationInFlight) return false;
     if (this.streamerMapRotationStartedAt === null) {
       this.streamerMapRotationStartedAt = now;
       this.updateMetadata();
@@ -11723,17 +11736,31 @@ export class GameRoom extends Room<GameState> {
 
     const nextMapSeed = createRandomSeed();
     this.streamerMapRotationStartedAt = now;
-    this.resetRoomForNewMap(nextMapSeed);
-    loggers.room.info('Streamer bot deathmatch map rotated', {
-      roomId: this.roomId,
-      mapSeed: this.state.mapSeed,
-      mapThemeId: this.state.mapThemeId,
-      mapSize: this.state.mapSize,
-      mapProfileId: this.state.mapProfileId,
-    });
-    this.checkPhaseTransition();
-    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
-    return true;
+    // Map generation runs in a worker; the room keeps ticking on the old map
+    // until the new manifest is ready, then swaps synchronously.
+    this.streamerMapRotationInFlight = true;
+    void this.resetRoomForNewMap(nextMapSeed)
+      .then(() => {
+        loggers.room.info('Streamer bot deathmatch map rotated', {
+          roomId: this.roomId,
+          mapSeed: this.state.mapSeed,
+          mapThemeId: this.state.mapThemeId,
+          mapSize: this.state.mapSize,
+          mapProfileId: this.state.mapProfileId,
+        });
+        this.checkPhaseTransition();
+        this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
+      })
+      .catch((error) => {
+        loggers.room.error('Streamer bot deathmatch map rotation failed', {
+          roomId: this.roomId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        this.streamerMapRotationInFlight = false;
+      });
+    return false;
   }
 
   private updateVoidZones(now: number) {
