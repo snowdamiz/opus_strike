@@ -144,8 +144,8 @@ function MovementStick({ disabled }: { disabled: boolean }) {
       role="application"
       aria-label="Move"
       style={{
-        '--stick-x': movementVector.x,
-        '--stick-y': movementVector.y,
+        '--stick-offset-x': `${movementVector.x * 30}%`,
+        '--stick-offset-y': `${movementVector.y * 30}%`,
       } as CSSProperties}
       onPointerDown={(e) => {
         if (disabled || activePointerIdRef.current !== null) return;

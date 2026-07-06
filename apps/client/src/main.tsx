@@ -5,7 +5,7 @@ import { WalletProvider } from './contexts/WalletContext';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { VoiceProvider } from './contexts/VoiceContext';
 import { GlobalNotificationBanner } from './components/ui/GlobalNotificationBanner';
-import { registerServiceWorker } from './pwa';
+import { unregisterServiceWorkers } from './serviceWorkerCleanup';
 import { config } from './config/environment';
 import './styles/index.css';
 
@@ -180,5 +180,5 @@ if (mobileWalletCallbackBridgeUrl) {
     </React.StrictMode>
   );
 
-  registerServiceWorker();
+  unregisterServiceWorkers();
 }

@@ -33,7 +33,6 @@ import { HeroIcon } from './HeroIcons';
 import { WalletProviderLogo } from './WalletProviderLogo';
 import { WalletProviderOptions } from './WalletProviderOptions';
 import { useUISounds } from '../../hooks/useUiAudio';
-import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
 import { config } from '../../config/environment';
 import {
   ALL_HERO_IDS,
@@ -71,8 +70,6 @@ import type {
   SkinPurchaseIntentSnapshot,
 } from '@voxel-strike/shared';
 import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
-import { usePwaInstallPrompt } from '../../pwa';
-import { PwaInstallToast } from './PwaInstallToast';
 import { getEarningRules, rewardTokenTicker, type RewardEconomy } from './earningRules';
 import {
   RUNNING_GAME_SESSION_EVENT,
@@ -495,8 +492,6 @@ export function MainLobby() {
     reconnectRunningGame,
   } = useNetwork();
   const { playButtonClick } = useUISounds();
-  const isMobileDevice = useMobileDevice();
-  const pwaInstall = usePwaInstallPrompt();
   const {
     walletAddress,
     connectWallet,
@@ -540,7 +535,6 @@ export function MainLobby() {
   const [skinActionBusyId, setSkinActionBusyId] = useState<HeroSkinId | null>(null);
   const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
   const [isReconnectChecking, setIsReconnectChecking] = useState(false);
-  const [isMobilePwaInstalling, setIsMobilePwaInstalling] = useState(false);
   const [isSkippingTutorial, setIsSkippingTutorial] = useState(false);
   const heroAnimationMode = HERO_IDLE_ANIMATION_MODE;
 
@@ -649,8 +643,6 @@ export function MainLobby() {
   const isRankedPreseason = rankedSeason.mode === 'preseason';
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
-  const mobilePwaInstallRequired = isMobileDevice && !pwaInstall.hasDownloaded && !pwaInstall.isInstalled;
-
   const updatePlayMenuPreferences = useCallback((updater: (current: PlayMenuPreferences) => PlayMenuPreferences) => {
     setPlayMenuPreferences((current) => {
       const next = updater(current);
@@ -996,21 +988,6 @@ export function MainLobby() {
     setShowProfileModal(false);
   };
 
-  const handleMobilePwaInstall = useCallback(async () => {
-    if (isMobilePwaInstalling) {
-      return;
-    }
-
-    setError(null);
-    setIsMobilePwaInstalling(true);
-
-    try {
-      await pwaInstall.install();
-    } finally {
-      setIsMobilePwaInstalling(false);
-    }
-  }, [isMobilePwaInstalling, pwaInstall.install]);
-
   const handleLinkWallet = async (): Promise<boolean> => {
     if (hasWalletAccount) return true;
     if (isLinkingWallet) return false;
@@ -1032,14 +1009,6 @@ export function MainLobby() {
       setIsLinkingWallet(false);
     }
   };
-
-  const shouldShowPwaInstallToast = (
-    activeTab === 'play' &&
-    !isMobileDevice &&
-    !showSettings &&
-    !showSocial &&
-    !showProfileModal
-  );
 
   const pendingRegistrationDisplayName = pendingRegistration?.displayName
     || pendingRegistration?.walletAddress
@@ -1504,13 +1473,9 @@ export function MainLobby() {
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             isSkippingTutorial={isSkippingTutorial}
-            mobilePwaInstallRequired={mobilePwaInstallRequired}
-            mobilePwaCanInstall={pwaInstall.canPromptInstall}
-            mobilePwaInstallInProgress={isMobilePwaInstalling}
             onSelectPlayMode={handleSelectPlayMode}
             onSetBotFillEnabled={handleSetBotFillEnabled}
             onPlayAction={handleSelectedPlayAction}
-            onMobilePwaInstall={handleMobilePwaInstall}
             onKickPartyMember={kickPartyMember}
             onLeaveParty={leaveParty}
             onOpenSocial={() => setShowSocial(true)}
@@ -1562,8 +1527,6 @@ export function MainLobby() {
           />
         )}
       </div>
-
-      {shouldShowPwaInstallToast && <PwaInstallToast />}
 
       {/* Modals */}
       {showCustomLobbyDialog && activePlayMode === 'custom' && (!isInParty || isPartyLeader) && (
@@ -1965,13 +1928,9 @@ interface PlayTabProps {
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
   isSkippingTutorial: boolean;
-  mobilePwaInstallRequired: boolean;
-  mobilePwaCanInstall: boolean;
-  mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
   onSetBotFillEnabled: (enabled: boolean) => void;
   onPlayAction: () => void;
-  onMobilePwaInstall: () => Promise<void>;
   onKickPartyMember: (userId: string) => void;
   onLeaveParty: () => void;
   onOpenSocial: () => void;
@@ -2009,13 +1968,9 @@ function PlayTab({
   runningGameSession,
   isReconnectChecking,
   isSkippingTutorial,
-  mobilePwaInstallRequired,
-  mobilePwaCanInstall,
-  mobilePwaInstallInProgress,
   onSelectPlayMode,
   onSetBotFillEnabled,
   onPlayAction,
-  onMobilePwaInstall,
   onKickPartyMember,
   onLeaveParty,
   onOpenSocial,
@@ -2143,9 +2098,6 @@ function PlayTab({
         mainPlayLabel={mainPlayLabel}
         primaryDisabled={primaryDisabled}
         primaryDisabledReason={primaryDisabledReason}
-        mobilePwaInstallRequired={mobilePwaInstallRequired}
-        mobilePwaCanInstall={mobilePwaCanInstall}
-        mobilePwaInstallInProgress={mobilePwaInstallInProgress}
         onSelectPlayMode={onSelectPlayMode}
         onSetBotFillEnabled={onSetBotFillEnabled}
         onLogin={onLogin}
@@ -2154,7 +2106,6 @@ function PlayTab({
         onStartTutorial={onStartTutorial}
         onSkipTutorial={onSkipTutorial}
         onPlayAction={onPlayAction}
-        onMobilePwaInstall={onMobilePwaInstall}
       />
       <div className="play-tab-stage menu-compact-scale relative">
         {isAuthenticated ? (
@@ -2620,15 +2571,6 @@ function PlayModeIcon({ mode }: { mode: PlayMenuMode }) {
   }
 }
 
-function DownloadPwaIcon() {
-  return (
-    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v10m0 0l4-4m-4 4L8 9" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M5 14v3.5A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5V14" />
-    </svg>
-  );
-}
-
 function getModeTitle(input: {
   mode: PlayMenuMode;
   isAuthenticated: boolean;
@@ -2670,9 +2612,6 @@ function PlayActionStack({
   mainPlayLabel,
   primaryDisabled,
   primaryDisabledReason,
-  mobilePwaInstallRequired,
-  mobilePwaCanInstall,
-  mobilePwaInstallInProgress,
   onSelectPlayMode,
   onSetBotFillEnabled,
   onLogin,
@@ -2681,7 +2620,6 @@ function PlayActionStack({
   onStartTutorial,
   onSkipTutorial,
   onPlayAction,
-  onMobilePwaInstall,
 }: {
   error: string | null;
   isLoading: boolean;
@@ -2703,9 +2641,6 @@ function PlayActionStack({
   mainPlayLabel: string;
   primaryDisabled: boolean;
   primaryDisabledReason: string | null;
-  mobilePwaInstallRequired: boolean;
-  mobilePwaCanInstall: boolean;
-  mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
   onSetBotFillEnabled: (enabled: boolean) => void;
   onLogin: () => void;
@@ -2714,30 +2649,13 @@ function PlayActionStack({
   onStartTutorial: () => void;
   onSkipTutorial: () => void;
   onPlayAction: () => void;
-  onMobilePwaInstall: () => Promise<void>;
 }) {
   const { playButtonClick } = useUISounds();
-  const mobilePwaDisabledReason = mobilePwaInstallRequired && !mobilePwaCanInstall
-    ? 'PWA install is required on mobile'
-    : null;
-  const effectiveMainPlayLabel = mobilePwaInstallRequired
-    ? mobilePwaInstallInProgress
-      ? 'OPENING...'
-      : 'DOWNLOAD PWA'
-    : mainPlayLabel;
-  const effectivePrimaryDisabled = mobilePwaInstallRequired
-    ? mobilePwaInstallInProgress || !mobilePwaCanInstall
-    : primaryDisabled;
-  const effectivePrimaryDisabledReason = mobilePwaDisabledReason ?? (
-    mobilePwaInstallRequired ? null : primaryDisabledReason
-  );
 
   const runPrimaryAction = () => {
     const shouldStartTutorial = requiresTutorial && selectedPlayMode !== 'practice';
     playButtonClick();
-    if (mobilePwaInstallRequired) {
-      void onMobilePwaInstall();
-    } else if (canReconnect) {
+    if (canReconnect) {
       onReconnect();
     } else if (shouldStartTutorial) {
       onStartTutorial();
@@ -2779,14 +2697,14 @@ function PlayActionStack({
           {error}
         </div>
       )}
-      {mobilePwaInstallRequired || isAuthenticated ? (
+      {isAuthenticated ? (
         <div className="play-main-cta-wrap">
           <button
             type="button"
             onClick={runPrimaryAction}
-            disabled={effectivePrimaryDisabled}
+            disabled={primaryDisabled}
             className="play-main-cta group"
-            aria-describedby={effectivePrimaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
+            aria-describedby={primaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
             style={{
               background: `linear-gradient(135deg, ${BLAZE_UI_COLORS.primary}, ${BLAZE_UI_COLORS.primary}dd)`,
               boxShadow: `0 0 60px ${BLAZE_UI_COLORS.primary}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
@@ -2797,28 +2715,26 @@ function PlayActionStack({
               style={{ background: WALLET_AUTH_COLORS.shimmer }}
             />
             <span className="play-main-cta-content relative flex items-center justify-center gap-2">
-              {mobilePwaInstallRequired ? (
-                <DownloadPwaIcon />
-              ) : canReconnect ? (
+              {canReconnect ? (
                 <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
                 </svg>
               ) : (
                 <PlayModeIcon mode={selectedPlayMode} />
               )}
-              {effectiveMainPlayLabel}
+              {mainPlayLabel}
             </span>
           </button>
-          {effectivePrimaryDisabledReason && (
+          {primaryDisabledReason && (
             <div
               id="play-main-cta-disabled-reason"
               className="play-disabled-reason"
               role="status"
             >
-              {effectivePrimaryDisabledReason}
+              {primaryDisabledReason}
             </div>
           )}
-          {requiresTutorial && selectedPlayMode !== 'practice' && !mobilePwaInstallRequired && (
+          {requiresTutorial && selectedPlayMode !== 'practice' && (
             <button
               type="button"
               onClick={runSkipTutorial}

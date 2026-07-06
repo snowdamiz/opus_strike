@@ -32,8 +32,6 @@ export type MobileGameAccessState = MobileGameAccessSnapshot & {
 
 const MOBILE_ACCESS_MEDIA_QUERIES = [
   '(orientation: landscape)',
-  '(display-mode: fullscreen)',
-  '(display-mode: standalone)',
 ] as const;
 
 export function useMobileGameAccess(): MobileGameAccessState {
@@ -85,7 +83,7 @@ export function useMobileGameAccess(): MobileGameAccessState {
     const target = document.documentElement as WebkitFullscreenElement;
     const request = target.requestFullscreen ?? target.webkitRequestFullscreen;
     if (!request) {
-      setFullscreenRequestError('Fullscreen is not available in this browser. Add Slop Heroes to your Home Screen, then reopen it in landscape.');
+      setFullscreenRequestError('Fullscreen is not available in this browser. Use a browser with fullscreen support to continue.');
       refreshSnapshot();
       return;
     }
@@ -156,14 +154,10 @@ function isFullscreenActive(): boolean {
   if (typeof document === 'undefined' || typeof window === 'undefined') return false;
 
   const webkitDocument = document as WebkitDocument;
-  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
 
   return Boolean(
     document.fullscreenElement ||
-    webkitDocument.webkitFullscreenElement ||
-    navigatorWithStandalone.standalone === true ||
-    window.matchMedia('(display-mode: fullscreen)').matches ||
-    window.matchMedia('(display-mode: standalone)').matches
+    webkitDocument.webkitFullscreenElement
   );
 }
 

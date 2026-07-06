@@ -344,9 +344,7 @@ function canUseMobileWalletDeepLinks(): boolean {
   return (
     /Android|iPhone|iPad|iPod/i.test(userAgent) ||
     (navigator.maxTouchPoints > 1 && /Macintosh/i.test(userAgent)) ||
-    window.matchMedia('(pointer: coarse)').matches ||
-    window.matchMedia('(display-mode: standalone)').matches ||
-    window.matchMedia('(display-mode: fullscreen)').matches
+    window.matchMedia('(pointer: coarse)').matches
   );
 }
 
