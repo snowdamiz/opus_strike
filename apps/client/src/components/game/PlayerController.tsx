@@ -3146,7 +3146,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
-      setBlazeFlamethrowerHeld(false, now);
+      resetBlazeFlamethrower(now);
       setChronosPrimaryHeld(false, now);
       setChronosLifelineQueuedState(false, now);
       setChronosAegisVisualState(

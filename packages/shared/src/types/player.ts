@@ -112,6 +112,8 @@ export interface Player {
   // Health
   health: number;
   maxHealth: number;
+  shield?: number;
+  maxShield?: number;
   downedHealth?: number | null;
   downedMaxHealth?: number | null;
   downedStartedAt?: number | null;
@@ -120,6 +122,9 @@ export interface Player {
   reviveStartedAt?: number | null;
   reviveCompletesAt?: number | null;
   reviveByPlayerId?: string | null;
+  knockdownShieldHealth?: number | null;
+  knockdownShieldMaxHealth?: number | null;
+  knockdownShieldActive?: boolean;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
@@ -156,6 +161,8 @@ export interface PlayerSnapshot {
   lookPitch: number;
   health: number;
   maxHealth?: number;
+  shield?: number;
+  maxShield?: number;
   downedHealth?: number | null;
   downedMaxHealth?: number | null;
   downedStartedAt?: number | null;
@@ -164,6 +171,9 @@ export interface PlayerSnapshot {
   reviveStartedAt?: number | null;
   reviveCompletesAt?: number | null;
   reviveByPlayerId?: string | null;
+  knockdownShieldHealth?: number | null;
+  knockdownShieldMaxHealth?: number | null;
+  knockdownShieldActive?: boolean;
   powerupBoostUntil?: number | null;
   state: PlayerState;
   movement: PlayerMovementState;

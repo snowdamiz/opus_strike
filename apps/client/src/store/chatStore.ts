@@ -18,7 +18,7 @@ interface ChatStoreState {
   clearMessages: () => void;
 }
 
-const MAX_CHAT_MESSAGES = 80;
+const MAX_CHAT_MESSAGES = 500;
 const MAX_CHAT_TEXT_LENGTH = 200;
 const MAX_CHAT_NAME_LENGTH = 32;
 

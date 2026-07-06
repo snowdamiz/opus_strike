@@ -38,6 +38,7 @@ let messageId = 0;
 
 const CHAT_PREVIEW_IDLE_TIMEOUT_MS = 30_000;
 const CHAT_PREVIEW_FADE_MS = 500;
+const MAX_CONSOLE_MESSAGES = 300;
 const PUBLIC_COMMAND_LIST = '/seed copy, /observer <low|med|hight>';
 const DEV_COMMAND_LIST = '/seed copy, /observer <low|med|hight>, /devtarget, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
 type BotLookDirection = 'up' | 'down';
@@ -245,6 +246,8 @@ export function GameConsole() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isPinnedToBottomRef = useRef(true);
 
   const {
     devSetHero,
@@ -264,16 +267,48 @@ export function GameConsole() {
 
   const displayMessages = useMemo(() => toDisplayMessages(messages, chatMessages), [messages, chatMessages]);
   const visibleMessages = useMemo(
-    () => (isOpen ? displayMessages.slice(-80) : displayMessages.filter((message) => message.source === 'chat').slice(-5)),
+    () => (isOpen ? displayMessages : displayMessages.filter((message) => message.source === 'chat').slice(-5)),
     [displayMessages, isOpen]
   );
   const latestChatMessageId = chatMessages[chatMessages.length - 1]?.id ?? null;
   const lastVisibleMessageId = visibleMessages[visibleMessages.length - 1]?.id ?? null;
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom on new messages, unless the user has scrolled up to read history
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isPinnedToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [lastVisibleMessageId]);
+
+  // Jump to the latest message whenever the console opens/closes
+  useEffect(() => {
+    isPinnedToBottomRef.current = true;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+  }, [isOpen]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    isPinnedToBottomRef.current =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 24;
+  }, []);
+
+  // While the console is open the pointer stays locked (no cursor to hover the
+  // panel), so route wheel input to the message list from a window listener.
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      const container = messagesContainerRef.current;
+      if (!container) return;
+      e.preventDefault();
+      container.scrollTop += e.deltaY;
+      handleMessagesScroll();
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, [isOpen, handleMessagesScroll]);
 
   // Focus input when opened
   useEffect(() => {
@@ -342,7 +377,7 @@ export function GameConsole() {
   }, [isChatPreviewVisible]);
 
   const addMessage = useCallback((text: string, type: ConsoleMessage['type'] = 'output') => {
-    setMessages(prev => [...prev, { id: messageId++, text, type, timestamp: Date.now() }]);
+    setMessages(prev => [...prev, { id: messageId++, text, type, timestamp: Date.now() }].slice(-MAX_CONSOLE_MESSAGES));
   }, []);
 
   const executeCommand = useCallback(async (cmd: string) => {
@@ -735,7 +770,11 @@ export function GameConsole() {
         }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className={`${isOpen ? 'max-h-[220px]' : 'max-h-[150px]'} space-y-1 overflow-y-auto p-3`}>
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleMessagesScroll}
+          className={`${isOpen ? 'max-h-[45vh]' : 'max-h-[150px]'} space-y-1 overflow-y-auto p-3`}
+        >
           {visibleMessages.map((msg) => (
             <div
               key={msg.id}

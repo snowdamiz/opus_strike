@@ -132,7 +132,8 @@ assert.equal(sanitizedDownedInput.moveForward, true);
 assert.equal(sanitizedDownedInput.moveRight, true);
 assert.equal(sanitizedDownedInput.jump, false);
 assert.equal(sanitizedDownedInput.sprint, false);
-assert.equal(sanitizedDownedInput.primaryFire, false);
+// Primary fire stays live while downed so LMB can raise the knockdown shield.
+assert.equal(sanitizedDownedInput.primaryFire, true);
 assert.equal(sanitizedDownedInput.secondaryFire, false);
 assert.equal(sanitizedDownedInput.reload, false);
 assert.equal(sanitizedDownedInput.ability1, false);

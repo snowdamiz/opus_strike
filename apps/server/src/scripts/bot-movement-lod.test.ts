@@ -43,7 +43,10 @@ type BotMovementLodRoom = {
   getBotLineOfSightFrameBudget(aliveBotCount: number): number;
   getBotSteeringProbeFrameBudget(aliveBotCount: number): number;
   consumeBotLineOfSightFrameBudget(frameContext: { lineOfSightChecksRemaining: number }): boolean;
-  consumeBotSteeringProbeFrameBudget(frameContext: { steeringProbeChecksRemaining: number }): boolean;
+  consumeBotSteeringProbeFrameBudget(
+    frameContext: { steeringProbeChecksRemaining: number; steeringProbePriorityChecksRemaining?: number },
+    priority?: boolean
+  ): boolean;
   chooseBotSteering(
     bot: Player,
     desiredMove: PlainVec2 | null,
@@ -406,9 +409,9 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(room.getBotLineOfSightFrameBudget(8), 20);
   assert.equal(room.getBotLineOfSightFrameBudget(24), 24);
   assert.equal(room.getBotLineOfSightFrameBudget(48), 28);
-  assert.equal(room.getBotSteeringProbeFrameBudget(8), 20);
-  assert.equal(room.getBotSteeringProbeFrameBudget(24), 24);
-  assert.equal(room.getBotSteeringProbeFrameBudget(48), 28);
+  assert.equal(room.getBotSteeringProbeFrameBudget(8), 32);
+  assert.equal(room.getBotSteeringProbeFrameBudget(24), 40);
+  assert.equal(room.getBotSteeringProbeFrameBudget(48), 48);
 }
 
 {
@@ -436,10 +439,17 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(losFrame.lineOfSightChecksRemaining, 0);
   assert.equal(room.consumeBotLineOfSightFrameBudget(losFrame), false);
 
-  const steeringFrame = { steeringProbeChecksRemaining: 1 };
+  const steeringFrame = { steeringProbeChecksRemaining: 1, steeringProbePriorityChecksRemaining: 1 };
   assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame), true);
   assert.equal(steeringFrame.steeringProbeChecksRemaining, 0);
+  assert.equal(steeringFrame.steeringProbePriorityChecksRemaining, 1);
   assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame), false);
+
+  // Priority consumers draw from the reserved budget first, then fall back to
+  // the shared budget before exhausting.
+  assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame, true), true);
+  assert.equal(steeringFrame.steeringProbePriorityChecksRemaining, 0);
+  assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame, true), false);
 }
 
 {

@@ -30,6 +30,7 @@ export type MobileHudLayoutElementId =
   | 'hud-targeting-instruction'
   | 'hud-flag'
   | 'hud-health'
+  | 'hud-squad'
   | 'hud-skill-bar'
   | 'hud-primary-ammo'
   | 'hud-movement-indicators'
@@ -217,6 +218,14 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
     minHeight: 6,
     maxWidth: 36,
     maxHeight: 16,
+  },
+  'hud-squad': {
+    label: 'Squad',
+    defaultRect: { x: 1.4, y: 54, width: 18, height: 15 },
+    minWidth: 12,
+    minHeight: 8,
+    maxWidth: 36,
+    maxHeight: 30,
   },
   'hud-skill-bar': {
     label: 'Skill bar',

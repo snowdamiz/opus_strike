@@ -27,6 +27,7 @@ export interface TutorialMovementHistory {
   wasGrounded: boolean;
   lastLandingAt: number;
   fastJumpCount: number;
+  lastCrouchedAt: number;
 }
 
 export type TutorialMovementSnapshot = Pick<
@@ -48,6 +49,7 @@ export const MOVEMENT_CHECKPOINT_Z = 5.5;
 const RED_SPAWN_EXIT_Z = -35.5;
 const RUN_SPEED_THRESHOLD = 6;
 const BUNNY_HOP_CHAIN_WINDOW_MS = 450;
+const CROUCH_COMPLETION_GRACE_MS = 600;
 const CROUCH_COVER_FAR_EDGE_Z = -25.1;
 const SLIDE_COVER_FAR_EDGE_Z = -19.5;
 const BUNNY_HOP_ZONE_START_Z = -16.5;
@@ -65,6 +67,7 @@ export function createTutorialMovementHistory(): TutorialMovementHistory {
     wasGrounded: true,
     lastLandingAt: 0,
     fastJumpCount: 0,
+    lastCrouchedAt: 0,
   };
 }
 
@@ -102,7 +105,16 @@ export function collectMovementTutorialCompletions({
   if (movement.isSprinting || speed >= RUN_SPEED_THRESHOLD) {
     completed.push('run');
   }
-  if (movement.isCrouching && playerZ >= TUTORIAL_CROUCH_CLEAR_Z) {
+  // The low cover force-crouches the player and releases the crouch at the exact
+  // Z where the clear gate opens, so accept a recently-ended crouch too — the
+  // same lingering grace the slide step gets from its cooldown latch.
+  if (movement.isCrouching) {
+    history.lastCrouchedAt = nowMs;
+  }
+  const recentlyCrouched =
+    movement.isCrouching ||
+    (history.lastCrouchedAt > 0 && nowMs - history.lastCrouchedAt <= CROUCH_COMPLETION_GRACE_MS);
+  if (recentlyCrouched && playerZ >= TUTORIAL_CROUCH_CLEAR_Z) {
     completed.push('crouch');
   }
   if ((movement.isSliding || movement.slideTimeRemaining > 0) && playerZ >= TUTORIAL_SLIDE_CLEAR_Z) {

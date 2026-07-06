@@ -130,7 +130,8 @@ export function suppressDownedMovementInput(
     jump: false,
     crouch: false,
     sprint: false,
-    primaryFire: false,
+    // Kept live while downed: LMB raises the battle-royale knockdown shield.
+    primaryFire: input.primaryFire,
     secondaryFire: false,
     reload: false,
     ability1: false,

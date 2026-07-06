@@ -278,6 +278,7 @@ import {
   ULTIMATE_CHARGE_PER_KILL,
   ULTIMATE_CHARGE_PER_SECOND,
   BLAZE_FLAMETHROWER_MAX_FUEL,
+  BATTLE_ROYAL_BODY_SHIELD_MAX_HP,
   BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
   BATTLE_ROYAL_REVIVED_HEALTH,
   BATTLE_ROYAL_REVIVE_RADIUS,
@@ -819,6 +820,7 @@ interface BotFrameContext {
   perceptionByBot: Map<string, BotPerceptionSets>;
   lineOfSightChecksRemaining: number;
   steeringProbeChecksRemaining: number;
+  steeringProbePriorityChecksRemaining: number;
 }
 
 type BotSimulationTier = 'critical' | 'near' | 'background';
@@ -994,9 +996,13 @@ const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_HIGH = 28;
 const BOT_STEERING_PROBE_FRAME_BUDGET_LOW = 12;
 const BOT_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 14;
 const BOT_STEERING_PROBE_FRAME_BUDGET_HIGH = 16;
-const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_LOW = 20;
-const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 24;
-const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_HIGH = 28;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_LOW = 32;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 40;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_HIGH = 48;
+// Reserved for bots that die if they can't navigate (outside/near the shrinking
+// safe zone, or moving in to revive) so idle in-zone bots can't starve them of
+// obstacle probes via the shared frame budget.
+const BOT_BATTLE_ROYAL_STEERING_PROBE_PRIORITY_FRAME_BUDGET = 48;
 const BOT_INITIAL_THINK_STAGGER_MS = BOT_THINK_INTERVAL_MS;
 const BOT_INITIAL_BLACKBOARD_STAGGER_MS = BOT_TACTICS_INTERVAL_MS;
 const EMPTY_BOT_PERCEPTION_IDS = new Set<string>();
@@ -2626,6 +2632,7 @@ export class GameRoom extends Room<GameState> {
       resetRespawnTime: true,
     });
     player.health = Math.min(player.maxHealth, BATTLE_ROYAL_REVIVED_HEALTH);
+    this.initializeBattleRoyalBodyShield(player);
     this.resetPlayerLifeRuntime(player, now);
     this.placePlayerAtBattleRoyalSummoningCircle(player, circle, index, total);
 
@@ -2900,6 +2907,8 @@ export class GameRoom extends Room<GameState> {
       rank: buildRoomRankSnapshot(player),
       health: player.health,
       maxHealth: player.maxHealth,
+      shield: player.shield,
+      maxShield: player.maxShield,
       downedHealth: player.downedHealth || null,
       downedMaxHealth: player.downedMaxHealth || null,
       downedStartedAt: player.downedStartedAt || null,
@@ -2908,6 +2917,9 @@ export class GameRoom extends Room<GameState> {
       reviveStartedAt: player.reviveStartedAt || null,
       reviveCompletesAt: player.reviveCompletesAt || null,
       reviveByPlayerId: player.reviveByPlayerId || null,
+      knockdownShieldHealth: player.knockdownShieldHealth || null,
+      knockdownShieldMaxHealth: player.knockdownShieldMaxHealth || null,
+      knockdownShieldActive: player.knockdownShieldActive,
       ultimateCharge: player.ultimateCharge,
       onFireUntil: this.getBlazeBurnUntil(id),
       powerupBoostUntil: this.powerupBoosts.getUntil(id, now),
@@ -7510,6 +7522,26 @@ export class GameRoom extends Room<GameState> {
     input: PlayerInput,
     now = Date.now()
   ): void {
+    if (player.state === 'downed') {
+      const previousDowned = this.playerPressStates.getOrCreate(player.id);
+      const primaryFirePressed = Boolean(input.primaryFire) && !previousDowned.primaryFire;
+      this.playerPressStates.applyInput(player.id, {
+        primaryFire: Boolean(input.primaryFire),
+        secondaryFire: Boolean(input.secondaryFire),
+        reload: Boolean(input.reload),
+        ability1: Boolean(input.ability1),
+        ability2: Boolean(input.ability2),
+        ultimate: Boolean(input.ultimate),
+      });
+      if (
+        isBattleRoyalMode(this.gameplayMode) &&
+        this.state.phase === 'playing' &&
+        primaryFirePressed
+      ) {
+        this.tryRaiseBattleRoyalKnockdownShield(player);
+      }
+      return;
+    }
     if (player.state !== 'alive') return;
 
     const previous = this.playerPressStates.getOrCreate(player.id);
@@ -7640,6 +7672,14 @@ export class GameRoom extends Room<GameState> {
       this.battleRoyalSouls.tryStartNearestCollect(player, now) ||
       this.battleRoyalSouls.tryStartSummon(player, this.getBattleRoyalSummoningCircles(), now)
     );
+  }
+
+  private tryRaiseBattleRoyalKnockdownShield(player: Player): boolean {
+    if (player.state !== 'downed') return false;
+    if (player.knockdownShieldActive) return true;
+    if (player.knockdownShieldHealth <= 0) return false;
+    player.knockdownShieldActive = true;
+    return true;
   }
 
   private tryResolveAttack(player: Player, mode: AttackMode, now = Date.now()): void {
@@ -9130,6 +9170,9 @@ export class GameRoom extends Room<GameState> {
       perceptionByBot: this.botFramePerceptionByBot,
       lineOfSightChecksRemaining: this.getBotLineOfSightFrameBudget(aliveBotCount),
       steeringProbeChecksRemaining: this.getBotSteeringProbeFrameBudget(aliveBotCount),
+      steeringProbePriorityChecksRemaining: isBattleRoyalMode(this.gameplayMode)
+        ? BOT_BATTLE_ROYAL_STEERING_PROBE_PRIORITY_FRAME_BUDGET
+        : 0,
     };
   }
 
@@ -9478,9 +9521,10 @@ export class GameRoom extends Room<GameState> {
     bot: Player,
     probe: Omit<BotSteeringProbe, 'clear' | 'distance'>,
     distance: number,
-    frameContext: BotFrameContext
+    frameContext: BotFrameContext,
+    priority = false
   ): BotSteeringProbe | null {
-    if (!this.consumeBotSteeringProbeFrameBudget(frameContext)) return null;
+    if (!this.consumeBotSteeringProbeFrameBudget(frameContext, priority)) return null;
     this.tickProfiler.recordCounter('bot_steering_probe_checks');
     return {
       ...probe,
@@ -9499,7 +9543,11 @@ export class GameRoom extends Room<GameState> {
     );
   }
 
-  private consumeBotSteeringProbeFrameBudget(frameContext: BotFrameContext): boolean {
+  private consumeBotSteeringProbeFrameBudget(frameContext: BotFrameContext, priority = false): boolean {
+    if (priority && frameContext.steeringProbePriorityChecksRemaining > 0) {
+      frameContext.steeringProbePriorityChecksRemaining--;
+      return true;
+    }
     if (!Number.isFinite(frameContext.steeringProbeChecksRemaining)) return true;
     if (frameContext.steeringProbeChecksRemaining <= 0) {
       this.tickProfiler.recordCounter('bot_steering_probe_frame_budget_exhausted');
@@ -9526,7 +9574,8 @@ export class GameRoom extends Room<GameState> {
     bot: Player,
     desiredMove: PlainVec2 | null,
     skill: BotSkillProfile,
-    frameContext: BotFrameContext
+    frameContext: BotFrameContext,
+    priority = false
   ): { steering: BotSteeringChoice; directPathBlocked: boolean } {
     const directions = createSteeringProbeDirections(desiredMove);
     if (directions.length === 0) {
@@ -9545,7 +9594,7 @@ export class GameRoom extends Room<GameState> {
       };
     }
 
-    const directProbe = this.getBotSteeringProbe(bot, directDirection, probeDistance, frameContext);
+    const directProbe = this.getBotSteeringProbe(bot, directDirection, probeDistance, frameContext, priority);
     if (!directProbe) {
       return {
         steering: chooseLocalAvoidanceDirection(desiredMove, [], skill),
@@ -9562,7 +9611,7 @@ export class GameRoom extends Room<GameState> {
     const probes: BotSteeringProbe[] = [directProbe];
     for (const probe of directions) {
       if (probe.label === 'direct') continue;
-      const steeringProbe = this.getBotSteeringProbe(bot, probe, probeDistance, frameContext);
+      const steeringProbe = this.getBotSteeringProbe(bot, probe, probeDistance, frameContext, priority);
       if (!steeringProbe) break;
       probes.push(steeringProbe);
     }
@@ -9742,7 +9791,12 @@ export class GameRoom extends Room<GameState> {
       skill,
       combatPlan
     );
-    const { steering, directPathBlocked } = this.chooseBotSteering(bot, desiredMove, skill, frameContext);
+    const steeringPriority = isBattleRoyalMode(this.gameplayMode) && (
+      brain.intent.type === 'rotate_safe_zone' ||
+      brain.intent.type === 'revive_teammate' ||
+      this.isBattleRoyalSafeZonePriorityBot(bot)
+    );
+    const { steering, directPathBlocked } = this.chooseBotSteering(bot, desiredMove, skill, frameContext, steeringPriority);
     const recovery = updateBotMovementRecoveryState({
       brain,
       now,
@@ -9840,7 +9894,12 @@ export class GameRoom extends Room<GameState> {
       tempoMultiplier,
     });
 
-    if (brain.intent.type === 'revive_teammate' && brain.intent.targetPlayerId) {
+    if (this.battleRoyalDownedRuntime.isReviving(bot.id)) {
+      // Already channeling a revive: any movement/jump/fire input cancels the
+      // 5s hold, so keep the input locked to interact until the runtime ends
+      // the revive (complete, target lost, or reviver downed).
+      applyBotReviveTeammateInput(input);
+    } else if (brain.intent.type === 'revive_teammate' && brain.intent.targetPlayerId) {
       const reviveTarget = this.state.players.get(brain.intent.targetPlayerId) ?? null;
       if (
         reviveTarget &&
@@ -11247,6 +11306,7 @@ export class GameRoom extends Room<GameState> {
       this.resetPlayerLifeRuntime(player, now);
       player.state = 'dropping';
       player.health = player.maxHealth;
+      this.initializeBattleRoyalBodyShield(player);
       player.respawnTime = 0;
       player.spawnProtectionUntil = 0;
       this.applyBattleRoyalDropTransform(player, dropPlayer);
@@ -11431,6 +11491,7 @@ export class GameRoom extends Room<GameState> {
         },
         bypassSpawnProtection: true,
         bypassPersonalShield: true,
+        bypassShield: true,
         skipDamageBudget: true,
       });
     });
@@ -11555,6 +11616,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private addPlayerToBattleRoyalDeployment(player: Player, now = Date.now()): void {
+    this.initializeBattleRoyalBodyShield(player);
     if (!this.battleRoyalDrop) {
       this.battleRoyalDrop = this.placePlayersAtBattleRoyalDropShipStart(now, 'spawn');
       return;
@@ -11567,6 +11629,12 @@ export class GameRoom extends Room<GameState> {
     }, now);
     this.applyBattleRoyalDropTransform(player, dropPlayer);
     this.markMovementBarrier(player.id, 'spawn');
+  }
+
+  private initializeBattleRoyalBodyShield(player: Player): void {
+    if (!isBattleRoyalMode(this.gameplayMode)) return;
+    player.maxShield = BATTLE_ROYAL_BODY_SHIELD_MAX_HP;
+    player.shield = BATTLE_ROYAL_BODY_SHIELD_MAX_HP;
   }
 
   private sendBattleRoyalDropAuthorities(now: number): void {

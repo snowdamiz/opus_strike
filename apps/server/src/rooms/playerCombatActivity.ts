@@ -1,4 +1,5 @@
 import {
+  BATTLE_ROYAL_BODY_SHIELD_REGEN_PER_SECOND,
   HERO_OUT_OF_COMBAT_REGEN_CAP_RATIO,
   HERO_OUT_OF_COMBAT_REGEN_DELAY_MS,
   HERO_OUT_OF_COMBAT_REGEN_PER_SECOND,
@@ -8,6 +9,8 @@ interface CombatActivityPlayer {
   id: string;
   health: number;
   maxHealth: number;
+  shield?: number;
+  maxShield?: number;
   state?: string;
 }
 
@@ -52,11 +55,28 @@ export class PlayerCombatActivityTracker {
     return player.health !== previousHealth;
   }
 
+  updateOutOfCombatShieldRegen(player: CombatActivityPlayer, now: number, dt: number): boolean {
+    const maxShield = player.maxShield ?? 0;
+    const shield = player.shield ?? 0;
+    if (maxShield <= 0 || shield >= maxShield) return false;
+
+    const lastCombatAt = this.lastActivityAt.get(player.id) ?? 0;
+    if (now - lastCombatAt < HERO_OUT_OF_COMBAT_REGEN_DELAY_MS) return false;
+
+    player.shield = Math.min(
+      maxShield,
+      shield + BATTLE_ROYAL_BODY_SHIELD_REGEN_PER_SECOND * Math.max(0, dt)
+    );
+    return player.shield !== shield;
+  }
+
   updateOutOfCombatHealthRegens(players: Iterable<CombatActivityPlayer>, now: number, dt: number): number {
     let healedPlayers = 0;
     for (const player of players) {
       if (player.state !== 'alive') continue;
-      if (this.updateOutOfCombatHealthRegen(player, now, dt)) {
+      const healed = this.updateOutOfCombatHealthRegen(player, now, dt);
+      const shielded = this.updateOutOfCombatShieldRegen(player, now, dt);
+      if (healed || shielded) {
         healedPlayers++;
       }
     }

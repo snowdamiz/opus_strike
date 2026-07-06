@@ -834,6 +834,8 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     lookPitch: existing?.lookPitch ?? 0,
     health: vitals.health,
     maxHealth: vitals.maxHealth,
+    shield: vitals.shield ?? 0,
+    maxShield: vitals.maxShield ?? 0,
     downedHealth: vitals.downedHealth ?? null,
     downedMaxHealth: vitals.downedMaxHealth ?? null,
     downedStartedAt: vitals.downedStartedAt ?? null,
@@ -842,6 +844,9 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     reviveStartedAt: vitals.reviveStartedAt ?? null,
     reviveCompletesAt: vitals.reviveCompletesAt ?? null,
     reviveByPlayerId: vitals.reviveByPlayerId ?? null,
+    knockdownShieldHealth: vitals.knockdownShieldHealth ?? null,
+    knockdownShieldMaxHealth: vitals.knockdownShieldMaxHealth ?? null,
+    knockdownShieldActive: vitals.knockdownShieldActive ?? false,
     ultimateCharge: vitals.ultimateCharge,
     onFireUntil: vitals.onFireUntil ?? null,
     powerupBoostUntil: vitals.powerupBoostUntil ?? null,
@@ -945,6 +950,8 @@ function remotePlayerVitalsEqual(existing: Player, next: Player): boolean {
     existing.botProfileId === next.botProfileId &&
     existing.health === next.health &&
     existing.maxHealth === next.maxHealth &&
+    existing.shield === next.shield &&
+    existing.maxShield === next.maxShield &&
     existing.downedHealth === next.downedHealth &&
     existing.downedMaxHealth === next.downedMaxHealth &&
     existing.downedStartedAt === next.downedStartedAt &&
@@ -953,6 +960,9 @@ function remotePlayerVitalsEqual(existing: Player, next: Player): boolean {
     existing.reviveStartedAt === next.reviveStartedAt &&
     existing.reviveCompletesAt === next.reviveCompletesAt &&
     existing.reviveByPlayerId === next.reviveByPlayerId &&
+    existing.knockdownShieldHealth === next.knockdownShieldHealth &&
+    existing.knockdownShieldMaxHealth === next.knockdownShieldMaxHealth &&
+    existing.knockdownShieldActive === next.knockdownShieldActive &&
     existing.ultimateCharge === next.ultimateCharge &&
     existing.onFireUntil === next.onFireUntil &&
     existing.powerupBoostUntil === next.powerupBoostUntil &&
@@ -1024,6 +1034,8 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.rank = normalizeRankSnapshot(vitals, player.rank);
   player.health = vitals.health;
   player.maxHealth = vitals.maxHealth;
+  player.shield = vitals.shield ?? 0;
+  player.maxShield = vitals.maxShield ?? 0;
   player.downedHealth = vitals.downedHealth ?? null;
   player.downedMaxHealth = vitals.downedMaxHealth ?? null;
   player.downedStartedAt = vitals.downedStartedAt ?? null;
@@ -1032,6 +1044,9 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.reviveStartedAt = vitals.reviveStartedAt ?? null;
   player.reviveCompletesAt = vitals.reviveCompletesAt ?? null;
   player.reviveByPlayerId = vitals.reviveByPlayerId ?? null;
+  player.knockdownShieldHealth = vitals.knockdownShieldHealth ?? null;
+  player.knockdownShieldMaxHealth = vitals.knockdownShieldMaxHealth ?? null;
+  player.knockdownShieldActive = vitals.knockdownShieldActive ?? false;
   player.ultimateCharge = vitals.ultimateCharge;
   player.onFireUntil = vitals.onFireUntil ?? null;
   player.powerupBoostUntil = vitals.powerupBoostUntil ?? null;
@@ -3127,6 +3142,25 @@ function handlePlayerDamagedMessage(data: PlayerDamagedEvent): void {
         ...targetPlayer,
         downedHealth: newDownedHealth,
       });
+    }
+  }
+
+  if (typeof data.newShield === 'number' && Number.isFinite(data.newShield)) {
+    const newShield = Math.max(0, data.newShield);
+    if (data.targetId === localPlayerId) {
+      const local = store.localPlayer;
+      const patch = local?.state === 'downed'
+        ? { knockdownShieldHealth: newShield, ...(newShield <= 0 ? { knockdownShieldActive: false } : {}) }
+        : { shield: newShield };
+      store.updateLocalPlayer(patch);
+    } else if (targetPlayer) {
+      store.updatePlayer(data.targetId, targetPlayer.state === 'downed'
+        ? {
+          ...targetPlayer,
+          knockdownShieldHealth: newShield,
+          ...(newShield <= 0 ? { knockdownShieldActive: false } : {}),
+        }
+        : { ...targetPlayer, shield: newShield });
     }
   }
 

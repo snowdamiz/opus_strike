@@ -1,6 +1,7 @@
 import {
   BATTLE_ROYAL_DOWNED_DURATION_MS,
   BATTLE_ROYAL_DOWNED_MAX_HP,
+  BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP,
   BATTLE_ROYAL_REVIVE_DURATION_MS,
   BATTLE_ROYAL_REVIVE_RADIUS,
   BATTLE_ROYAL_REVIVED_HEALTH,
@@ -74,6 +75,9 @@ function clearDownedFields(player: Player): void {
   player.reviveStartedAt = 0;
   player.reviveCompletesAt = 0;
   player.reviveByPlayerId = '';
+  player.knockdownShieldHealth = 0;
+  player.knockdownShieldMaxHealth = 0;
+  player.knockdownShieldActive = false;
 }
 
 export class BattleRoyalDownedRuntime {
@@ -123,6 +127,11 @@ export class BattleRoyalDownedRuntime {
     target.reviveStartedAt = 0;
     target.reviveCompletesAt = 0;
     target.reviveByPlayerId = '';
+    // Fresh knockdown shield each down; the player raises it with interact.
+    // Bots raise theirs immediately.
+    target.knockdownShieldHealth = BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP;
+    target.knockdownShieldMaxHealth = BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP;
+    target.knockdownShieldActive = target.isBot;
 
     this.deps.prepareDownedPlayer(target, now);
     this.deps.broadcastPlayerDowned({

@@ -146,6 +146,8 @@ export interface PlayerDamagedEvent {
   damageType: string;
   newHealth?: number;
   newDownedHealth?: number;
+  newShield?: number;
+  shieldDamage?: number;
   sourcePosition?: Vec3 | null;
   sourceDirection?: Vec3 | null;
   targetPosition?: Vec3 | null;
@@ -272,6 +274,8 @@ export interface PlayerVitalsSnapshot {
   rank?: PublicRankSnapshot;
   health: number;
   maxHealth: number;
+  shield?: number;
+  maxShield?: number;
   downedHealth?: number | null;
   downedMaxHealth?: number | null;
   downedStartedAt?: number | null;
@@ -280,6 +284,9 @@ export interface PlayerVitalsSnapshot {
   reviveStartedAt?: number | null;
   reviveCompletesAt?: number | null;
   reviveByPlayerId?: string | null;
+  knockdownShieldHealth?: number | null;
+  knockdownShieldMaxHealth?: number | null;
+  knockdownShieldActive?: boolean;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
