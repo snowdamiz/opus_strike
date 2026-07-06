@@ -109,7 +109,7 @@ export function EditableHudItem({
     rect.width / Math.max(1, defaultRect.width),
     rect.height / Math.max(1, defaultRect.height)
   );
-  const boundedContentScale = Math.max(0.45, Math.min(2.25, contentScale));
+  const boundedContentScale = Math.max(0.2, Math.min(2.25, contentScale));
 
   const mobileLayoutStyle = useMemo(() => ({
     ...mobileStyle,
@@ -118,6 +118,10 @@ export function EditableHudItem({
     width: `${rect.width}vw`,
     height: `${rect.height}vh`,
     transform: 'none',
+    '--mobile-hud-layout-x': `${rect.x}vw`,
+    '--mobile-hud-layout-y': `${rect.y}vh`,
+    '--mobile-hud-layout-width': `${rect.width}vw`,
+    '--mobile-hud-layout-height': `${rect.height}vh`,
     '--mobile-hud-layout-scale': boundedContentScale,
     '--mobile-hud-layout-content-width': `${100 / boundedContentScale}%`,
     '--mobile-hud-layout-content-height': `${100 / boundedContentScale}%`,

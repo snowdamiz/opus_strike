@@ -42,7 +42,7 @@ export function MobileAccessGate({ access }: MobileAccessGateProps) {
             </button>
             {!access.isRequestFullscreenSupported && (
               <p className="mobile-access-gate-help">
-                This browser cannot start fullscreen from the page. Add Slop Heroes to your Home Screen, then reopen it.
+                This browser cannot start fullscreen from the page. Use a browser with fullscreen support to continue.
               </p>
             )}
           </div>

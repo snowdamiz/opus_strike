@@ -89,8 +89,8 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
   'mobile-joystick': {
     label: 'Move stick',
     defaultRect: { x: 1.4, y: 70.5, width: 12.2, height: 26.3 },
-    minWidth: 9,
-    minHeight: 18,
+    minWidth: 5.2,
+    minHeight: 11.2,
     maxWidth: 28,
     maxHeight: 48,
     lockAspectRatio: true,
@@ -318,8 +318,21 @@ export function clampMobileHudLayoutRect(
   rect: MobileHudLayoutRect
 ): MobileHudLayoutRect {
   const definition = MOBILE_HUD_LAYOUT_DEFINITIONS[id];
-  const width = Math.min(definition.maxWidth, Math.max(definition.minWidth, readNumber(rect.width, definition.defaultRect.width)));
-  const height = Math.min(definition.maxHeight, Math.max(definition.minHeight, readNumber(rect.height, definition.defaultRect.height)));
+  let width = Math.min(definition.maxWidth, Math.max(definition.minWidth, readNumber(rect.width, definition.defaultRect.width)));
+  let height = Math.min(definition.maxHeight, Math.max(definition.minHeight, readNumber(rect.height, definition.defaultRect.height)));
+
+  if (definition.lockAspectRatio) {
+    const defaultWidth = Math.max(1, definition.defaultRect.width);
+    const defaultHeight = Math.max(1, definition.defaultRect.height);
+    const requestedScale = Math.min(width / defaultWidth, height / defaultHeight);
+    const minScale = Math.max(definition.minWidth / defaultWidth, definition.minHeight / defaultHeight);
+    const maxScale = Math.min(definition.maxWidth / defaultWidth, definition.maxHeight / defaultHeight);
+    const scale = Math.min(maxScale, Math.max(minScale, requestedScale));
+
+    width = defaultWidth * scale;
+    height = defaultHeight * scale;
+  }
+
   const maxX = Math.max(0, 100 - width);
   const maxY = Math.max(0, 100 - height);
 

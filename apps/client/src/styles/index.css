@@ -798,146 +798,6 @@ body,
   pointer-events: none;
 }
 
-.pwa-install-toast {
-  position: absolute;
-  left: 50%;
-  bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
-  z-index: 125;
-  display: flex;
-  width: min(92vw, 28rem);
-  min-height: 3rem;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.625rem 0.75rem;
-  border: 1px solid rgb(var(--color-accent-primary) / 0.32);
-  border-radius: 0.5rem;
-  background:
-    linear-gradient(135deg, rgb(var(--color-accent-primary) / 0.16), transparent 46%),
-    linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.9), rgb(var(--color-strike-bg) / 0.86));
-  box-shadow:
-    0 16px 36px rgb(0 0 0 / 0.42),
-    0 0 28px rgb(var(--color-accent-primary) / 0.15),
-    inset 0 1px 0 rgb(255 255 255 / 0.08);
-  pointer-events: auto;
-  transform: translateX(-50%);
-  animation: pwa-install-toast-in 180ms ease-out both;
-  backdrop-filter: blur(12px) saturate(1.08);
-  -webkit-backdrop-filter: blur(12px) saturate(1.08);
-}
-
-.pwa-install-toast-icon {
-  display: flex;
-  width: 2rem;
-  height: 2rem;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(var(--color-accent-secondary) / 0.28);
-  border-radius: 0.5rem;
-  color: rgb(255 237 213);
-  background:
-    radial-gradient(circle at 50% 0%, rgb(255 255 255 / 0.18), transparent 64%),
-    rgb(var(--color-accent-primary) / 0.14);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12);
-}
-
-.pwa-install-toast-action {
-  flex: 0 0 auto;
-  min-width: 5.35rem;
-  min-height: 2.1rem;
-  border: 1px solid rgb(255 255 255 / 0.16);
-  border-radius: 0.5rem;
-  background: linear-gradient(135deg, rgb(var(--color-accent-primary)), rgb(var(--color-accent-primary-deep)));
-  color: white;
-  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
-  font-size: 0.95rem;
-  letter-spacing: 0.05em;
-  line-height: 1;
-  text-shadow: 0 1px 8px rgb(0 0 0 / 0.35);
-  transition: border-color 140ms ease, filter 140ms ease, transform 140ms ease;
-}
-
-.pwa-install-toast-action:hover:not(:disabled),
-.pwa-install-toast-action:focus-visible:not(:disabled) {
-  border-color: rgb(255 255 255 / 0.34);
-  filter: brightness(1.12);
-}
-
-.pwa-install-toast-action:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.pwa-install-toast-action:disabled {
-  cursor: wait;
-  opacity: 0.76;
-}
-
-.pwa-install-toast-dismiss {
-  display: flex;
-  width: 2.1rem;
-  height: 2.1rem;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(255 255 255 / 0.12);
-  border-radius: 0.5rem;
-  background: rgb(255 255 255 / 0.04);
-  color: rgb(255 255 255 / 0.7);
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
-}
-
-.pwa-install-toast-dismiss:hover,
-.pwa-install-toast-dismiss:focus-visible {
-  border-color: rgb(255 255 255 / 0.24);
-  background: rgb(255 255 255 / 0.1);
-  color: white;
-}
-
-.pwa-install-toast-dismiss:active {
-  transform: translateY(1px);
-}
-
-@keyframes pwa-install-toast-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 0.6rem) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-  }
-}
-
-@media (max-width: 640px) {
-  .pwa-install-toast {
-    bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
-    gap: 0.55rem;
-    padding: 0.55rem 0.6rem;
-  }
-
-  .pwa-install-toast-icon {
-    width: 1.85rem;
-    height: 1.85rem;
-  }
-
-  .pwa-install-toast-action {
-    min-width: 4.9rem;
-    font-size: 0.86rem;
-  }
-
-  .pwa-install-toast-dismiss {
-    width: 1.95rem;
-    height: 1.95rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pwa-install-toast {
-    animation: none;
-  }
-}
-
 /* ===== MOBILE PLAY CONTROLS ===== */
 .mobile-controls {
   --mobile-hero-color: rgb(var(--color-accent-primary));
@@ -984,6 +844,24 @@ body,
   -webkit-user-select: none;
 }
 
+.mobile-hud-layout-item[data-hud-layout-id] {
+  left: var(--mobile-hud-layout-x) !important;
+  top: var(--mobile-hud-layout-y) !important;
+  right: auto !important;
+  bottom: auto !important;
+  display: grid !important;
+  width: var(--mobile-hud-layout-width) !important;
+  height: var(--mobile-hud-layout-height) !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transform-origin: center !important;
+}
+
 .mobile-hud-layout-item-interactive,
 .mobile-hud-layout-item.is-editing {
   pointer-events: auto;
@@ -1012,6 +890,17 @@ body,
   height: var(--mobile-hud-layout-content-height, 100%) !important;
   transform: scale(var(--mobile-hud-layout-scale, 1));
   transform-origin: center;
+}
+
+.mobile-hud-layout-item[data-hud-layout-id] > .mobile-hud-layout-content {
+  width: var(--mobile-hud-layout-content-width, 100%) !important;
+  height: var(--mobile-hud-layout-content-height, 100%) !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: scale(var(--mobile-hud-layout-scale, 1)) !important;
+  transform-origin: center !important;
 }
 
 .mobile-hud-layout-item.is-editing .mobile-hud-layout-content {
@@ -1121,6 +1010,8 @@ body,
   position: relative;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   aspect-ratio: 1;
   border-radius: 999px;
   background:
@@ -1182,8 +1073,8 @@ body,
 
 .mobile-joystick-knob {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: calc(50% + var(--stick-offset-x, 0%));
+  top: calc(50% + var(--stick-offset-y, 0%));
   width: 39%;
   aspect-ratio: 1;
   border-radius: 999px;
@@ -1196,10 +1087,7 @@ body,
     0 9px 20px rgb(0 0 0 / 0.28),
     0 0 22px color-mix(in srgb, var(--mobile-hero-color) 24%, transparent),
     inset 0 1px 0 rgb(255 255 255 / 0.22);
-  transform: translate(
-    calc(-50% + (var(--stick-x) * clamp(2.1rem, 6.8vmin, 3rem))),
-    calc(-50% + (var(--stick-y) * clamp(2.1rem, 6.8vmin, 3rem)))
-  );
+  transform: translate(-50%, -50%);
 }
 
 .mobile-system-button,
