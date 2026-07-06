@@ -28,6 +28,7 @@ export interface RoomDamageContext {
   allowFriendlyFire?: boolean;
   bypassSpawnProtection?: boolean;
   bypassPersonalShield?: boolean;
+  bypassShield?: boolean;
   skipDamageBudget?: boolean;
 }
 
@@ -133,6 +134,20 @@ export class RoomDamageRuntime {
         const shield = player.abilities.get('phantom_personal_shield');
         if (shield) deactivateActiveAbility(shield);
       },
+      // Body shield while alive; knockdown shield (once raised) while downed.
+      getShield: (player) => (
+        player.state === 'downed'
+          ? (player.knockdownShieldActive ? player.knockdownShieldHealth : 0)
+          : player.shield
+      ),
+      setShield: (player, shield) => {
+        if (player.state === 'downed') {
+          player.knockdownShieldHealth = shield;
+          if (shield <= 0) player.knockdownShieldActive = false;
+        } else {
+          player.shield = shield;
+        }
+      },
       setRespawnTime: (player, respawnTime) => {
         player.respawnTime = respawnTime ?? 0;
       },
@@ -225,6 +240,7 @@ export class RoomDamageRuntime {
       allowFriendlyFire: context.allowFriendlyFire,
       bypassSpawnProtection: context.bypassSpawnProtection,
       bypassPersonalShield: context.bypassPersonalShield,
+      bypassShield: context.bypassShield,
       skipDamageBudget: context.skipDamageBudget,
       absorbDamage: (damageToApply) => {
         const aegisHit = source && !this.deps.shouldDamageBypassChronosAegis(damageType, context)
@@ -329,6 +345,9 @@ export class RoomDamageRuntime {
       sourcePosition: context.sourcePosition ?? null,
       sourceDirection: context.sourceDirection ?? null,
       personalShieldBroken: false,
+      shieldDamage: 0,
+      newShield: target.shield,
+      shieldBroken: false,
       downed: null,
       death,
     }, {
@@ -412,6 +431,8 @@ export class RoomDamageRuntime {
       damageType: result.damageType,
       newHealth: result.newHealth,
       newDownedHealth: result.newDownedHealth,
+      newShield: result.newShield,
+      shieldDamage: result.shieldDamage,
       sourcePosition: result.sourcePosition,
       sourceDirection: result.sourceDirection,
       targetPosition: this.deps.vec3ToPlain(target.position),

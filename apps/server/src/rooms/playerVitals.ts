@@ -55,6 +55,8 @@ export interface FullPlayerVitalsSnapshotInput {
   rank?: PlayerVitalsSnapshot['rank'];
   health: number;
   maxHealth: number;
+  shield?: number;
+  maxShield?: number;
   downedHealth?: number | null;
   downedMaxHealth?: number | null;
   downedStartedAt?: number | null;
@@ -63,6 +65,9 @@ export interface FullPlayerVitalsSnapshotInput {
   reviveStartedAt?: number | null;
   reviveCompletesAt?: number | null;
   reviveByPlayerId?: string | null;
+  knockdownShieldHealth?: number | null;
+  knockdownShieldMaxHealth?: number | null;
+  knockdownShieldActive?: boolean;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
@@ -195,6 +200,8 @@ export function buildFullPlayerVitalsSnapshot(
     rank: input.rank,
     health: input.health,
     maxHealth: input.maxHealth,
+    shield: input.shield ?? 0,
+    maxShield: input.maxShield ?? 0,
     downedHealth: input.downedHealth ?? null,
     downedMaxHealth: input.downedMaxHealth ?? null,
     downedStartedAt: input.downedStartedAt ?? null,
@@ -203,6 +210,9 @@ export function buildFullPlayerVitalsSnapshot(
     reviveStartedAt: input.reviveStartedAt ?? null,
     reviveCompletesAt: input.reviveCompletesAt ?? null,
     reviveByPlayerId: input.reviveByPlayerId ?? null,
+    knockdownShieldHealth: input.knockdownShieldHealth ?? null,
+    knockdownShieldMaxHealth: input.knockdownShieldMaxHealth ?? null,
+    knockdownShieldActive: input.knockdownShieldActive ?? false,
     ultimateCharge: input.ultimateCharge,
     onFireUntil: input.onFireUntil ?? null,
     powerupBoostUntil: input.powerupBoostUntil ?? null,
@@ -290,6 +300,8 @@ export function buildPublicEnemyVitalsSnapshot(input: {
     rank: input.rank,
     health: input.maxHealth,
     maxHealth: input.maxHealth,
+    shield: 0,
+    maxShield: 0,
     downedHealth: null,
     downedMaxHealth: null,
     downedStartedAt: null,
@@ -298,6 +310,9 @@ export function buildPublicEnemyVitalsSnapshot(input: {
     reviveStartedAt: null,
     reviveCompletesAt: null,
     reviveByPlayerId: null,
+    knockdownShieldHealth: null,
+    knockdownShieldMaxHealth: null,
+    knockdownShieldActive: false,
     ultimateCharge: 0,
     onFireUntil: null,
     powerupBoostUntil: null,
@@ -468,6 +483,8 @@ export function haveVitalsChanged(
     previous.visibility !== next.visibility ||
     previous.health !== next.health ||
     previous.maxHealth !== next.maxHealth ||
+    Math.round(previous.shield ?? 0) !== Math.round(next.shield ?? 0) ||
+    previous.maxShield !== next.maxShield ||
     previous.downedHealth !== next.downedHealth ||
     previous.downedMaxHealth !== next.downedMaxHealth ||
     previous.downedStartedAt !== next.downedStartedAt ||
@@ -476,6 +493,9 @@ export function haveVitalsChanged(
     previous.reviveStartedAt !== next.reviveStartedAt ||
     previous.reviveCompletesAt !== next.reviveCompletesAt ||
     previous.reviveByPlayerId !== next.reviveByPlayerId ||
+    previous.knockdownShieldHealth !== next.knockdownShieldHealth ||
+    previous.knockdownShieldMaxHealth !== next.knockdownShieldMaxHealth ||
+    previous.knockdownShieldActive !== next.knockdownShieldActive ||
     Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
     previous.onFireUntil !== next.onFireUntil ||
     previous.powerupBoostUntil !== next.powerupBoostUntil ||

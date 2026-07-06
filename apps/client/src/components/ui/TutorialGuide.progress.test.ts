@@ -59,6 +59,46 @@ assert.equal(
   'crouch should complete once the player clears the low cover'
 );
 
+{
+  const history = createTutorialMovementHistory();
+  completions({
+    history,
+    movement: movement({ isCrouching: true }),
+    nowMs: 1_000,
+    playerZ: TUTORIAL_CROUCH_CLEAR_Z - 0.2,
+  });
+  assert.equal(
+    completions({
+      history,
+      movement: movement(),
+      nowMs: 1_400,
+      playerZ: TUTORIAL_CROUCH_CLEAR_Z,
+    }).includes('crouch'),
+    true,
+    'standing up as the cover releases the forced crouch should still count'
+  );
+}
+
+{
+  const history = createTutorialMovementHistory();
+  completions({
+    history,
+    movement: movement({ isCrouching: true }),
+    nowMs: 1_000,
+    playerZ: TUTORIAL_CROUCH_CLEAR_Z - 0.2,
+  });
+  assert.equal(
+    completions({
+      history,
+      movement: movement(),
+      nowMs: 3_000,
+      playerZ: TUTORIAL_CROUCH_CLEAR_Z,
+    }).includes('crouch'),
+    false,
+    'a crouch released long before clearing the cover should not count'
+  );
+}
+
 assert.equal(
   completions({
     movement: movement({ isSliding: true }),

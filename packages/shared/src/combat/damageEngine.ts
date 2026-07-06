@@ -35,6 +35,11 @@ export interface DamageEngineAdapter<TPlayer> {
   setUltimateCharge(player: TPlayer, charge: number): void;
   getPersonalShieldState?(player: TPlayer): Pick<AbilityState, 'isActive'> | null;
   deactivatePersonalShield?(player: TPlayer): void;
+  // Depletable shield pool that absorbs damage before health. The adapter
+  // decides which pool backs it (e.g. body shield while alive, knockdown
+  // shield while downed).
+  getShield?(player: TPlayer): number;
+  setShield?(player: TPlayer, shield: number): void;
   setRespawnTime?(player: TPlayer, respawnTime: number | null): void;
   addKill?(player: TPlayer): void;
   addDeath?(player: TPlayer): void;
@@ -86,6 +91,7 @@ export interface ApplyDamageInput<TPlayer> {
   allowFriendlyFire?: boolean;
   bypassSpawnProtection?: boolean;
   bypassPersonalShield?: boolean;
+  bypassShield?: boolean;
   skipDamageBudget?: boolean;
   absorbDamage?: (damage: number, context: DamageAbsorptionContext<TPlayer>) => DamageAbsorptionResult;
 }
@@ -134,6 +140,9 @@ export interface ApplyDamageResult<TPlayer> {
   sourcePosition: Vec3 | null;
   sourceDirection: Vec3 | null;
   personalShieldBroken: boolean;
+  shieldDamage: number;
+  newShield: number;
+  shieldBroken: boolean;
   downed: DamageDownedResolution<TPlayer> | null;
   newDownedHealth?: number;
   death: DamageDeathResolution<TPlayer> | null;
@@ -341,6 +350,9 @@ export function applyDamage<TPlayer>(
     sourcePosition,
     sourceDirection,
     personalShieldBroken: false,
+    shieldDamage: 0,
+    newShield: adapter.getShield?.(target) ?? 0,
+    shieldBroken: false,
     downed: null,
     death: null,
   });
@@ -387,6 +399,9 @@ export function applyDamage<TPlayer>(
       sourcePosition,
       sourceDirection,
       personalShieldBroken: true,
+      shieldDamage: 0,
+      newShield: adapter.getShield?.(target) ?? 0,
+      shieldBroken: false,
       downed: null,
       death: null,
     };
@@ -394,8 +409,19 @@ export function applyDamage<TPlayer>(
 
   damageToApply *= getDamageTakenMultiplier(adapter, target);
   const damage = Math.max(1, Math.round(damageToApply));
-  const appliedDamage = Math.min(targetHealth, damage);
-  const newHealth = Math.max(0, targetHealth - damage);
+
+  // Depletable shield pool absorbs before health.
+  const shieldBefore = input.bypassShield ? 0 : adapter.getShield?.(target) ?? 0;
+  const shieldDamage = Math.min(Math.max(0, shieldBefore), damage);
+  const newShield = Math.max(0, shieldBefore - shieldDamage);
+  if (shieldDamage > 0) {
+    adapter.setShield?.(target, newShield);
+  }
+  const shieldBroken = shieldDamage > 0 && newShield <= 0;
+
+  const healthDamage = damage - shieldDamage;
+  const appliedDamage = Math.min(targetHealth, healthDamage) + shieldDamage;
+  const newHealth = Math.max(0, targetHealth - healthDamage);
   if (damageDownedTarget) {
     adapter.setDownedHealth!(target, newHealth);
   } else {
@@ -440,6 +466,9 @@ export function applyDamage<TPlayer>(
     sourcePosition,
     sourceDirection,
     personalShieldBroken: false,
+    shieldDamage,
+    newShield: adapter.getShield?.(target) ?? 0,
+    shieldBroken,
     downed,
     newDownedHealth: damageDownedTarget ? adapter.getDownedHealth?.(target) : downed?.downedHealth,
     death,

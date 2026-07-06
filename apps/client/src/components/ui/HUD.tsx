@@ -694,6 +694,10 @@ function DownedStateHud({
   downedExpiresAt,
   reviveStartedAt,
   reviveCompletesAt,
+  knockdownShieldHealth,
+  knockdownShieldMaxHealth,
+  knockdownShieldActive,
+  raiseShieldKeyLabel,
 }: {
   playerState: Player['state'] | undefined;
   downedHealth: number | null | undefined;
@@ -703,6 +707,10 @@ function DownedStateHud({
   downedExpiresAt: number | null | undefined;
   reviveStartedAt: number | null | undefined;
   reviveCompletesAt: number | null | undefined;
+  knockdownShieldHealth: number | null | undefined;
+  knockdownShieldMaxHealth: number | null | undefined;
+  knockdownShieldActive: boolean;
+  raiseShieldKeyLabel: string;
 }) {
   const now = useHudNow();
   if (playerState !== 'downed') return null;
@@ -716,6 +724,9 @@ function DownedStateHud({
   const reviveProgress = getReviveProgress({ reviveStartedAt, reviveCompletesAt }, now);
   const isBeingRevived = Boolean(reviveByPlayerId);
   const downedHealthScale = getHudMeterScale(downedHealth, downedMaxHealth);
+  const knockdownShield = Math.max(0, knockdownShieldHealth ?? 0);
+  const knockdownShieldMax = Math.max(1, knockdownShieldMaxHealth ?? 1);
+  const canRaiseKnockdownShield = !knockdownShieldActive && knockdownShield > 0;
   const statusLabel = isBeingRevived ? 'REVIVING' : 'DOWNED';
   const statusTextColor = isBeingRevived ? 'text-cyan-100' : 'text-red-100';
   const statusLineColor = isBeingRevived
@@ -772,6 +783,36 @@ function DownedStateHud({
           <div className="absolute inset-0 bg-gradient-to-r from-white/20 via-transparent to-white/10" />
         </div>
 
+        {knockdownShieldActive && (
+          <div className="grid gap-1">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[0.64rem] font-black text-amber-100/85">SHIELD</span>
+              <span className="h-px flex-1 bg-gradient-to-r from-amber-100/38 to-transparent" />
+              <span className="font-mono text-[0.64rem] font-black tabular-nums text-amber-100/85">
+                {Math.ceil(knockdownShield)}
+              </span>
+            </div>
+            <div
+              className="relative h-1.5 overflow-hidden bg-amber-950/42 shadow-[0_0_0_1px_rgba(253,230,138,0.2),0_0_14px_rgba(251,191,36,0.18)]"
+              style={{ clipPath: 'polygon(0.4rem 0, 100% 0, calc(100% - 0.4rem) 100%, 0 100%)' }}
+            >
+              <div
+                className="h-full w-full origin-left bg-amber-300 transition-transform duration-100"
+                style={{
+                  transform: `scaleX(${getHudMeterScale(knockdownShield, knockdownShieldMax)})`,
+                  boxShadow: '0 0 10px rgba(252, 211, 77, 0.72)',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {canRaiseKnockdownShield && !isBeingRevived && (
+          <div className="font-mono text-[0.68rem] font-bold tracking-[0.2em] text-amber-100/80">
+            PRESS {raiseShieldKeyLabel} TO RAISE SHIELD
+          </div>
+        )}
+
         {isBeingRevived && (
           <div className="grid gap-1">
             <div className="flex items-center gap-2">
@@ -796,6 +837,139 @@ function DownedStateHud({
     </EditableHudItem>
   );
 }
+
+const EMPTY_SQUADMATES: Player[] = [];
+
+function SquadmateEntry({ teammate }: { teammate: Player }) {
+  const now = useHudNow();
+  const isDowned = teammate.state === 'downed';
+  const isDead = teammate.state === 'dead';
+  const isBeingRevived = isDowned && Boolean(teammate.reviveByPlayerId);
+  const accent = teammate.heroId ? HUD_HERO_COLORS[teammate.heroId].primary : '#94a3b8';
+
+  const meterValue = isDowned ? Math.max(0, teammate.downedHealth ?? 0) : teammate.health;
+  const meterMax = isDowned ? Math.max(1, teammate.downedMaxHealth ?? 1) : teammate.maxHealth;
+  const meterScale = isDead ? 0 : getHudMeterScale(meterValue, meterMax);
+  const reviveProgress = isBeingRevived ? getReviveProgress(teammate, now) : 0;
+  const shieldValue = isDowned
+    ? (teammate.knockdownShieldActive ? Math.max(0, teammate.knockdownShieldHealth ?? 0) : 0)
+    : Math.max(0, teammate.shield ?? 0);
+  const shieldMax = isDowned
+    ? Math.max(1, teammate.knockdownShieldMaxHealth ?? 1)
+    : Math.max(1, teammate.maxShield ?? 1);
+  const showShieldBar = !isDead && (isDowned ? teammate.knockdownShieldActive === true : (teammate.maxShield ?? 0) > 0);
+  const shieldColor = isDowned ? '#fcd34d' : '#38bdf8';
+
+  const statusLabel = isDead ? 'DEAD' : isBeingRevived ? 'REVIVING' : isDowned ? 'DOWNED' : null;
+  const statusColor = isDead ? 'text-white/45' : isBeingRevived ? 'text-cyan-300' : 'text-red-300';
+  const meterColor = isDowned
+    ? 'linear-gradient(90deg, rgba(239, 68, 68, 0.95), rgba(248, 113, 113, 0.85))'
+    : accent;
+
+  return (
+    <div
+      className={`w-[clamp(8.75rem,14vw,13rem)] rounded-md border border-white/10 bg-black/40 px-2 py-1.5 backdrop-blur-[2px] ${isDead ? 'opacity-55' : ''}`}
+      aria-label={`${teammate.name}: ${statusLabel ?? `${Math.round(meterValue)} health`}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className="truncate font-mono text-[0.68rem] font-bold tracking-wide text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+          style={{ color: isDead ? 'rgba(255,255,255,0.5)' : accent }}
+        >
+          {teammate.name}
+        </span>
+        {statusLabel && (
+          <span className={`font-mono text-[0.58rem] font-black tracking-[0.18em] ${statusColor} ${isDowned && !isBeingRevived ? 'animate-pulse' : ''}`}>
+            {statusLabel}
+          </span>
+        )}
+      </div>
+      {showShieldBar && (
+        <div
+          className="mt-1 h-1 overflow-hidden rounded-full"
+          style={{
+            background: 'rgba(0, 0, 0, 0.42)',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+          }}
+        >
+          <div
+            className="h-full w-full origin-left rounded-full transition-transform duration-150"
+            style={{
+              transform: `scaleX(${getHudMeterScale(shieldValue, shieldMax)})`,
+              background: shieldColor,
+              boxShadow: `0 0 8px ${shieldColor}55`,
+            }}
+          />
+        </div>
+      )}
+      <div
+        className="mt-1 h-1.5 overflow-hidden rounded-full"
+        style={{
+          background: 'rgba(0, 0, 0, 0.42)',
+          border: '1px solid rgba(255, 255, 255, 0.14)',
+        }}
+      >
+        <div
+          className="h-full w-full origin-left rounded-full transition-transform duration-150"
+          style={{
+            transform: `scaleX(${meterScale})`,
+            background: meterColor,
+            boxShadow: isDowned ? '0 0 8px rgba(248, 113, 113, 0.6)' : `0 0 8px ${accent}55`,
+          }}
+        />
+      </div>
+      {isBeingRevived && (
+        <div className="mt-1 h-1 overflow-hidden rounded-full bg-cyan-950/50">
+          <div
+            className="h-full w-full origin-left rounded-full bg-cyan-300 transition-transform duration-100"
+            style={{ transform: `scaleX(${reviveProgress})`, boxShadow: '0 0 8px rgba(103, 232, 249, 0.7)' }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SquadmatesHud = memo(function SquadmatesHud() {
+  const teammates = useGameStore(
+    useShallow((state) => {
+      const local = state.localPlayer;
+      if (!local || state.gamePhase !== 'playing') return EMPTY_SQUADMATES;
+
+      const list: Player[] = [];
+      for (const candidate of state.players.values()) {
+        if (candidate.id === local.id || candidate.team !== local.team) continue;
+        if (candidate.role === 'observer') continue;
+        if (candidate.state === 'spectating' || candidate.state === 'selecting') continue;
+        list.push(candidate);
+      }
+      list.sort((left, right) => left.id.localeCompare(right.id));
+      return list.length > 0 ? list : EMPTY_SQUADMATES;
+    })
+  );
+
+  if (teammates.length === 0) return null;
+
+  return (
+    <EditableHudItem
+      id="hud-squad"
+      label="Squad"
+      desktopClassName="absolute hud-scale hud-squad"
+      desktopStyle={{
+        left: 'clamp(0.75rem, 1.25vw, 1.125rem)',
+        bottom: 'clamp(2.5rem, 4.5vh, 3.5rem)',
+      }}
+      mobileClassName="hud-scale hud-squad z-[125]"
+      contentClassName="flex h-full w-full flex-col justify-end gap-1.5"
+    >
+      <div className="flex flex-col gap-1.5">
+        {teammates.map((teammate) => (
+          <SquadmateEntry key={teammate.id} teammate={teammate} />
+        ))}
+      </div>
+    </EditableHudItem>
+  );
+});
 
 function ReviveChannelHud({
   target,
@@ -1528,6 +1702,11 @@ export function HUD() {
     localPlayerState,
     localHealth,
     localMaxHealth,
+    localShield,
+    localMaxShield,
+    localKnockdownShieldHealth,
+    localKnockdownShieldMaxHealth,
+    localKnockdownShieldActive,
     localDownedHealth,
     localDownedMaxHealth,
     localDownedRemainingMs,
@@ -1585,6 +1764,11 @@ export function HUD() {
       localPlayerState: state.localPlayer?.state,
       localHealth: state.localPlayer?.health,
       localMaxHealth: state.localPlayer?.maxHealth,
+      localShield: state.localPlayer?.shield ?? 0,
+      localMaxShield: state.localPlayer?.maxShield ?? 0,
+      localKnockdownShieldHealth: state.localPlayer?.knockdownShieldHealth,
+      localKnockdownShieldMaxHealth: state.localPlayer?.knockdownShieldMaxHealth,
+      localKnockdownShieldActive: state.localPlayer?.knockdownShieldActive ?? false,
       localDownedHealth: state.localPlayer?.downedHealth,
       localDownedMaxHealth: state.localPlayer?.downedMaxHealth,
       localDownedRemainingMs: state.localPlayer?.downedRemainingMs,
@@ -1642,12 +1826,14 @@ export function HUD() {
     crosshairColor,
     showKillFeed,
     interactKeybind,
+    primaryFireKeybind,
   } = useSettingsStore(
     useShallow(state => ({
       crosshairStyle: state.settings.crosshairStyle,
       crosshairColor: state.settings.crosshairColor,
       showKillFeed: state.settings.showKillFeed,
       interactKeybind: state.settings.keybindings.interact,
+      primaryFireKeybind: state.settings.keybindings.primaryFire,
     }))
   );
   const {
@@ -1871,6 +2057,10 @@ export function HUD() {
           downedExpiresAt={localDownedExpiresAt}
           reviveStartedAt={localReviveStartedAt}
           reviveCompletesAt={localReviveCompletesAt}
+          knockdownShieldHealth={localKnockdownShieldHealth}
+          knockdownShieldMaxHealth={localKnockdownShieldMaxHealth}
+          knockdownShieldActive={localKnockdownShieldActive}
+          raiseShieldKeyLabel={formatKeybind(primaryFireKeybind)}
         />
       )}
       {gameplayMode === 'battle_royal' && (
@@ -2091,6 +2281,25 @@ export function HUD() {
         contentClassName="grid h-full w-full place-items-center"
       >
         <div className="relative w-[clamp(8.75rem,14vw,13rem)]">
+          {localMaxShield > 0 && !isLocalDowned && (
+            <div
+              className="mb-1 h-1.5 rounded-full overflow-hidden"
+              style={{
+                background: 'rgba(0, 0, 0, 0.42)',
+                border: '1px solid rgba(255, 255, 255, 0.16)',
+                boxShadow: '0 1px 8px rgba(0, 0, 0, 0.35)',
+              }}
+            >
+              <div
+                className="h-full w-full origin-left rounded-full transition-transform duration-150"
+                style={{
+                  transform: `scaleX(${getHudMeterScale(localShield, localMaxShield)})`,
+                  background: '#38bdf8',
+                  boxShadow: '0 0 10px rgba(56, 189, 248, 0.4)',
+                }}
+              />
+            </div>
+          )}
           <div
             className="h-2 sm:h-2.5 rounded-full overflow-hidden"
             style={{
@@ -2113,6 +2322,9 @@ export function HUD() {
 
         </div>
       </EditableHudItem>
+
+      {/* ===== LEFT - Squadmate vitals (above own health) ===== */}
+      <SquadmatesHud />
 
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
       {heroSkillItems.length > 0 && !suppressCombatHud && (

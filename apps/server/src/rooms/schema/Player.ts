@@ -32,6 +32,13 @@ export class Player extends Schema {
   // Runtime vitals; streamed through playerVitals instead of Colyseus patches.
   health: number = 100;
   maxHealth: number = 100;
+  // Battle-royale body shield; absorbs damage before health while alive.
+  shield: number = 0;
+  maxShield: number = 0;
+  // Battle-royale knockdown shield; absorbs damage to downedHealth once raised.
+  knockdownShieldHealth: number = 0;
+  knockdownShieldMaxHealth: number = 0;
+  knockdownShieldActive: boolean = false;
   downedHealth: number = 0;
   downedMaxHealth: number = 0;
   downedStartedAt: number = 0;

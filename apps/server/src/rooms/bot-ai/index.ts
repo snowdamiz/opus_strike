@@ -1397,6 +1397,11 @@ export function updateBotMovementRecoveryState(input: BotMovementRecoveryInput):
       routeGraph: input.routeGraph,
       targetPosition: routePlan.targetPosition,
       blockerDirection: brain.movementProgress.blockerDirection,
+    }) ?? selectPerpendicularRecoveryDetour({
+      bot,
+      targetPosition: routePlan.targetPosition,
+      blockerDirection: brain.movementProgress.blockerDirection,
+      stallStrikeCount: progress.stallStrikeCount,
     });
     if (detourTarget) {
       brain.movementProgress.detourTarget = detourTarget;
@@ -1471,6 +1476,30 @@ function selectMovementRecoveryDetour(input: {
   }
 
   return bestNode ? { ...bestNode.position } : null;
+}
+
+// Last-resort detour for walls with no usable route-graph node nearby (common
+// when the safe zone shrinks into off-road terrain): sidestep perpendicular to
+// the blocker, alternating sides on successive stall strikes so the bot walks
+// the wall until it finds an opening.
+function selectPerpendicularRecoveryDetour(input: {
+  bot: BotPlayerSnapshot;
+  targetPosition: PlainVec3;
+  blockerDirection: PlainVec2 | null;
+  stallStrikeCount: number;
+}): PlainVec3 | null {
+  const blocker = input.blockerDirection
+    ? normalize2D(input.blockerDirection)
+    : direction2DFromTo(input.bot.position, input.targetPosition);
+  if (!blocker) return null;
+
+  const side = input.stallStrikeCount % 2 === 0 ? 1 : -1;
+  const detourDistance = 12;
+  return {
+    x: input.bot.position.x - blocker.z * side * detourDistance,
+    y: input.bot.position.y,
+    z: input.bot.position.z + blocker.x * side * detourDistance,
+  };
 }
 
 function randomBetweenWith(random: () => number, min: number, max: number): number {

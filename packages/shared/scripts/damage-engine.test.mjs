@@ -52,6 +52,21 @@ function adapter(players) {
     deactivatePersonalShield: (entry) => {
       entry.shieldActive = false;
     },
+    // Mirrors the room adapter: body shield while alive, knockdown shield
+    // (once raised) while downed.
+    getShield: (entry) => (
+      entry.state === 'downed'
+        ? (entry.knockdownShieldActive ? entry.knockdownShieldHealth ?? 0 : 0)
+        : entry.shield ?? 0
+    ),
+    setShield: (entry, shield) => {
+      if (entry.state === 'downed') {
+        entry.knockdownShieldHealth = shield;
+        if (shield <= 0) entry.knockdownShieldActive = false;
+      } else {
+        entry.shield = shield;
+      }
+    },
     setRespawnTime: (entry, respawnTime) => {
       entry.respawnTime = respawnTime;
     },
@@ -260,6 +275,140 @@ function adapter(players) {
   assert.equal(bypassResult.applied, true);
   assert.equal(bypassResult.damage, 10);
   assert.equal(target.health, 90);
+}
+
+{
+  // Body shield absorbs fully; health untouched, hit still counts as applied.
+  const target = player('target', 'blue', { shield: 50, maxShield: 50 });
+  const source = player('source', 'red');
+  const players = new Map([target, source].map((entry) => [entry.id, entry]));
+  const result = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+  }, {
+    target,
+    source,
+    rawDamage: 30,
+    damageType: 'shield_test',
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.shieldDamage, 30);
+  assert.equal(result.newShield, 20);
+  assert.equal(result.shieldBroken, false);
+  assert.equal(target.shield, 20);
+  assert.equal(target.health, 100);
+  assert.equal(result.newHealth, 100);
+}
+
+{
+  // Body shield breaks and the remainder carries into health in one hit.
+  const target = player('target', 'blue', { shield: 50, maxShield: 50 });
+  const source = player('source', 'red');
+  const players = new Map([target, source].map((entry) => [entry.id, entry]));
+  const result = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+  }, {
+    target,
+    source,
+    rawDamage: 70,
+    damageType: 'shield_test',
+  });
+
+  assert.equal(result.shieldDamage, 50);
+  assert.equal(result.newShield, 0);
+  assert.equal(result.shieldBroken, true);
+  assert.equal(result.appliedDamage, 70);
+  assert.equal(target.shield, 0);
+  assert.equal(target.health, 80);
+}
+
+{
+  // bypassShield (safe-zone ring damage) hits health directly.
+  const target = player('target', 'blue', { shield: 50, maxShield: 50 });
+  const players = new Map([[target.id, target]]);
+  const result = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+  }, {
+    target,
+    rawDamage: 25,
+    damageType: 'safe_zone',
+    bypassShield: true,
+  });
+
+  assert.equal(result.shieldDamage, 0);
+  assert.equal(target.shield, 50);
+  assert.equal(target.health, 75);
+}
+
+{
+  // Raised knockdown shield absorbs downed damage and deactivates when broken.
+  const target = player('target', 'blue', {
+    state: 'downed',
+    health: 0,
+    downedHealth: BATTLE_ROYAL_DOWNED_MAX_HP,
+    knockdownShieldHealth: 40,
+    knockdownShieldMaxHealth: 150,
+    knockdownShieldActive: true,
+  });
+  const source = player('source', 'red');
+  const players = new Map([target, source].map((entry) => [entry.id, entry]));
+  const result = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+    damageDownedPlayers: true,
+  }, {
+    target,
+    source,
+    rawDamage: 60,
+    damageType: 'shield_test',
+  });
+
+  assert.equal(result.shieldDamage, 40);
+  assert.equal(result.shieldBroken, true);
+  assert.equal(target.knockdownShieldHealth, 0);
+  assert.equal(target.knockdownShieldActive, false);
+  assert.equal(target.downedHealth, BATTLE_ROYAL_DOWNED_MAX_HP - 20);
+}
+
+{
+  // Unraised knockdown shield offers no protection.
+  const target = player('target', 'blue', {
+    state: 'downed',
+    health: 0,
+    downedHealth: BATTLE_ROYAL_DOWNED_MAX_HP,
+    knockdownShieldHealth: 150,
+    knockdownShieldMaxHealth: 150,
+    knockdownShieldActive: false,
+  });
+  const source = player('source', 'red');
+  const players = new Map([target, source].map((entry) => [entry.id, entry]));
+  const result = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+    damageDownedPlayers: true,
+  }, {
+    target,
+    source,
+    rawDamage: 30,
+    damageType: 'shield_test',
+  });
+
+  assert.equal(result.shieldDamage, 0);
+  assert.equal(target.knockdownShieldHealth, 150);
+  assert.equal(target.downedHealth, BATTLE_ROYAL_DOWNED_MAX_HP - 30);
 }
 
 {
