@@ -1,9 +1,8 @@
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   getAssociatedTokenAddress,
-  TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
@@ -40,10 +39,21 @@ import {
   type MatchKillEventSnapshot,
   type MatchParticipantSnapshot,
 } from '../persistence/matchPersistence';
-import { getSettlementKeypair } from '../wagers/config';
-import { getSplTokenMintDecimals } from '../cosmetics/tokenPayments';
+import { getPlayerRewardRuntimeConfig } from '../rewards/config';
 import { playerRewardService } from '../rewards/service';
+import { computeUsdCentsToLamports, solUsdPriceService } from '../rewards/solPrice';
 import { loggers } from '../utils/logger';
+import { getSettlementKeypair, getWagerRuntimeConfig } from '../wagers/config';
+import {
+  buildBurnCheckedTransaction,
+  buildJupiterSwapTransaction,
+  extractTokenAccountMintDelta,
+  fetchJupiterSwapBuild,
+  getWagerGameTokenRuntime,
+  WAGER_NATIVE_SOL_MINT,
+  type JupiterSwapBuildResponse,
+  type WagerGameTokenRuntime,
+} from '../wagers/tokenConversion';
 import {
   MissionValidationError,
   parseMissionDefinitionPayload,
@@ -56,6 +66,7 @@ const ADMIN_AUDIT_LIMIT = 75;
 const TOKEN_PAYOUT_BATCH_SIZE = 25;
 const TOKEN_PAYOUT_MAX_ATTEMPTS = 6;
 const MISSION_PROGRESS_SCOPE_KEY = 'lifetime';
+const MISSION_REWARD_BPS_TOTAL = 10_000;
 
 export interface SettleMatchDailyMissionsInput {
   matchId: string;
@@ -141,7 +152,23 @@ interface RewardGrantCreationResult {
   tokenPayoutIds: string[];
 }
 
+interface GameTokenRewardSplit {
+  recipientAmountBaseUnits: bigint;
+  burnAmountBaseUnits: bigint;
+}
+
+interface ResolvedGameTokenPayout extends GameTokenRewardSplit {
+  totalAmountBaseUnits: bigint;
+  tokenDecimals: number;
+  tokenProgramId: PublicKey;
+  treasuryTokenAccount: PublicKey;
+  quotedSwapBuild: JupiterSwapBuildResponse | null;
+}
+
 type MissionTx = Prisma.TransactionClient;
+type GameTokenPayoutForProcessing = Prisma.GameTokenPayoutGetPayload<{
+  include: { missionRewardGrant: true };
+}>;
 
 function prismaJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -422,6 +449,58 @@ function getGameTokenRpcUrl(): string {
   return process.env.SOLANA_RPC_URL?.trim()
     || process.env.RANKED_TOKEN_HOLD_RPC_URL?.trim()
     || '';
+}
+
+function gameTokenRewardPlayerShareBps(reward: Extract<DailyMissionReward, { type: 'game_token' }>): number {
+  return typeof reward.playerShareBps === 'number' && Number.isInteger(reward.playerShareBps)
+    ? reward.playerShareBps
+    : MISSION_REWARD_BPS_TOTAL;
+}
+
+function gameTokenRewardBurnShareBps(reward: Extract<DailyMissionReward, { type: 'game_token' }>): number {
+  return typeof reward.burnShareBps === 'number' && Number.isInteger(reward.burnShareBps)
+    ? reward.burnShareBps
+    : 0;
+}
+
+function splitGameTokenRewardAmount(input: {
+  totalAmountBaseUnits: bigint;
+  playerShareBps: number;
+  burnShareBps: number;
+}): GameTokenRewardSplit {
+  if (input.totalAmountBaseUnits < 0n) throw new Error('Game token reward amount cannot be negative');
+  if (
+    input.playerShareBps < 0
+    || input.burnShareBps < 0
+    || input.playerShareBps + input.burnShareBps !== MISSION_REWARD_BPS_TOTAL
+  ) {
+    throw new Error('Game token reward player and burn shares must total 10000 bps');
+  }
+  const recipientAmountBaseUnits = (
+    input.totalAmountBaseUnits * BigInt(input.playerShareBps)
+  ) / BigInt(MISSION_REWARD_BPS_TOTAL);
+  return {
+    recipientAmountBaseUnits,
+    burnAmountBaseUnits: input.totalAmountBaseUnits - recipientAmountBaseUnits,
+  };
+}
+
+function fixedGameTokenRewardAmount(reward: Extract<DailyMissionReward, { type: 'game_token' }>): bigint | null {
+  if (reward.pricingMode === 'usd' || reward.usdCents !== undefined) return null;
+  if (!reward.amountBaseUnits) throw new Error('Game token reward amount is required');
+  return BigInt(reward.amountBaseUnits);
+}
+
+function readPositiveBigintString(value: string, fieldName: string): bigint {
+  if (!/^[0-9]+$/.test(value)) throw new Error(`${fieldName} must be an unsigned integer string`);
+  const parsed = BigInt(value);
+  if (parsed <= 0n) throw new Error(`${fieldName} must be greater than zero`);
+  return parsed;
+}
+
+function readPositiveOrZeroBigintString(value: string, fieldName: string): bigint {
+  if (!/^[0-9]+$/.test(value)) throw new Error(`${fieldName} must be an unsigned integer string`);
+  return BigInt(value);
 }
 
 export class DailyMissionService {
@@ -1006,12 +1085,23 @@ export class DailyMissionService {
     }
   ): Promise<string | null> {
     const token = getGameTokenConfig();
+    const fixedAmountBaseUnits = fixedGameTokenRewardAmount(input.reward);
+    const playerShareBps = gameTokenRewardPlayerShareBps(input.reward);
+    const burnShareBps = gameTokenRewardBurnShareBps(input.reward);
+    const fixedSplit = fixedAmountBaseUnits === null
+      ? null
+      : splitGameTokenRewardAmount({
+        totalAmountBaseUnits: fixedAmountBaseUnits,
+        playerShareBps,
+        burnShareBps,
+      });
+    const rewardUsdCents = fixedAmountBaseUnits === null ? input.reward.usdCents ?? null : null;
     const baseGrantData = {
       userId: input.userId,
       missionId: input.missionId,
       dayKey: input.dayKey,
       rewardType: 'game_token' as const,
-      amountBaseUnits: BigInt(input.reward.amountBaseUnits),
+      amountBaseUnits: fixedAmountBaseUnits,
       idempotencyKey: input.idempotencyKey,
       metadata: prismaJson(input.metadata),
     };
@@ -1025,7 +1115,7 @@ export class DailyMissionService {
       });
       return null;
     }
-    if (!input.walletAddress) {
+    if (playerShareBps > 0 && !input.walletAddress) {
       await tx.missionRewardGrant.create({
         data: {
           ...baseGrantData,
@@ -1042,7 +1132,12 @@ export class DailyMissionService {
         walletAddress: input.walletAddress,
         tokenMintAddress: token.mintAddress,
         tokenSymbol: token.symbol,
-        tokenAmountBaseUnits: BigInt(input.reward.amountBaseUnits),
+        tokenAmountBaseUnits: fixedAmountBaseUnits ?? 0n,
+        recipientAmountBaseUnits: fixedSplit?.recipientAmountBaseUnits ?? null,
+        burnAmountBaseUnits: fixedSplit?.burnAmountBaseUnits ?? null,
+        playerShareBps,
+        burnShareBps,
+        rewardUsdCents,
         idempotencyKey: input.idempotencyKey,
       },
     });
@@ -1083,10 +1178,10 @@ export class DailyMissionService {
     let totalBaseUnits = 0n;
     for (const payout of payouts) {
       try {
-        const paid = await this.payGameTokenPayout(payout.id);
-        if (paid) {
+        const paidAmount = await this.payGameTokenPayout(payout.id);
+        if (paidAmount !== null) {
           payoutCount += 1;
-          totalBaseUnits += payout.tokenAmountBaseUnits;
+          totalBaseUnits += paidAmount;
         }
       } catch (error) {
         loggers.room.error('Daily mission game-token payout failed', {
@@ -1100,7 +1195,7 @@ export class DailyMissionService {
     return { payoutCount, totalBaseUnits: totalBaseUnits.toString() };
   }
 
-  private async payGameTokenPayout(payoutId: string): Promise<boolean> {
+  private async payGameTokenPayout(payoutId: string): Promise<bigint | null> {
     const claim = await prisma.gameTokenPayout.updateMany({
       where: {
         id: payoutId,
@@ -1114,27 +1209,53 @@ export class DailyMissionService {
         failedAt: null,
       },
     });
-    if (claim.count !== 1) return false;
+    if (claim.count !== 1) return null;
 
     const payout = await prisma.gameTokenPayout.findUnique({
       where: { id: payoutId },
       include: { missionRewardGrant: true },
     });
-    if (!payout) return false;
+    if (!payout) return null;
 
     try {
-      const transfer = await this.sendGameTokenTransfer({
+      const signer = getSettlementKeypair();
+      if (!signer) throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for game token payouts');
+      const connection = this.getTokenConnection();
+      const runtime = await getWagerGameTokenRuntime(
+        connection,
+        payout.tokenMintAddress,
+        signer.publicKey.toBase58()
+      );
+      const resolved = await this.resolveGameTokenPayout({
+        payout,
+        signer,
+        runtime,
+      });
+      await this.ensureGameTokenTreasuryBalance({
+        payoutId: payout.id,
+        signer,
+        runtime,
+        requiredAmountBaseUnits: resolved.totalAmountBaseUnits,
+        quotedSwapBuild: resolved.quotedSwapBuild,
+      });
+
+      const transfer = await this.sendGameTokenRewardTransaction({
         walletAddress: payout.walletAddress,
         tokenMintAddress: payout.tokenMintAddress,
-        amountBaseUnits: payout.tokenAmountBaseUnits,
-        tokenDecimals: payout.tokenDecimals,
+        recipientAmountBaseUnits: resolved.recipientAmountBaseUnits,
+        burnAmountBaseUnits: resolved.burnAmountBaseUnits,
+        tokenDecimals: resolved.tokenDecimals,
+        tokenProgramId: resolved.tokenProgramId,
+        treasuryTokenAccount: resolved.treasuryTokenAccount,
         onSubmitted: async (payload) => {
           await prisma.gameTokenPayout.update({
             where: { id: payout.id },
             data: {
               status: 'submitted',
               signature: payload.signature,
+              burnSignature: payload.burnSignature,
               tokenDecimals: payload.tokenDecimals,
+              tokenProgramId: payload.tokenProgramId,
               treasuryTokenAccount: payload.treasuryTokenAccount,
               recipientTokenAccount: payload.recipientTokenAccount,
               submittedAt: new Date(),
@@ -1156,7 +1277,9 @@ export class DailyMissionService {
           data: {
             status: 'granted',
             signature: transfer.signature,
+            burnSignature: transfer.burnSignature,
             tokenDecimals: transfer.tokenDecimals,
+            tokenProgramId: transfer.tokenProgramId,
             treasuryTokenAccount: transfer.treasuryTokenAccount,
             recipientTokenAccount: transfer.recipientTokenAccount,
             grantedAt: transfer.confirmedAt,
@@ -1174,7 +1297,7 @@ export class DailyMissionService {
           }),
         ] : []),
       ]);
-      return true;
+      return resolved.totalAmountBaseUnits;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await prisma.$transaction([
@@ -1200,71 +1323,325 @@ export class DailyMissionService {
     }
   }
 
-  private async sendGameTokenTransfer(input: {
+  private async resolveGameTokenPayout(input: {
+    payout: GameTokenPayoutForProcessing;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+  }): Promise<ResolvedGameTokenPayout> {
+    const quotedSwapBuild = input.payout.tokenAmountBaseUnits > 0n
+      ? null
+      : await this.quoteUsdGameTokenPayout(input);
+    const totalAmountBaseUnits = input.payout.tokenAmountBaseUnits > 0n
+      ? input.payout.tokenAmountBaseUnits
+      : readPositiveBigintString(quotedSwapBuild?.outAmount ?? '', 'Jupiter game-token quote output');
+    const split = splitGameTokenRewardAmount({
+      totalAmountBaseUnits,
+      playerShareBps: input.payout.playerShareBps,
+      burnShareBps: input.payout.burnShareBps,
+    });
+    const recipientAmountBaseUnits = input.payout.recipientAmountBaseUnits ?? split.recipientAmountBaseUnits;
+    const burnAmountBaseUnits = input.payout.burnAmountBaseUnits ?? split.burnAmountBaseUnits;
+
+    if (input.payout.tokenAmountBaseUnits <= 0n) {
+      await prisma.$transaction([
+        prisma.gameTokenPayout.update({
+          where: { id: input.payout.id },
+          data: {
+            tokenAmountBaseUnits: totalAmountBaseUnits,
+            recipientAmountBaseUnits,
+            burnAmountBaseUnits,
+            tokenDecimals: input.runtime.decimals,
+            tokenProgramId: input.runtime.tokenProgramId.toBase58(),
+            treasuryTokenAccount: input.runtime.treasuryTokenAccount.toBase58(),
+          },
+        }),
+        ...(input.payout.missionRewardGrant ? [
+          prisma.missionRewardGrant.update({
+            where: { id: input.payout.missionRewardGrant.id },
+            data: { amountBaseUnits: totalAmountBaseUnits },
+          }),
+        ] : []),
+      ]);
+    }
+
+    if (recipientAmountBaseUnits <= 0n && burnAmountBaseUnits <= 0n) {
+      throw new Error('Game token payout resolved to zero tokens');
+    }
+    if (recipientAmountBaseUnits > 0n && !input.payout.walletAddress) {
+      throw new Error('Linked wallet required for game token payout');
+    }
+
+    return {
+      totalAmountBaseUnits,
+      recipientAmountBaseUnits,
+      burnAmountBaseUnits,
+      tokenDecimals: input.runtime.decimals,
+      tokenProgramId: input.runtime.tokenProgramId,
+      treasuryTokenAccount: input.runtime.treasuryTokenAccount,
+      quotedSwapBuild,
+    };
+  }
+
+  private async quoteUsdGameTokenPayout(input: {
+    payout: GameTokenPayoutForProcessing;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+  }): Promise<JupiterSwapBuildResponse> {
+    if (!input.payout.rewardUsdCents || input.payout.rewardUsdCents <= 0) {
+      throw new Error('USD-priced game token payout is missing rewardUsdCents');
+    }
+
+    const rewardConfig = getPlayerRewardRuntimeConfig();
+    const priceQuote = await solUsdPriceService.getFreshQuote(rewardConfig.payoutPriceQuoteTtlMs);
+    if (!priceQuote) throw new Error('SOL/USD price quote unavailable for game token payout');
+
+    const rewardSolLamports = computeUsdCentsToLamports(
+      input.payout.rewardUsdCents,
+      priceQuote.solUsdPriceMicroUsd
+    );
+    const config = getWagerRuntimeConfig();
+    const build = await fetchJupiterSwapBuild({
+      apiBaseUrl: config.jupiterSwapBaseUrl,
+      apiKey: config.jupiterApiKey,
+      inputMint: WAGER_NATIVE_SOL_MINT,
+      outputMint: input.runtime.mint.toBase58(),
+      swapMode: 'ExactIn',
+      amountLamports: rewardSolLamports,
+      taker: input.signer.publicKey.toBase58(),
+      payer: input.signer.publicKey.toBase58(),
+      destinationTokenAccount: input.runtime.treasuryTokenAccount.toBase58(),
+      slippageBps: config.jupiterSwapSlippageBps,
+    });
+
+    await prisma.gameTokenPayout.update({
+      where: { id: input.payout.id },
+      data: {
+        rewardSolLamports,
+        solUsdPriceMicroUsd: priceQuote.solUsdPriceMicroUsd,
+        priceSource: priceQuote.source,
+        priceObservedAt: priceQuote.observedAt,
+      },
+    });
+    return build;
+  }
+
+  private async ensureGameTokenTreasuryBalance(input: {
+    payoutId: string;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+    requiredAmountBaseUnits: bigint;
+    quotedSwapBuild: JupiterSwapBuildResponse | null;
+  }): Promise<void> {
+    const connection = this.getTokenConnection();
+    const balance = await this.getTokenAccountBalance(
+      connection,
+      input.runtime.treasuryTokenAccount
+    );
+    if (balance >= input.requiredAmountBaseUnits) return;
+
+    const missingBaseUnits = input.requiredAmountBaseUnits - balance;
+    const swapBuild = input.quotedSwapBuild ?? await this.quoteGameTokenTopUp({
+      signer: input.signer,
+      runtime: input.runtime,
+      amountBaseUnits: missingBaseUnits,
+    });
+    await this.sendGameTokenTopUpSwap({
+      payoutId: input.payoutId,
+      signer: input.signer,
+      runtime: input.runtime,
+      build: swapBuild,
+    });
+
+    const nextBalance = await this.getTokenAccountBalance(
+      connection,
+      input.runtime.treasuryTokenAccount
+    );
+    if (nextBalance < input.requiredAmountBaseUnits) {
+      throw new Error('Game token top-up swap did not cover the payout amount');
+    }
+  }
+
+  private async quoteGameTokenTopUp(input: {
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+    amountBaseUnits: bigint;
+  }): Promise<JupiterSwapBuildResponse> {
+    const config = getWagerRuntimeConfig();
+    return fetchJupiterSwapBuild({
+      apiBaseUrl: config.jupiterSwapBaseUrl,
+      apiKey: config.jupiterApiKey,
+      inputMint: WAGER_NATIVE_SOL_MINT,
+      outputMint: input.runtime.mint.toBase58(),
+      swapMode: 'ExactOut',
+      amountLamports: input.amountBaseUnits,
+      taker: input.signer.publicKey.toBase58(),
+      payer: input.signer.publicKey.toBase58(),
+      destinationTokenAccount: input.runtime.treasuryTokenAccount.toBase58(),
+      slippageBps: config.jupiterSwapSlippageBps,
+    });
+  }
+
+  private async sendGameTokenTopUpSwap(input: {
+    payoutId: string;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+    build: JupiterSwapBuildResponse;
+  }): Promise<void> {
+    const built = buildJupiterSwapTransaction({
+      build: input.build,
+      feePayer: input.signer.publicKey,
+      outputTokenAccount: input.runtime.treasuryTokenAccount,
+      outputMint: input.runtime.mint,
+      outputOwner: input.signer.publicKey,
+      outputTokenProgramId: input.runtime.tokenProgramId,
+    });
+    built.transaction.sign([input.signer]);
+
+    const connection = this.getTokenConnection();
+    const simulation = await connection.simulateTransaction(built.transaction, {
+      commitment: 'confirmed',
+      sigVerify: true,
+    });
+    if (simulation.value.err) {
+      throw new Error(`Game token top-up swap simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    }
+
+    const signature = await connection.sendRawTransaction(built.transaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await prisma.gameTokenPayout.update({
+      where: { id: input.payoutId },
+      data: {
+        conversionSignature: signature,
+        tokenProgramId: input.runtime.tokenProgramId.toBase58(),
+        treasuryTokenAccount: input.runtime.treasuryTokenAccount.toBase58(),
+        lastError: null,
+      },
+    });
+
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash: built.blockhash,
+      lastValidBlockHeight: built.lastValidBlockHeight,
+    }, 'confirmed');
+    if (confirmation.value.err) {
+      throw new Error(`Game token top-up swap failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    const convertedTokenBaseUnits = await this.getConfirmedTokenDelta({
+      connection,
+      signature,
+      tokenAccountAddress: input.runtime.treasuryTokenAccount.toBase58(),
+      mintAddress: input.runtime.mint.toBase58(),
+    });
+    await prisma.gameTokenPayout.update({
+      where: { id: input.payoutId },
+      data: { convertedTokenBaseUnits },
+    });
+  }
+
+  private async sendGameTokenRewardTransaction(input: {
     walletAddress: string | null;
     tokenMintAddress: string;
-    amountBaseUnits: bigint;
-    tokenDecimals: number | null;
+    recipientAmountBaseUnits: bigint;
+    burnAmountBaseUnits: bigint;
+    tokenDecimals: number;
+    tokenProgramId: PublicKey;
+    treasuryTokenAccount: PublicKey;
     onSubmitted(payload: {
       signature: string;
+      burnSignature: string | null;
       tokenDecimals: number;
+      tokenProgramId: string;
       treasuryTokenAccount: string;
-      recipientTokenAccount: string;
+      recipientTokenAccount: string | null;
     }): Promise<void>;
   }): Promise<{
     signature: string;
+    burnSignature: string | null;
     confirmedAt: Date;
     tokenDecimals: number;
+    tokenProgramId: string;
     treasuryTokenAccount: string;
-    recipientTokenAccount: string;
+    recipientTokenAccount: string | null;
   }> {
-    if (!input.walletAddress) throw new Error('Linked wallet required for game token payout');
     const signer = getSettlementKeypair();
     if (!signer) throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for game token payouts');
+    if (input.recipientAmountBaseUnits <= 0n && input.burnAmountBaseUnits <= 0n) {
+      throw new Error('Game token payout resolved to zero tokens');
+    }
+    if (input.recipientAmountBaseUnits > 0n && !input.walletAddress) {
+      throw new Error('Linked wallet required for game token payout');
+    }
 
     const connection = this.getTokenConnection();
     const mint = new PublicKey(input.tokenMintAddress);
-    const recipient = new PublicKey(input.walletAddress);
     const sourceOwner = signer.publicKey;
-    const decimals = input.tokenDecimals ?? await getSplTokenMintDecimals(connection, input.tokenMintAddress);
-    const treasuryTokenAccount = await getAssociatedTokenAddress(mint, sourceOwner, false, TOKEN_PROGRAM_ID);
-    const recipientTokenAccount = await getAssociatedTokenAddress(mint, recipient, false, TOKEN_PROGRAM_ID);
+    const recipient = input.walletAddress ? new PublicKey(input.walletAddress) : null;
+    const recipientTokenAccount = recipient
+      ? await getAssociatedTokenAddress(mint, recipient, false, input.tokenProgramId)
+      : null;
     const latest = await connection.getLatestBlockhash('confirmed');
 
     const transaction = new Transaction({
       feePayer: sourceOwner,
       blockhash: latest.blockhash,
       lastValidBlockHeight: latest.lastValidBlockHeight,
-    }).add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        sourceOwner,
-        recipientTokenAccount,
-        recipient,
+    });
+    if (input.recipientAmountBaseUnits > 0n && recipient && recipientTokenAccount) {
+      transaction.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          sourceOwner,
+          recipientTokenAccount,
+          recipient,
+          mint,
+          input.tokenProgramId
+        ),
+        createTransferCheckedInstruction(
+          input.treasuryTokenAccount,
+          mint,
+          recipientTokenAccount,
+          sourceOwner,
+          input.recipientAmountBaseUnits,
+          input.tokenDecimals,
+          [],
+          input.tokenProgramId
+        )
+      );
+    }
+    if (input.burnAmountBaseUnits > 0n) {
+      transaction.add(...buildBurnCheckedTransaction({
+        feePayer: sourceOwner,
+        tokenAccount: input.treasuryTokenAccount,
         mint,
-        TOKEN_PROGRAM_ID
-      ),
-      createTransferCheckedInstruction(
-        treasuryTokenAccount,
-        mint,
-        recipientTokenAccount,
-        sourceOwner,
-        input.amountBaseUnits,
-        decimals,
-        [],
-        TOKEN_PROGRAM_ID
-      )
-    );
+        authority: sourceOwner,
+        amountBaseUnits: input.burnAmountBaseUnits,
+        decimals: input.tokenDecimals,
+        tokenProgramId: input.tokenProgramId,
+        blockhash: latest.blockhash,
+        lastValidBlockHeight: latest.lastValidBlockHeight,
+      }).instructions);
+    }
 
     transaction.sign(signer);
+    const simulation = await connection.simulateTransaction(transaction, undefined, true);
+    if (simulation.value.err) {
+      throw new Error(`Game token payout simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    }
+
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
       maxRetries: 3,
     });
+    const burnSignature = input.burnAmountBaseUnits > 0n ? signature : null;
     await input.onSubmitted({
       signature,
-      tokenDecimals: decimals,
-      treasuryTokenAccount: treasuryTokenAccount.toBase58(),
-      recipientTokenAccount: recipientTokenAccount.toBase58(),
+      burnSignature,
+      tokenDecimals: input.tokenDecimals,
+      tokenProgramId: input.tokenProgramId.toBase58(),
+      treasuryTokenAccount: input.treasuryTokenAccount.toBase58(),
+      recipientTokenAccount: recipientTokenAccount?.toBase58() ?? null,
     });
     const confirmed = await connection.confirmTransaction({
       signature,
@@ -1272,16 +1649,57 @@ export class DailyMissionService {
       lastValidBlockHeight: latest.lastValidBlockHeight,
     }, 'confirmed');
     if (confirmed.value.err) {
-      throw new Error(`Game token transfer failed: ${JSON.stringify(confirmed.value.err)}`);
+      throw new Error(`Game token payout failed: ${JSON.stringify(confirmed.value.err)}`);
     }
 
     return {
       signature,
+      burnSignature,
       confirmedAt: new Date(),
-      tokenDecimals: decimals,
-      treasuryTokenAccount: treasuryTokenAccount.toBase58(),
-      recipientTokenAccount: recipientTokenAccount.toBase58(),
+      tokenDecimals: input.tokenDecimals,
+      tokenProgramId: input.tokenProgramId.toBase58(),
+      treasuryTokenAccount: input.treasuryTokenAccount.toBase58(),
+      recipientTokenAccount: recipientTokenAccount?.toBase58() ?? null,
     };
+  }
+
+  private async getTokenAccountBalance(connection: Connection, tokenAccount: PublicKey): Promise<bigint> {
+    try {
+      const balance = await connection.getTokenAccountBalance(tokenAccount, 'confirmed');
+      return readPositiveOrZeroBigintString(balance.value.amount, 'token account balance');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('could not find account') || message.includes('Invalid param')) return 0n;
+      throw error;
+    }
+  }
+
+  private async getConfirmedTokenDelta(input: {
+    connection: Connection;
+    signature: string;
+    tokenAccountAddress: string;
+    mintAddress: string;
+  }): Promise<bigint> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const transaction = await input.connection.getParsedTransaction(input.signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      if (transaction) {
+        if (transaction.meta?.err) {
+          throw new Error(`Game token top-up transaction failed: ${JSON.stringify(transaction.meta.err)}`);
+        }
+        const delta = extractTokenAccountMintDelta(
+          transaction,
+          input.tokenAccountAddress,
+          input.mintAddress
+        );
+        if (delta <= 0n) throw new Error('Game token top-up did not increase the treasury token account');
+        return delta;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error(`Confirmed game token top-up ${input.signature} was not available for token accounting`);
   }
 
   private getTokenConnection(): Connection {

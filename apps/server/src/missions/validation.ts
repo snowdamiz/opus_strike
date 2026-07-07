@@ -1,5 +1,6 @@
 import {
   ALL_HERO_IDS,
+  DAILY_MISSION_GAME_TOKEN_PRICING_MODES,
   DAILY_MISSION_CRITERION_TYPES,
   DAILY_MISSION_GAMEPLAY_MODES,
   DAILY_MISSION_MATCH_MODES,
@@ -15,6 +16,7 @@ import {
   type DailyMissionHeroCriterion,
   type DailyMissionReward,
   type DailyMissionRewardBundle,
+  type DailyMissionGameTokenPricingMode,
 } from '@voxel-strike/shared';
 
 const UNSIGNED_INTEGER_PATTERN = /^[0-9]+$/;
@@ -22,6 +24,7 @@ const MISSION_TEXT_MAX = 160;
 const MISSION_DESCRIPTION_MAX = 260;
 const CRITERION_ID_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 const ABILITY_ID_PATTERN = /^[a-z][a-z0-9_:-]{1,63}$/;
+const MISSION_REWARD_BPS_TOTAL = 10_000;
 
 type RecordValue = Record<string, unknown>;
 
@@ -92,6 +95,10 @@ function readInteger(
     throw new MissionValidationError(`${fieldName} must be <= ${options.max}`);
   }
   return parsed;
+}
+
+function readBasisPoints(value: unknown, fieldName: string, fallback: number): number {
+  return readInteger(value, fieldName, { fallback, min: 0, max: MISSION_REWARD_BPS_TOTAL });
 }
 
 function readUnsignedBigintString(value: unknown, fieldName: string): string {
@@ -195,10 +202,23 @@ function parseReward(value: unknown, index: number): DailyMissionReward {
   }
 
   if (value.type === 'game_token') {
+    const pricingMode = readGameTokenPricingMode(value.pricingMode, value.usdCents);
+    const playerShareBps = readBasisPoints(value.playerShareBps, `Reward ${index + 1} player share`, MISSION_REWARD_BPS_TOTAL);
+    const burnShareBps = readBasisPoints(value.burnShareBps, `Reward ${index + 1} burn share`, 0);
+    if (playerShareBps + burnShareBps !== MISSION_REWARD_BPS_TOTAL) {
+      throw new MissionValidationError(`Reward ${index + 1} player and burn shares must total 10000 bps`);
+    }
     const reward: DailyMissionReward = {
       type: 'game_token',
-      amountBaseUnits: readUnsignedBigintString(value.amountBaseUnits, `Reward ${index + 1} token amount`),
+      pricingMode,
+      playerShareBps,
+      burnShareBps,
     };
+    if (pricingMode === 'usd') {
+      reward.usdCents = readInteger(value.usdCents, `Reward ${index + 1} USD cents`, { min: 1 });
+    } else {
+      reward.amountBaseUnits = readUnsignedBigintString(value.amountBaseUnits, `Reward ${index + 1} token amount`);
+    }
     if (typeof value.symbol === 'string' && value.symbol.trim()) {
       reward.symbol = value.symbol.trim().replace(/^\$/, '').toUpperCase().slice(0, 12);
     }
@@ -207,6 +227,13 @@ function parseReward(value: unknown, index: number): DailyMissionReward {
 
   if (!isHeroSkinId(value.skinId)) throw new MissionValidationError(`Reward ${index + 1} skin id is invalid`);
   return { type: 'skin', skinId: value.skinId };
+}
+
+function readGameTokenPricingMode(value: unknown, usdCents: unknown): DailyMissionGameTokenPricingMode {
+  if (typeof value === 'string' && (DAILY_MISSION_GAME_TOKEN_PRICING_MODES as readonly string[]).includes(value)) {
+    return value as DailyMissionGameTokenPricingMode;
+  }
+  return usdCents === undefined || usdCents === null || usdCents === '' ? 'fixed_token' : 'usd';
 }
 
 export function parseMissionRewardBundle(value: unknown): DailyMissionRewardBundle {

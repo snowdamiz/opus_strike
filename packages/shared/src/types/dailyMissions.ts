@@ -27,6 +27,9 @@ export type DailyMissionCriterionType = typeof DAILY_MISSION_CRITERION_TYPES[num
 export const DAILY_MISSION_REWARD_TYPES = ['sol', 'game_token', 'skin'] as const;
 export type DailyMissionRewardType = typeof DAILY_MISSION_REWARD_TYPES[number];
 
+export const DAILY_MISSION_GAME_TOKEN_PRICING_MODES = ['fixed_token', 'usd'] as const;
+export type DailyMissionGameTokenPricingMode = typeof DAILY_MISSION_GAME_TOKEN_PRICING_MODES[number];
+
 export const DAILY_MISSION_CRITERIA_MODES = ['all'] as const;
 export type DailyMissionCriteriaMode = typeof DAILY_MISSION_CRITERIA_MODES[number];
 
@@ -74,7 +77,11 @@ export interface DailyMissionSolReward {
 
 export interface DailyMissionGameTokenReward {
   type: 'game_token';
-  amountBaseUnits: string;
+  pricingMode?: DailyMissionGameTokenPricingMode;
+  amountBaseUnits?: string;
+  usdCents?: number;
+  playerShareBps?: number;
+  burnShareBps?: number;
   symbol?: string;
 }
 
