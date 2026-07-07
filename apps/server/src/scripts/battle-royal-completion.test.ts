@@ -202,6 +202,25 @@ function createRoomWithPlacement(): any {
 }
 
 {
+  const room = createRoomWithPlacement();
+  const tracker = new BattleRoyalPlacementTracker();
+  tracker.initialize([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'dead' },
+  ], 1000);
+  tracker.finalize([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'dead' },
+  ], 'br_01', 1500);
+  room.battleRoyalPlacement = tracker;
+  room.sent = [];
+
+  room.sendBattleRoyalCompletedTeamSummaryToClient({ sessionId: 'reconnect' }, 'br_01', 2200);
+
+  assert.equal(room.sent.length, 0);
+}
+
+{
   // The per-tick placement sweep delivers a summary that was never sent for an
   // already-placed team (e.g. the send was missed on the tick the team wiped),
   // and stays idempotent afterwards.

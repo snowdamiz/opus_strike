@@ -817,6 +817,16 @@ export function areAllBattleRoyalDropPlayersLanded(state: BattleRoyalDropState):
   return true;
 }
 
+export function areAllBattleRoyalHumanDropPlayersLanded(state: BattleRoyalDropState): boolean {
+  let humanCount = 0;
+  for (const player of state.players.values()) {
+    if (player.isBot) continue;
+    humanCount++;
+    if (player.status !== 'landed') return false;
+  }
+  return humanCount > 0;
+}
+
 export function buildBattleRoyalDropSnapshot(
   state: BattleRoyalDropState,
   now: number

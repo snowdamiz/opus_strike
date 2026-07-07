@@ -11,6 +11,7 @@ import {
   BATTLE_ROYAL_DEPLOYMENT_PHASE_MS,
   advanceBattleRoyalDropState,
   areAllBattleRoyalDropPlayersLanded,
+  areAllBattleRoyalHumanDropPlayersLanded,
   buildBattleRoyalDropSnapshot,
   createBattleRoyalDropState,
   forceLandBattleRoyalDropState,
@@ -293,6 +294,32 @@ forceLandBattleRoyalDropState({
 });
 assert.equal(areAllBattleRoyalDropPlayersLanded(state), true);
 assert.equal(state.players.get('blue-1')?.status, 'landed');
+
+const humanLandedBotAboardState = createBattleRoyalDropState(
+  manifest,
+  [
+    { playerId: 'human-red', team: 'red' },
+    { playerId: 'bot-blue', team: 'blue', isBot: true },
+  ],
+  startedAt
+);
+startBattleRoyalTeamDrop(humanLandedBotAboardState, 'red', humanLandedBotAboardState.dropStartsAt + 100);
+let humanLandedAt = humanLandedBotAboardState.dropStartsAt + 200;
+for (let step = 0; step < 160; step++) {
+  if (humanLandedBotAboardState.players.get('human-red')?.status === 'landed') break;
+  humanLandedAt += 100;
+  advanceBattleRoyalDropState({
+    state: humanLandedBotAboardState,
+    now: humanLandedAt,
+    dt: 0.1,
+    getGroundY: flatGroundY,
+    clampToPlayableMap: unclamped,
+  });
+}
+assert.equal(humanLandedBotAboardState.players.get('human-red')?.status, 'landed');
+assert.notEqual(humanLandedBotAboardState.players.get('bot-blue')?.status, 'landed');
+assert.equal(areAllBattleRoyalHumanDropPlayersLanded(humanLandedBotAboardState), true);
+assert.equal(areAllBattleRoyalDropPlayersLanded(humanLandedBotAboardState), false);
 
 const botOnlyState = createBattleRoyalDropState(
   manifest,
