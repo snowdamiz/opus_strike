@@ -6,6 +6,8 @@ primary_region = "iad"
 
 [deploy]
   release_command = "pnpm --filter @voxel-strike/server db:deploy"
+  release_command_timeout = "10m"
+  wait_timeout = "10m"
 
 [processes]
   app = "node dist/index.js"

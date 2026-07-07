@@ -72,12 +72,13 @@ jobs:
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@v1
         with:
-          version: 0.4.54
+          version: 0.4.67
 
       - name: Deploy server
         run: >
           flyctl deploy . --config apps/server/fly.toml --app "$SERVER_APP" --remote-only
           --dockerfile apps/server/Dockerfile
+          --release-command-timeout 10m
           --wait-timeout 10m
           --ha=false
         env:
