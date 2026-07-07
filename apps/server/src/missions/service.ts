@@ -7,6 +7,8 @@ import {
 } from '@solana/spl-token';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
+  DAILY_MISSION_GAMEPLAY_MODES,
+  DAILY_MISSION_MATCH_MODES,
   DEFAULT_DAILY_MISSION_ELIGIBILITY,
   getDailyMissionPercentComplete,
   getHeroSkinDefinition,
@@ -53,6 +55,7 @@ const ADMIN_LIBRARY_LIMIT = 200;
 const ADMIN_AUDIT_LIMIT = 75;
 const TOKEN_PAYOUT_BATCH_SIZE = 25;
 const TOKEN_PAYOUT_MAX_ATTEMPTS = 6;
+const MISSION_PROGRESS_SCOPE_KEY = 'lifetime';
 
 export interface SettleMatchDailyMissionsInput {
   matchId: string;
@@ -121,6 +124,8 @@ type ProgressRecord = {
   completedAt: Date | null;
   grantedAt: Date | null;
   lastContributingMatchId: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
   grants?: GrantRecord[];
 };
 
@@ -181,10 +186,23 @@ function missionRewards(record: MissionDefinitionRecord): DailyMissionRewardBund
   return record.rewards as unknown as DailyMissionRewardBundle;
 }
 
+function normalizeMissionMatchModes(value: unknown): DailyMissionEligibility['matchModes'] {
+  if (!Array.isArray(value)) return [...DAILY_MISSION_MATCH_MODES];
+  const modes = value.filter((mode): mode is MatchMode => (
+    typeof mode === 'string' && (DAILY_MISSION_MATCH_MODES as readonly string[]).includes(mode)
+  ));
+  return modes.length > 0 ? Array.from(new Set(modes)) : [...DAILY_MISSION_MATCH_MODES];
+}
+
 function missionEligibility(record: MissionDefinitionRecord): DailyMissionEligibility {
+  const source = record.eligibility && typeof record.eligibility === 'object' && !Array.isArray(record.eligibility)
+    ? record.eligibility as unknown as Partial<DailyMissionEligibility>
+    : {};
   return {
     ...DEFAULT_DAILY_MISSION_ELIGIBILITY,
-    ...(record.eligibility as unknown as Partial<DailyMissionEligibility>),
+    ...source,
+    matchModes: normalizeMissionMatchModes(source.matchModes),
+    gameplayModes: [...DAILY_MISSION_GAMEPLAY_MODES],
   };
 }
 
@@ -276,9 +294,9 @@ function activeMissionWhere(now: Date): Prisma.DailyMissionDefinitionWhereInput 
   };
 }
 
-function failedGrantWhere(dayKey?: string): Prisma.MissionRewardGrantWhereInput {
+function failedGrantWhere(options: { missionIds?: string[] } = {}): Prisma.MissionRewardGrantWhereInput {
   return {
-    ...(dayKey ? { dayKey } : {}),
+    ...(options.missionIds ? { missionId: { in: options.missionIds } } : {}),
     OR: [
       { status: 'failed' },
       { playerReward: { is: { status: 'failed' } } },
@@ -308,6 +326,14 @@ function isMatchEligibleForMission(
   return durationMs >= eligibility.minDurationMs;
 }
 
+function isPreferredProgressRecord(candidate: ProgressRecord, current: ProgressRecord | undefined): boolean {
+  if (!current) return true;
+  if (Boolean(candidate.completedAt) !== Boolean(current.completedAt)) return Boolean(candidate.completedAt);
+  const candidateTime = candidate.updatedAt?.getTime() ?? candidate.createdAt?.getTime() ?? 0;
+  const currentTime = current.updatedAt?.getTime() ?? current.createdAt?.getTime() ?? 0;
+  return candidateTime > currentTime;
+}
+
 function getCriterionDelta(input: {
   criterion: DailyMissionCriteria['items'][number];
   participant: ReturnType<typeof normalizeMatchParticipants>[number];
@@ -324,10 +350,6 @@ function getCriterionDelta(input: {
       return participant.kills;
     case 'assists':
       return participant.assists;
-    case 'flag_captures':
-      return participant.flagCaptures;
-    case 'flag_returns':
-      return participant.flagReturns;
     case 'score':
       return calculateParticipantScore(participant);
     case 'experience':
@@ -343,10 +365,6 @@ function getCriterionDelta(input: {
     case 'eliminations_with_ability':
       return killEvents.filter((event) => (
         event.killerUserId === participant.userId && event.abilityId === criterion.abilityId
-      )).length;
-    case 'flag_carrier_eliminations':
-      return killEvents.filter((event) => (
-        event.killerUserId === participant.userId && event.victimHadFlag
       )).length;
     default:
       return 0;
@@ -437,14 +455,12 @@ export class DailyMissionService {
       prisma.userDailyMissionProgress.findMany({
         where: {
           userId,
-          dayKey: day.key,
           missionId: { in: missionIds },
         },
       }),
       prisma.missionRewardGrant.findMany({
         where: {
           userId,
-          dayKey: day.key,
           missionId: { in: missionIds },
         },
         orderBy: { createdAt: 'asc' },
@@ -460,10 +476,13 @@ export class DailyMissionService {
       grants.push(grant);
       grantsByMissionId.set(grant.missionId, grants);
     }
-    const progressByMissionId = new Map(progressRows.map((row) => [
-      row.missionId,
-      { ...row, grants: grantsByMissionId.get(row.missionId) ?? [] },
-    ]));
+    const progressByMissionId = new Map<string, ProgressRecord>();
+    for (const row of progressRows) {
+      const candidate = { ...row, grants: grantsByMissionId.get(row.missionId) ?? [] };
+      if (isPreferredProgressRecord(candidate, progressByMissionId.get(row.missionId))) {
+        progressByMissionId.set(row.missionId, candidate);
+      }
+    }
 
     return {
       dayKey: day.key,
@@ -481,7 +500,7 @@ export class DailyMissionService {
 
   async getAdminOverview(now = new Date()): Promise<DailyMissionAdminOverview> {
     const day = getUtcDayRange(now);
-    const [library, active, progressCounts, grantCounts, failedGrantCounts, audit, summaryCounts] = await Promise.all([
+    const [library, active, audit, summaryCounts] = await Promise.all([
       prisma.dailyMissionDefinition.findMany({
         orderBy: [{ archivedAt: 'asc' }, { sortOrder: 'asc' }, { updatedAt: 'desc' }],
         take: ADMIN_LIBRARY_LIMIT,
@@ -490,21 +509,6 @@ export class DailyMissionService {
         where: activeMissionWhere(now),
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
         take: ACTIVE_MISSION_LIMIT,
-      }),
-      prisma.userDailyMissionProgress.groupBy({
-        by: ['missionId'],
-        where: { dayKey: day.key, completedAt: { not: null } },
-        _count: { _all: true },
-      }),
-      prisma.missionRewardGrant.groupBy({
-        by: ['missionId'],
-        where: { dayKey: day.key },
-        _count: { _all: true },
-      }),
-      prisma.missionRewardGrant.groupBy({
-        by: ['missionId'],
-        where: failedGrantWhere(day.key),
-        _count: { _all: true },
       }),
       prisma.missionRewardGrant.findMany({
         where: {
@@ -524,11 +528,33 @@ export class DailyMissionService {
       Promise.all([
         prisma.dailyMissionDefinition.count({ where: { enabled: true, archivedAt: null } }),
         prisma.dailyMissionDefinition.count({ where: { archivedAt: { not: null } } }),
-        prisma.userDailyMissionProgress.count({ where: { dayKey: day.key, completedAt: { not: null } } }),
         prisma.missionRewardGrant.count({ where: failedGrantWhere() }),
         prisma.gameTokenPayout.count({ where: { status: { in: ['pending', 'processing', 'submitted'] } } }),
       ]),
     ]);
+    const activeMissionIds = active.map((mission) => mission.id);
+    const [progressCounts, grantCounts, failedGrantCounts] = activeMissionIds.length > 0
+      ? await Promise.all([
+        prisma.userDailyMissionProgress.groupBy({
+          by: ['missionId'],
+          where: {
+            missionId: { in: activeMissionIds },
+            completedAt: { not: null },
+          },
+          _count: { _all: true },
+        }),
+        prisma.missionRewardGrant.groupBy({
+          by: ['missionId'],
+          where: { missionId: { in: activeMissionIds } },
+          _count: { _all: true },
+        }),
+        prisma.missionRewardGrant.groupBy({
+          by: ['missionId'],
+          where: failedGrantWhere({ missionIds: activeMissionIds }),
+          _count: { _all: true },
+        }),
+      ])
+      : [[], [], []] as const;
 
     const completedByMission = new Map(progressCounts.map((row) => [row.missionId, row._count._all]));
     const grantsByMission = new Map<string, { total: number; failed: number }>();
@@ -559,9 +585,9 @@ export class DailyMissionService {
         activeToday: active.length,
         enabled: summaryCounts[0],
         archived: summaryCounts[1],
-        completedToday: summaryCounts[2],
-        failedGrants: summaryCounts[3],
-        pendingTokenPayouts: summaryCounts[4],
+        completedToday: progressCounts.reduce((sum, row) => sum + row._count._all, 0),
+        failedGrants: summaryCounts[2],
+        pendingTokenPayouts: summaryCounts[3],
       },
       today,
       library: library.map(serializeMissionDefinition),
@@ -661,7 +687,6 @@ export class DailyMissionService {
     const eligibleMissions = missions.filter((mission) => isMatchEligibleForMission(mission, input, durationMs));
     if (eligibleMissions.length === 0) return;
 
-    const day = getUtcDayRange(input.endedAt);
     const participants = normalizeMatchParticipants(input.participants, input.winningTeam);
     const solIdempotencyKeys: string[] = [];
     const tokenPayoutIds: string[] = [];
@@ -681,7 +706,7 @@ export class DailyMissionService {
           mission,
           participant,
           deltas,
-          dayKey: day.key,
+          dayKey: MISSION_PROGRESS_SCOPE_KEY,
           matchId: input.matchId,
         });
         solIdempotencyKeys.push(...result.solIdempotencyKeys);
@@ -720,7 +745,19 @@ export class DailyMissionService {
   }): Promise<RewardGrantCreationResult> {
     try {
       return await prisma.$transaction(async (tx) => {
-        const existingProgress = await tx.userDailyMissionProgress.findUnique({
+        const completedProgress = await tx.userDailyMissionProgress.findFirst({
+          where: {
+            userId: input.participant.userId,
+            missionId: input.mission.mission.id,
+            completedAt: { not: null },
+          },
+          orderBy: { completedAt: 'desc' },
+        });
+        if (completedProgress) {
+          return { solIdempotencyKeys: [], tokenPayoutIds: [] };
+        }
+
+        const scopedProgress = await tx.userDailyMissionProgress.findUnique({
           where: {
             userId_missionId_dayKey: {
               userId: input.participant.userId,
@@ -729,15 +766,20 @@ export class DailyMissionService {
             },
           },
         });
-        if (existingProgress?.completedAt) {
-          return { solIdempotencyKeys: [], tokenPayoutIds: [] };
-        }
+        const existingProgress = scopedProgress ?? await tx.userDailyMissionProgress.findFirst({
+          where: {
+            userId: input.participant.userId,
+            missionId: input.mission.mission.id,
+          },
+          orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+        });
+        const contributionDayKey = existingProgress?.dayKey ?? input.dayKey;
 
         await tx.userDailyMissionContribution.create({
           data: {
             userId: input.participant.userId,
             missionId: input.mission.mission.id,
-            dayKey: input.dayKey,
+            dayKey: contributionDayKey,
             matchId: input.matchId,
           },
         });
@@ -746,7 +788,7 @@ export class DailyMissionService {
           data: {
             userId: input.participant.userId,
             missionId: input.mission.mission.id,
-            dayKey: input.dayKey,
+            dayKey: contributionDayKey,
             progress: prismaJson({}),
           },
         });
@@ -779,7 +821,7 @@ export class DailyMissionService {
           rewards: input.mission.rewards,
           userId: input.participant.userId,
           playerSessionId: input.participant.playerSessionId,
-          dayKey: input.dayKey,
+          dayKey: contributionDayKey,
           matchId: input.matchId,
         });
       });

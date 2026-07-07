@@ -1,11 +1,12 @@
 import {
   ALL_HERO_IDS,
   DAILY_MISSION_CRITERION_TYPES,
+  DAILY_MISSION_GAMEPLAY_MODES,
+  DAILY_MISSION_MATCH_MODES,
   DAILY_MISSION_REWARD_TYPES,
   DEFAULT_DAILY_MISSION_ELIGIBILITY,
   isGameplayMode,
   isHeroSkinId,
-  isMatchMode,
   type DailyMissionAbilityCriterion,
   type DailyMissionCriteria,
   type DailyMissionCriterion,
@@ -231,17 +232,26 @@ export function parseMissionRewardBundle(value: unknown): DailyMissionRewardBund
 }
 
 function readMatchModes(value: unknown): DailyMissionEligibility['matchModes'] {
-  if (!Array.isArray(value)) return [...DEFAULT_DAILY_MISSION_ELIGIBILITY.matchModes];
-  const modes = value.filter(isMatchMode);
+  if (!Array.isArray(value)) return [...DAILY_MISSION_MATCH_MODES];
+  const invalid = value.some((mode) => (
+    typeof mode !== 'string' || !(DAILY_MISSION_MATCH_MODES as readonly string[]).includes(mode)
+  ));
+  if (invalid) {
+    throw new MissionValidationError('Daily missions only support quick play and ranked BR match modes');
+  }
+  const modes = value as DailyMissionEligibility['matchModes'];
   if (modes.length === 0) throw new MissionValidationError('At least one match mode is required');
   return Array.from(new Set(modes));
 }
 
 function readGameplayModes(value: unknown): DailyMissionEligibility['gameplayModes'] {
-  if (!Array.isArray(value)) return [...DEFAULT_DAILY_MISSION_ELIGIBILITY.gameplayModes];
-  const modes = value.filter(isGameplayMode);
-  if (modes.length === 0) throw new MissionValidationError('At least one gameplay mode is required');
-  return Array.from(new Set(modes));
+  if (!Array.isArray(value)) return [...DAILY_MISSION_GAMEPLAY_MODES];
+  const invalid = value.some((mode) => !isGameplayMode(mode) || mode !== 'battle_royal');
+  if (invalid) {
+    throw new MissionValidationError('Daily missions can only target Battle Royale');
+  }
+  if (value.length === 0) throw new MissionValidationError('At least one gameplay mode is required');
+  return [...DAILY_MISSION_GAMEPLAY_MODES];
 }
 
 export function parseMissionEligibility(value: unknown): DailyMissionEligibility {

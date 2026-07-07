@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   Coins,
   Crosshair,
-  Flag,
   Gem,
   Shirt,
   Sparkles,
@@ -37,11 +36,7 @@ function criterionIcon(criterion: DailyMissionCriterion) {
     case 'eliminations_as_hero':
     case 'eliminations_against_hero':
     case 'eliminations_with_ability':
-    case 'flag_carrier_eliminations':
       return Crosshair;
-    case 'flag_captures':
-    case 'flag_returns':
-      return Flag;
     case 'score':
     case 'experience':
       return Sparkles;

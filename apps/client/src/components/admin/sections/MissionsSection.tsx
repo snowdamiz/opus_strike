@@ -13,10 +13,10 @@ import {
 import {
   ALL_HERO_IDS,
   DAILY_MISSION_CRITERION_TYPES,
+  DAILY_MISSION_GAMEPLAY_MODES,
+  DAILY_MISSION_MATCH_MODES,
   DEFAULT_DAILY_MISSION_ELIGIBILITY,
-  GAMEPLAY_MODES,
   HERO_DEFINITIONS,
-  MATCH_MODES,
   getDailyMissionCriterionLabel,
   getGameplayModeLabel,
   type DailyMissionAbilityCriterion,
@@ -47,6 +47,20 @@ const HERO_CRITERIA = new Set<DailyMissionCriterionType>([
   'eliminations_against_hero',
 ]);
 const ABILITY_CRITERIA = new Set<DailyMissionCriterionType>(['eliminations_with_ability']);
+
+function normalizeMissionMatchModes(value: DailyMissionEligibility['matchModes']): DailyMissionEligibility['matchModes'] {
+  const modes = value.filter((mode) => (DAILY_MISSION_MATCH_MODES as readonly string[]).includes(mode));
+  return modes.length > 0 ? Array.from(new Set(modes)) : [...DAILY_MISSION_MATCH_MODES];
+}
+
+function normalizeMissionEligibility(eligibility: Partial<DailyMissionEligibility> = {}): DailyMissionEligibility {
+  return {
+    ...DEFAULT_DAILY_MISSION_ELIGIBILITY,
+    ...eligibility,
+    matchModes: normalizeMissionMatchModes(eligibility.matchModes ?? DEFAULT_DAILY_MISSION_ELIGIBILITY.matchModes),
+    gameplayModes: [...DAILY_MISSION_GAMEPLAY_MODES],
+  };
+}
 
 type RewardDraft =
   | { type: 'sol'; amountLamports: string }
@@ -101,7 +115,7 @@ function defaultDraft(): MissionDraft {
     activeEndsAt: '',
     criteria: [defaultCriterion(0)],
     rewards: [{ type: 'sol', amountLamports: '50000' }],
-    eligibility: { ...DEFAULT_DAILY_MISSION_ELIGIBILITY },
+    eligibility: normalizeMissionEligibility(),
   };
 }
 
@@ -120,10 +134,7 @@ function draftFromMission(mission: MissionDefinition): MissionDraft {
       if (reward.type === 'game_token') return { type: 'game_token', amountBaseUnits: reward.amountBaseUnits, symbol: reward.symbol ?? '' };
       return { type: 'skin', skinId: reward.skinId };
     }),
-    eligibility: {
-      ...DEFAULT_DAILY_MISSION_ELIGIBILITY,
-      ...mission.eligibility,
-    },
+    eligibility: normalizeMissionEligibility(mission.eligibility),
   };
 }
 
@@ -192,7 +203,7 @@ function toRequest(draft: MissionDraft): MissionDefinitionRequest {
     resetPolicy: 'utc',
     criteria,
     rewards,
-    eligibility: draft.eligibility,
+    eligibility: normalizeMissionEligibility(draft.eligibility),
   };
 }
 
@@ -455,7 +466,7 @@ function MissionEditor({
   onReset: () => void;
 }) {
   const setEligibility = (patch: Partial<DailyMissionEligibility>) => {
-    onDraftChange({ ...draft, eligibility: { ...draft.eligibility, ...patch } });
+    onDraftChange({ ...draft, eligibility: normalizeMissionEligibility({ ...draft.eligibility, ...patch }) });
   };
   const toggleMatchMode = (mode: DailyMissionEligibility['matchModes'][number]) => {
     const modes = new Set(draft.eligibility.matchModes);
@@ -463,13 +474,6 @@ function MissionEditor({
     else modes.add(mode);
     if (modes.size === 0) modes.add(mode);
     setEligibility({ matchModes: Array.from(modes) });
-  };
-  const toggleGameplayMode = (mode: DailyMissionEligibility['gameplayModes'][number]) => {
-    const modes = new Set(draft.eligibility.gameplayModes);
-    if (modes.has(mode)) modes.delete(mode);
-    else modes.add(mode);
-    if (modes.size === 0) modes.add(mode);
-    setEligibility({ gameplayModes: Array.from(modes) });
   };
 
   return (
@@ -684,7 +688,7 @@ function MissionEditor({
           <CardContent className="space-y-4">
             <Field label="Match Modes">
               <div className="flex flex-wrap gap-2">
-                {MATCH_MODES.map((mode) => (
+                {DAILY_MISSION_MATCH_MODES.map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -701,23 +705,9 @@ function MissionEditor({
                 ))}
               </div>
             </Field>
-            <Field label="Gameplay Modes">
-              <div className="flex flex-wrap gap-2">
-                {GAMEPLAY_MODES.map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => toggleGameplayMode(mode)}
-                    className={cn(
-                      'rounded-md border px-2.5 py-1.5 text-xs uppercase transition',
-                      draft.eligibility.gameplayModes.includes(mode)
-                        ? 'border-accent-secondary/40 bg-accent-secondary/12 text-accent-secondary'
-                        : 'border-strike-border text-white/45'
-                    )}
-                  >
-                    {getGameplayModeLabel(mode)}
-                  </button>
-                ))}
+            <Field label="Gameplay">
+              <div className="rounded-md border border-accent-secondary/40 bg-accent-secondary/12 px-2.5 py-2 text-xs uppercase text-accent-secondary">
+                {getGameplayModeLabel('battle_royal')}
               </div>
             </Field>
             <Field label="Minimum Duration">
