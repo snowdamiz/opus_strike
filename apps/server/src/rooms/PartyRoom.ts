@@ -36,6 +36,7 @@ import {
   updateUserHeroLoadout,
 } from '../cosmetics/skinShopService';
 import { loggers } from '../utils/logger';
+import { refreshRoomAuthDisplayName } from './roomPlayerNameRefresh';
 
 interface PartyJoinOptions {
   heroId?: HeroId;
@@ -57,6 +58,7 @@ const PARTY_MESSAGE_RATE_LIMITS = {
   bot: { limit: 8, intervalMs: 5000 },
   kick: { limit: 8, intervalMs: 5000 },
   start: { limit: 4, intervalMs: 8000 },
+  profile: { limit: 4, intervalMs: 5000 },
 } satisfies Record<string, RateLimitRule>;
 const PARTY_IDLE_DISCONNECT_MS = 10 * 60 * 1000;
 
@@ -285,6 +287,13 @@ export class PartyRoom extends Room {
       }
       this.handleStart(client, payload).catch((error) => {
         this.sendLaunchError(client, error instanceof Error ? error.message : 'Failed to start party');
+      });
+    });
+
+    this.onMessage('refreshPlayerName', (client) => {
+      if (!this.consumePartyMessage(client, 'refreshPlayerName', PARTY_MESSAGE_RATE_LIMITS.profile)) return;
+      this.handleRefreshPlayerName(client).catch((error) => {
+        client.send('error', { message: error instanceof Error ? error.message : 'Failed to refresh player name' });
       });
     });
 
@@ -524,6 +533,23 @@ export class PartyRoom extends Room {
     } catch (error) {
       client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party ready' });
     }
+  }
+
+  private async handleRefreshPlayerName(client: Client): Promise<void> {
+    const authContext = this.authBySessionId.get(client.sessionId);
+    const member = this.memberForClient(client);
+    if (!authContext || !member) return;
+
+    const displayName = await refreshRoomAuthDisplayName(authContext);
+    if (!displayName) return;
+
+    const updated = this.party.updateDisplayName(member.userId, displayName);
+    if (!updated) return;
+    this.broadcast('partyMemberUpdated', {
+      userId: updated.userId,
+      displayName: updated.displayName,
+    });
+    this.broadcastPartyState();
   }
 
   private handleSetMode(client: Client, mode: PartyMode, gameplayMode?: GameplayMode): void {

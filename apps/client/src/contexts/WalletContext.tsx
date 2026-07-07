@@ -158,6 +158,7 @@ interface WalletContextType {
   linkWallet: (providerId?: string) => Promise<UserData>;
   signTransaction: (transaction: Transaction) => Promise<string>;
   registerUser: (name: string) => Promise<UserData>;
+  updatePlayerName: (name: string) => Promise<UserData>;
   completeTutorial: () => Promise<UserData>;
   logout: () => Promise<void>;
 
@@ -896,6 +897,34 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [applyUserSession, authProvider]);
 
+  const updatePlayerName = useCallback(async (name: string): Promise<UserData> => {
+    setError(null);
+    setNotice(null);
+
+    try {
+      const result = await apiRequest<{ success: boolean; user: UserData }>(
+        '/auth/profile',
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name,
+          }),
+        }
+      );
+
+      if (result.success && result.user) {
+        applyUserSession(result.user, authProvider);
+        return result.user;
+      }
+
+      throw new Error('Name update failed');
+    } catch (err: any) {
+      loggers.auth.error('profile update error:', err);
+      setError(err.message || 'Name update failed');
+      throw err;
+    }
+  }, [applyUserSession, authProvider]);
+
   const completeTutorial = useCallback(async (): Promise<UserData> => {
     setError(null);
     setNotice(null);
@@ -981,6 +1010,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     linkWallet,
     signTransaction,
     registerUser,
+    updatePlayerName,
     completeTutorial,
     logout,
     error,
@@ -1014,6 +1044,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     signInWithWallet,
     signTransaction,
     suggestedPlayerName,
+    updatePlayerName,
     user,
     walletProviders,
     walletAddress,

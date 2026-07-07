@@ -7,7 +7,7 @@ import {
   type GameplayMode,
   type HeroId,
 } from '@voxel-strike/shared';
-import { Download, Film, Loader2, Map as MapIcon, Timer } from 'lucide-react';
+import { Check, Download, Film, Loader2, Map as MapIcon, Timer } from 'lucide-react';
 import { useAudio } from '../../hooks/useAudio';
 import { config } from '../../config/environment';
 import {
@@ -116,7 +116,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const gamePlayerName = useGameStore(state => state.playerName);
   const setGameUser = useGameStore(state => state.setUser);
   const setGameWalletAddress = useGameStore(state => state.setWalletAddress);
-  const { startDevTestingMap } = useNetwork();
+  const { refreshActivePlayerName, startDevTestingMap } = useNetwork();
   const {
     isAuthenticated,
     isConnecting,
@@ -124,6 +124,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     logout,
     linkDiscord,
     linkWallet,
+    updatePlayerName,
     user,
     walletProviders,
     walletAddress,
@@ -137,6 +138,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isLinkingWallet, setIsLinkingWallet] = useState(false);
+  const [playerNameDraft, setPlayerNameDraft] = useState(() => user?.name ?? gamePlayerName);
+  const [playerNameError, setPlayerNameError] = useState<string | null>(null);
+  const [playerNameNotice, setPlayerNameNotice] = useState<string | null>(null);
+  const [isSavingPlayerName, setIsSavingPlayerName] = useState(false);
   const [recordingHeroId, setRecordingHeroId] = useState<HeroId>('blaze');
   const [recordingGameplayMode, setRecordingGameplayMode] = useState<GameplayMode>('team_deathmatch');
   const [recordingJob, setRecordingJob] = useState<RecordingShowcaseJob | null>(null);
@@ -158,6 +163,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const isRecordingActive = recordingJob?.status === 'recording' || recordingJob?.status === 'rendering';
   const isRecordingBusy = isStartingRecording || isRecordingActive;
   const recordingWaitLabel = recordingJob ? formatRecordingWaitRemaining(recordingJob, recordingNowMs) : null;
+  const trimmedPlayerNameDraft = playerNameDraft.trim();
+  const canSavePlayerName = hasAccount
+    && !isSavingPlayerName
+    && trimmedPlayerNameDraft.length > 0
+    && trimmedPlayerNameDraft !== user?.name;
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -215,6 +225,46 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       // The auth context owns the user-facing error message.
     } finally {
       setIsLinkingWallet(false);
+    }
+  };
+
+  const handleSavePlayerName = async () => {
+    if (!hasAccount || isSavingPlayerName) return;
+
+    const nextName = trimmedPlayerNameDraft;
+    if (nextName.length < 2) {
+      setPlayerNameError('Name must be at least 2 characters');
+      setPlayerNameNotice(null);
+      return;
+    }
+
+    if (nextName.length > 16) {
+      setPlayerNameError('Name must be 16 characters or less');
+      setPlayerNameNotice(null);
+      return;
+    }
+
+    if (nextName === user?.name) {
+      setPlayerNameDraft(nextName);
+      setPlayerNameError(null);
+      setPlayerNameNotice(null);
+      return;
+    }
+
+    setIsSavingPlayerName(true);
+    setPlayerNameError(null);
+    setPlayerNameNotice(null);
+    try {
+      const updatedUser = await updatePlayerName(nextName);
+      setGameUser(updatedUser.id, updatedUser.name, updatedUser.stats);
+      setGameWalletAddress(updatedUser.walletAddress ?? null);
+      setPlayerNameDraft(updatedUser.name);
+      setPlayerNameNotice('Name updated');
+      refreshActivePlayerName();
+    } catch (error) {
+      setPlayerNameError(error instanceof Error ? error.message : 'Name update failed');
+    } finally {
+      setIsSavingPlayerName(false);
     }
   };
 
@@ -325,6 +375,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       navigator.mediaDevices.removeEventListener?.('devicechange', refreshDevices);
     };
   }, [activeTab]);
+
+  useEffect(() => {
+    setPlayerNameDraft(user?.name ?? gamePlayerName);
+    setPlayerNameError(null);
+    setPlayerNameNotice(null);
+  }, [gamePlayerName, user?.name]);
 
   useEffect(() => {
     if (!recordingJob || recordingJob.status === 'succeeded' || recordingJob.status === 'failed') return;
@@ -1012,6 +1068,62 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     <span className="max-w-44 truncate font-display text-sm text-white">
                       {hasAccount ? displayName : 'SIGNED OUT'}
                     </span>
+                  </div>
+                </SettingRow>
+
+                <SettingRow
+                  label="In-Game Name"
+                  description={hasAccount ? `${trimmedPlayerNameDraft.length}/16 characters` : 'Sign in to rename'}
+                >
+                  <div className="flex w-[clamp(12rem,34vw,19rem)] flex-col gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <input
+                        type="text"
+                        value={playerNameDraft}
+                        onChange={(event) => {
+                          setPlayerNameDraft(event.target.value);
+                          setPlayerNameError(null);
+                          setPlayerNameNotice(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void handleSavePlayerName();
+                          }
+                        }}
+                        maxLength={16}
+                        disabled={!hasAccount || isSavingPlayerName}
+                        className={`h-9 min-w-0 flex-1 rounded-lg border px-3 font-body text-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 ${
+                          hasAccount
+                            ? 'border-white/10 bg-white/[0.07] text-white placeholder:text-white/25 hover:border-white/20'
+                            : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
+                        }`}
+                        placeholder="Player name"
+                        aria-label="In-game name"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSavePlayerName}
+                        disabled={!canSavePlayerName}
+                        className={`flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 font-display text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 ${
+                          canSavePlayerName
+                            ? 'border-orange-300/25 bg-orange-500/20 text-orange-100 hover:border-orange-200/45 hover:bg-orange-500/30'
+                            : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
+                        }`}
+                      >
+                        {isSavingPlayerName ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                        )}
+                        SAVE
+                      </button>
+                    </div>
+                    {(playerNameError || playerNameNotice) && (
+                      <p className={`font-body text-xs ${playerNameError ? 'text-red-300' : 'text-green-300'}`}>
+                        {playerNameError ?? playerNameNotice}
+                      </p>
+                    )}
                   </div>
                 </SettingRow>
 

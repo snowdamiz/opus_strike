@@ -35,6 +35,10 @@ export class RoomParticipantRegistry {
     return this.authContexts.get(sessionId)?.userId;
   }
 
+  getAuthContext(sessionId: string): RoomAuthContext | null {
+    return this.authContexts.get(sessionId) ?? null;
+  }
+
   getDurableUserId(sessionId: string): string | null {
     return this.authContexts.get(sessionId)?.userId
       ?? this.entryTickets.get(sessionId)?.userId

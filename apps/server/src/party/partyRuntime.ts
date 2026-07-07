@@ -444,6 +444,14 @@ export class PartyRosterRuntime {
     return member;
   }
 
+  updateDisplayName(userId: string, displayName: string): PartyRuntimeMember | null {
+    const member = this.members.get(userId);
+    if (!member || member.isBot) return null;
+    member.displayName = displayName.trim().slice(0, 24) || member.displayName;
+    this.launchError = null;
+    return member;
+  }
+
   updateLoadout(userId: string, heroId: HeroId, skinId: HeroSkinId): PartyRuntimeMember | null {
     const member = this.members.get(userId);
     if (!member) return null;

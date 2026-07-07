@@ -67,6 +67,7 @@ const AUTH_RATE_LIMITS = {
   nonce: { limit: 30, windowMs: 60 * 1000 },
   verify: { limit: 20, windowMs: 60 * 1000 },
   register: { limit: 10, windowMs: 60 * 1000 },
+  profileUpdate: { limit: 10, windowMs: 60 * 1000 },
   tutorialComplete: { limit: 12, windowMs: 60 * 1000 },
   oauthStart: { limit: 20, windowMs: 60 * 1000 },
   oauthCallback: { limit: 30, windowMs: 60 * 1000 },
@@ -1033,18 +1034,36 @@ async function createRegisteredUser(identity: PendingRegistrationIdentity, name:
   });
 }
 
-async function isPlayerNameTaken(name: string): Promise<boolean> {
+async function isPlayerNameTaken(name: string, exceptUserId?: string): Promise<boolean> {
   const existing = await prisma.user.findFirst({
     where: {
       name: {
         equals: name,
         mode: 'insensitive',
       },
+      ...(exceptUserId ? { id: { not: exceptUserId } } : {}),
     },
     select: { id: true },
   });
 
   return existing !== null;
+}
+
+async function updateUserPlayerName(userId: string, name: string) {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({
+      where: { id: userId },
+      data: { name },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    await tx.rankedSeasonUserStats.updateMany({
+      where: { userId },
+      data: { userName: name },
+    });
+
+    return user;
+  });
 }
 
 async function completePendingRegistration(pending: PendingAuthTokenPayload, name: string) {
@@ -1464,6 +1483,51 @@ router.get('/session', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[auth] Session validation error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.patch('/profile', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:profile:update', AUTH_RATE_LIMITS.profileUpdate)) return;
+
+  try {
+    const payload = await getAuthenticatedPayload(req);
+    const user = payload ? await findUserForPayload(payload) : null;
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const validation = validatePlayerName(req.body?.name);
+    if (!validation.ok) {
+      res.status(400).json({ error: validation.error });
+      return;
+    }
+
+    if (await isPlayerNameTaken(validation.name, user.id)) {
+      res.status(409).json({ error: 'Callsign is already taken' });
+      return;
+    }
+
+    const updatedUser = await updateUserPlayerName(user.id, validation.name);
+    setAuthCookie(res, createAuthToken({
+      userId: updatedUser.id,
+      provider: payload?.provider,
+      walletAddress: updatedUser.walletAddress,
+      expiresIn: JWT_EXPIRY,
+    }));
+
+    res.json({
+      success: true,
+      user: serializeUser(updatedUser),
+    });
+  } catch (error) {
+    if (isUserNameUniqueError(error)) {
+      res.status(409).json({ error: 'Callsign is already taken' });
+      return;
+    }
+
+    console.error('[auth] Profile update error:', error);
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 

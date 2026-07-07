@@ -127,6 +127,32 @@ function createRoomWithPlacement(): any {
 }
 
 {
+  const room = Object.create(GameRoom.prototype) as any;
+  room.gameplayMode = 'battle_royal';
+  room.state = { phase: 'deployment' };
+  room.damageRuntime = {
+    applyPlayerDamage: () => {
+      throw new Error('deployment damage must not reach damage runtime');
+    },
+  };
+
+  assert.equal(room.isBattleRoyalActiveCombatPhase(), false);
+  assert.equal(room.applyDamage(player('dropping', 'br_01', 'dropping'), 99, 'enemy', 'primary'), false);
+}
+
+{
+  const room = Object.create(GameRoom.prototype) as any;
+  room.gameplayMode = 'battle_royal';
+  room.state = { phase: 'playing' };
+  room.damageRuntime = {
+    applyPlayerDamage: () => true,
+  };
+
+  assert.equal(room.isBattleRoyalActiveCombatPhase(), true);
+  assert.equal(room.applyDamage(player('alive', 'br_01', 'alive'), 99, 'enemy', 'primary'), true);
+}
+
+{
   const room = createRoomWithPlacement();
   room.markMatchParticipantLeftIfIncomplete(player('left-before-complete', 'br_02', 'dead'));
   assert.equal(room.leftMarks, 1);
