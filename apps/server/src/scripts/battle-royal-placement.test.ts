@@ -96,4 +96,26 @@ function participant(userId: string, team: Team): MatchParticipantSnapshot {
   assert.equal(tracker.getTeamPlacement('br_01')?.placement, 2);
 }
 
+{
+  const tracker = new BattleRoyalPlacementTracker();
+  tracker.initialize([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'alive' },
+    { team: 'br_03', state: 'alive' },
+  ], 1000);
+
+  const simultaneousEliminations = tracker.update([
+    { team: 'br_01', state: 'dead' },
+    { team: 'br_02', state: 'dead' },
+    { team: 'br_03', state: 'alive' },
+  ], 2000);
+
+  assert.deepEqual(simultaneousEliminations, ['br_01', 'br_02']);
+  assert.equal(tracker.getTeamPlacement('br_01')?.placement, 2);
+  assert.equal(tracker.getTeamPlacement('br_02')?.placement, 2);
+  assert.equal(tracker.getTeamPlacement('br_01')?.eliminatedAt?.getTime(), 2000);
+  assert.equal(tracker.getTeamPlacement('br_02')?.eliminatedAt?.getTime(), 2000);
+  assert.equal(tracker.getTeamPlacement('br_03'), null);
+}
+
 console.log('battle royal placement tests passed');

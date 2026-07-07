@@ -11496,6 +11496,8 @@ export class GameRoom extends Room<GameState> {
 
   private updateBattleRoyalPlacement(now = Date.now()): void {
     if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
+    if (resolveBattleRoyalMatchEnd(this.state.players.values()).shouldEnd) return;
+
     this.battleRoyalPlacement.update(this.state.players.values(), now);
     // Sweep every placed team rather than only newly placed ones, so a missed
     // summary (send failure, or a placement recorded through another path)
