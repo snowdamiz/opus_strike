@@ -126,6 +126,31 @@ function runValidationTests(): void {
   assert.equal(parsed.rewards.items[1].type, 'game_token');
   if (parsed.rewards.items[1].type === 'game_token') {
     assert.equal(parsed.rewards.items[1].symbol, 'SLOP');
+    assert.equal(parsed.rewards.items[1].pricingMode, 'fixed_token');
+    assert.equal(parsed.rewards.items[1].playerShareBps, 10000);
+    assert.equal(parsed.rewards.items[1].burnShareBps, 0);
+  }
+
+  const usdTokenParsed = parseMissionDefinitionPayload(missionPayload({
+    rewards: {
+      items: [
+        {
+          type: 'game_token',
+          pricingMode: 'usd',
+          usdCents: 250,
+          playerShareBps: 7500,
+          burnShareBps: 2500,
+          symbol: 'slop',
+        },
+      ],
+    },
+  }));
+  assert.equal(usdTokenParsed.rewards.items[0].type, 'game_token');
+  if (usdTokenParsed.rewards.items[0].type === 'game_token') {
+    assert.equal(usdTokenParsed.rewards.items[0].pricingMode, 'usd');
+    assert.equal(usdTokenParsed.rewards.items[0].usdCents, 250);
+    assert.equal(usdTokenParsed.rewards.items[0].playerShareBps, 7500);
+    assert.equal(usdTokenParsed.rewards.items[0].burnShareBps, 2500);
   }
 
   expectValidationError(
@@ -158,6 +183,17 @@ function runValidationTests(): void {
       rewards: { items: [{ type: 'skin', skinId: 'phantom.missing' }] },
     })),
     /skin id is invalid/
+  );
+
+  expectValidationError(
+    () => parseMissionDefinitionPayload(missionPayload({
+      rewards: {
+        items: [
+          { type: 'game_token', pricingMode: 'usd', usdCents: 100, playerShareBps: 6000, burnShareBps: 3000 },
+        ],
+      },
+    })),
+    /player and burn shares/
   );
 
   expectValidationError(
@@ -375,6 +411,19 @@ function createFakePrisma() {
           createdAt: new Date('2026-06-30T10:10:00.000Z'),
           updatedAt: new Date('2026-06-30T10:10:00.000Z'),
           grantedAt: null,
+          recipientAmountBaseUnits: null,
+          burnAmountBaseUnits: null,
+          playerShareBps: 10000,
+          burnShareBps: 0,
+          rewardUsdCents: null,
+          rewardSolLamports: null,
+          solUsdPriceMicroUsd: null,
+          priceSource: null,
+          priceObservedAt: null,
+          tokenProgramId: null,
+          conversionSignature: null,
+          convertedTokenBaseUnits: null,
+          burnSignature: null,
           lastError: null,
           ...data,
         };
@@ -728,6 +777,10 @@ async function runSettlementTests(): Promise<void> {
     assert.equal(tokenPayout.tokenMintAddress, 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
     assert.equal(tokenPayout.tokenSymbol, 'SLOP');
     assert.equal(tokenPayout.tokenAmountBaseUnits, 1000n);
+    assert.equal(tokenPayout.recipientAmountBaseUnits, 1000n);
+    assert.equal(tokenPayout.burnAmountBaseUnits, 0n);
+    assert.equal(tokenPayout.playerShareBps, 10000);
+    assert.equal(tokenPayout.burnShareBps, 0);
     assert.ok(Array.from(fake.grants.values()).some((grant) => (
       grant.rewardType === 'game_token'
       && grant.missionId === 'mission-d'
@@ -738,6 +791,55 @@ async function runSettlementTests(): Promise<void> {
       idempotencyKeys: ['mission:lifetime:mission-d:user-red:sol'],
       limit: 1,
     });
+
+    const usdTokenMission = parseMissionDefinitionPayload(missionPayload({
+      rewards: {
+        items: [
+          {
+            type: 'game_token',
+            pricingMode: 'usd',
+            usdCents: 375,
+            playerShareBps: 8000,
+            burnShareBps: 2000,
+            symbol: 'SLOP',
+          },
+        ],
+      },
+    }));
+    fake.missions.push({
+      ...fake.mission,
+      id: 'mission-e',
+      displayName: 'USD Token Mission',
+      rewards: usdTokenMission.rewards,
+      createdAt: new Date('2026-07-01T13:20:00.000Z'),
+      updatedAt: new Date('2026-07-01T13:20:00.000Z'),
+    });
+
+    await missionServiceModule.dailyMissionService.settleMatchMissions({
+      matchId: 'match-usd-token',
+      roomId: 'room-a',
+      lobbyId: 'lobby-a',
+      matchMode: 'ranked',
+      gameplayMode: 'battle_royal',
+      startedAt: new Date('2026-07-01T13:25:00.000Z'),
+      endedAt: new Date('2026-07-01T13:35:00.000Z'),
+      winningTeam: 'red',
+      participants: [participant()],
+      killEvents: [killEvent()],
+      rankedEligible: true,
+      integrityGate: gate(),
+    });
+
+    const usdTokenPayout = Array.from(fake.tokenPayouts.values()).find((payout) => (
+      payout.idempotencyKey === 'mission:lifetime:mission-e:user-red:game_token'
+    ));
+    assert.ok(usdTokenPayout);
+    assert.equal(usdTokenPayout.tokenAmountBaseUnits, 0n);
+    assert.equal(usdTokenPayout.recipientAmountBaseUnits, null);
+    assert.equal(usdTokenPayout.burnAmountBaseUnits, null);
+    assert.equal(usdTokenPayout.rewardUsdCents, 375);
+    assert.equal(usdTokenPayout.playerShareBps, 8000);
+    assert.equal(usdTokenPayout.burnShareBps, 2000);
   } finally {
     (rewardsModule.playerRewardService as any).payPendingRewards = originalPayPendingRewards;
     restoreEnv(previousEnv);

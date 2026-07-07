@@ -68,6 +68,8 @@ export interface FetchJupiterSwapBuildInput {
   apiKey: string;
   inputMint: string;
   outputMint: string;
+  swapMode?: 'ExactIn' | 'ExactOut';
+  /** Raw Jupiter amount: input amount for ExactIn, output amount for ExactOut. */
   amountLamports: bigint;
   taker: string;
   payer?: string;
@@ -233,8 +235,9 @@ function normalizeJupiterBaseUrl(apiBaseUrl: string): string {
 
 export async function fetchJupiterSwapBuild(input: FetchJupiterSwapBuildInput): Promise<JupiterSwapBuildResponse> {
   if (!input.apiKey.trim()) {
-    throw new Error('JUPITER_API_KEY is required for wager token conversion');
+    throw new Error('JUPITER_API_KEY is required for game token conversion');
   }
+  const swapMode = input.swapMode ?? 'ExactIn';
   if (input.amountLamports <= 0n) {
     throw new Error('Jupiter swap amount must be greater than zero');
   }
@@ -243,6 +246,7 @@ export async function fetchJupiterSwapBuild(input: FetchJupiterSwapBuildInput): 
     inputMint: input.inputMint,
     outputMint: input.outputMint,
     amount: input.amountLamports.toString(10),
+    swapMode,
     taker: input.taker,
     payer: input.payer ?? input.taker,
     destinationTokenAccount: input.destinationTokenAccount,

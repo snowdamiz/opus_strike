@@ -64,7 +64,15 @@ function normalizeMissionEligibility(eligibility: Partial<DailyMissionEligibilit
 
 type RewardDraft =
   | { type: 'sol'; amountLamports: string }
-  | { type: 'game_token'; amountBaseUnits: string; symbol: string }
+  | {
+    type: 'game_token';
+    pricingMode: 'fixed_token' | 'usd';
+    amountBaseUnits: string;
+    usdAmount: string;
+    playerShareBps: string;
+    burnShareBps: string;
+    symbol: string;
+  }
   | { type: 'skin'; skinId: string };
 
 type MissionsTab = 'today' | 'library' | 'editor' | 'audit';
@@ -94,6 +102,33 @@ function localInputToIso(value: string): string | null {
   if (!value) return null;
   const ms = Date.parse(value);
   return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
+function defaultTokenRewardDraft(): Extract<RewardDraft, { type: 'game_token' }> {
+  return {
+    type: 'game_token',
+    pricingMode: 'fixed_token',
+    amountBaseUnits: '100000',
+    usdAmount: '1.00',
+    playerShareBps: '10000',
+    burnShareBps: '0',
+    symbol: '',
+  };
+}
+
+function centsToUsdInput(cents: number | undefined): string {
+  return typeof cents === 'number' && Number.isFinite(cents)
+    ? (Math.max(0, Math.floor(cents)) / 100).toFixed(2)
+    : '1.00';
+}
+
+function usdInputToCents(value: string): number {
+  const parsed = Number(value);
+  return Math.max(1, Math.round((Number.isFinite(parsed) ? parsed : 0) * 100));
+}
+
+function bpsPercentLabel(value: number): string {
+  return `${(value / 100).toFixed(value % 100 === 0 ? 0 : 2)}%`;
 }
 
 function defaultCriterion(index: number): DailyMissionCriterion {
@@ -131,7 +166,17 @@ function draftFromMission(mission: MissionDefinition): MissionDraft {
     criteria: mission.criteria.items.map((criterion) => ({ ...criterion })),
     rewards: mission.rewards.items.map((reward) => {
       if (reward.type === 'sol') return { type: 'sol', amountLamports: reward.amountLamports };
-      if (reward.type === 'game_token') return { type: 'game_token', amountBaseUnits: reward.amountBaseUnits, symbol: reward.symbol ?? '' };
+      if (reward.type === 'game_token') {
+        return {
+          ...defaultTokenRewardDraft(),
+          pricingMode: reward.pricingMode ?? (reward.usdCents ? 'usd' : 'fixed_token'),
+          amountBaseUnits: reward.amountBaseUnits ?? '100000',
+          usdAmount: centsToUsdInput(reward.usdCents),
+          playerShareBps: String(reward.playerShareBps ?? 10000),
+          burnShareBps: String(reward.burnShareBps ?? 0),
+          symbol: reward.symbol ?? '',
+        };
+      }
       return { type: 'skin', skinId: reward.skinId };
     }),
     eligibility: normalizeMissionEligibility(mission.eligibility),
@@ -150,7 +195,17 @@ function criterionSummary(criteria: DailyMissionCriteria): string {
 function rewardSummary(rewards: DailyMissionRewardBundle): string {
   return rewards.items.map((reward) => {
     if (reward.type === 'sol') return `${reward.amountLamports} lamports`;
-    if (reward.type === 'game_token') return `${reward.amountBaseUnits} ${reward.symbol ? `$${reward.symbol}` : 'token units'}`;
+    if (reward.type === 'game_token') {
+      const symbol = reward.symbol ? `$${reward.symbol}` : 'token';
+      const playerShareBps = reward.playerShareBps ?? 10000;
+      const burnShareBps = reward.burnShareBps ?? 0;
+      const split = burnShareBps > 0
+        ? ` (${bpsPercentLabel(playerShareBps)} player / ${bpsPercentLabel(burnShareBps)} burn)`
+        : '';
+      return reward.pricingMode === 'usd'
+        ? `$${centsToUsdInput(reward.usdCents)} in ${symbol}${split}`
+        : `${reward.amountBaseUnits ?? '0'} ${symbol} units${split}`;
+    }
     return reward.skinId;
   }).join(', ');
 }
@@ -183,9 +238,16 @@ function toRequest(draft: MissionDraft): MissionDefinitionRequest {
     items: draft.rewards.map((reward): DailyMissionReward => {
       if (reward.type === 'sol') return { type: 'sol', amountLamports: reward.amountLamports || '1' };
       if (reward.type === 'game_token') {
+        const playerShareBps = Math.max(0, Math.floor(Number(reward.playerShareBps) || 0));
+        const burnShareBps = Math.max(0, Math.floor(Number(reward.burnShareBps) || 0));
         return {
           type: 'game_token',
-          amountBaseUnits: reward.amountBaseUnits || '1',
+          pricingMode: reward.pricingMode,
+          ...(reward.pricingMode === 'usd'
+            ? { usdCents: usdInputToCents(reward.usdAmount) }
+            : { amountBaseUnits: reward.amountBaseUnits || '1' }),
+          playerShareBps,
+          burnShareBps,
           ...(reward.symbol.trim() ? { symbol: reward.symbol.trim().replace(/^\$/, '').toUpperCase() } : {}),
         };
       }
@@ -215,7 +277,12 @@ function isDraftValid(draft: MissionDraft): boolean {
     && draft.rewards.every((reward) => (
       reward.type === 'skin'
         ? Boolean(reward.skinId)
-        : Number(reward.type === 'sol' ? reward.amountLamports : reward.amountBaseUnits) > 0
+        : reward.type === 'sol'
+          ? Number(reward.amountLamports) > 0
+          : (reward.pricingMode === 'usd' ? Number(reward.usdAmount) > 0 : Number(reward.amountBaseUnits) > 0)
+            && Number(reward.playerShareBps) >= 0
+            && Number(reward.burnShareBps) >= 0
+            && Number(reward.playerShareBps) + Number(reward.burnShareBps) === 10000
     ));
 }
 
@@ -604,7 +671,7 @@ function MissionEditor({
                 <Button size="sm" variant="secondary" onClick={() => onDraftChange({ ...draft, rewards: [...draft.rewards, { type: 'sol', amountLamports: '50000' }] })}>
                   SOL
                 </Button>
-                <Button size="sm" variant="secondary" onClick={() => onDraftChange({ ...draft, rewards: [...draft.rewards, { type: 'game_token', amountBaseUnits: '100000', symbol: '' }] })}>
+                <Button size="sm" variant="secondary" onClick={() => onDraftChange({ ...draft, rewards: [...draft.rewards, defaultTokenRewardDraft()] })}>
                   Token
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => onDraftChange({ ...draft, rewards: [...draft.rewards, { type: 'skin', skinId: skinOptions[0] ?? '' }] })}>
@@ -625,7 +692,7 @@ function MissionEditor({
                     rewards[index] = nextType === 'sol'
                       ? { type: 'sol', amountLamports: '50000' }
                       : nextType === 'game_token'
-                        ? { type: 'game_token', amountBaseUnits: '100000', symbol: '' }
+                        ? defaultTokenRewardDraft()
                         : { type: 'skin', skinId: skinOptions[0] ?? '' };
                     onDraftChange({ ...draft, rewards });
                   }}
@@ -641,15 +708,57 @@ function MissionEditor({
                     onDraftChange({ ...draft, rewards });
                   }} />
                 ) : reward.type === 'game_token' ? (
-                  <div className="grid gap-2 md:grid-cols-[1fr_8rem]">
-                    <Input value={reward.amountBaseUnits} onChange={(event) => {
-                      const rewards = draft.rewards.slice();
-                      rewards[index] = { ...reward, amountBaseUnits: event.target.value };
-                      onDraftChange({ ...draft, rewards });
-                    }} />
+                  <div className="grid gap-2 md:grid-cols-[8rem_minmax(0,1fr)_7rem_7rem_7rem]">
+                    <select
+                      className="h-10 rounded-md border border-strike-border bg-strike-canvas px-3 text-sm text-white"
+                      value={reward.pricingMode}
+                      onChange={(event) => {
+                        const rewards = draft.rewards.slice();
+                        rewards[index] = { ...reward, pricingMode: event.target.value as 'fixed_token' | 'usd' };
+                        onDraftChange({ ...draft, rewards });
+                      }}
+                    >
+                      <option value="fixed_token">Units</option>
+                      <option value="usd">USD</option>
+                    </select>
+                    <Input
+                      type="number"
+                      min={reward.pricingMode === 'usd' ? '0.01' : '1'}
+                      step={reward.pricingMode === 'usd' ? '0.01' : '1'}
+                      value={reward.pricingMode === 'usd' ? reward.usdAmount : reward.amountBaseUnits}
+                      onChange={(event) => {
+                        const rewards = draft.rewards.slice();
+                        rewards[index] = reward.pricingMode === 'usd'
+                          ? { ...reward, usdAmount: event.target.value }
+                          : { ...reward, amountBaseUnits: event.target.value };
+                        onDraftChange({ ...draft, rewards });
+                      }}
+                    />
                     <Input value={reward.symbol} placeholder="SLOP" onChange={(event) => {
                       const rewards = draft.rewards.slice();
                       rewards[index] = { ...reward, symbol: event.target.value };
+                      onDraftChange({ ...draft, rewards });
+                    }} />
+                    <Input type="number" min={0} max={10000} step={1} value={reward.playerShareBps} placeholder="Player" title="Player share bps" onChange={(event) => {
+                      const rewards = draft.rewards.slice();
+                      const playerShareBps = event.target.value;
+                      const parsed = Number(playerShareBps);
+                      rewards[index] = {
+                        ...reward,
+                        playerShareBps,
+                        burnShareBps: Number.isFinite(parsed) ? String(Math.max(0, 10000 - Math.floor(parsed))) : reward.burnShareBps,
+                      };
+                      onDraftChange({ ...draft, rewards });
+                    }} />
+                    <Input type="number" min={0} max={10000} step={1} value={reward.burnShareBps} placeholder="Burn" title="Burn share bps" onChange={(event) => {
+                      const rewards = draft.rewards.slice();
+                      const burnShareBps = event.target.value;
+                      const parsed = Number(burnShareBps);
+                      rewards[index] = {
+                        ...reward,
+                        burnShareBps,
+                        playerShareBps: Number.isFinite(parsed) ? String(Math.max(0, 10000 - Math.floor(parsed))) : reward.playerShareBps,
+                      };
                       onDraftChange({ ...draft, rewards });
                     }} />
                   </div>

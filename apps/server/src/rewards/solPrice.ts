@@ -39,19 +39,26 @@ export function parseUsdDecimalToMicroUsd(value: string): bigint {
   return whole * MICRO_USD_PER_USD + roundedFraction;
 }
 
-export function computeMinimumPayoutLamports(
-  minPayoutUsdCents: number,
+export function computeUsdCentsToLamports(
+  usdCents: number,
   solUsdPriceMicroUsd: bigint
 ): bigint {
-  if (!Number.isInteger(minPayoutUsdCents) || minPayoutUsdCents <= 0) {
-    throw new Error('minPayoutUsdCents must be a positive integer');
+  if (!Number.isInteger(usdCents) || usdCents <= 0) {
+    throw new Error('usdCents must be a positive integer');
   }
   if (solUsdPriceMicroUsd <= 0n) {
     throw new Error('solUsdPriceMicroUsd must be greater than zero');
   }
 
-  const thresholdMicroUsd = BigInt(minPayoutUsdCents) * 10_000n;
+  const thresholdMicroUsd = BigInt(usdCents) * 10_000n;
   return ceilDiv(thresholdMicroUsd * LAMPORTS_PER_SOL, solUsdPriceMicroUsd);
+}
+
+export function computeMinimumPayoutLamports(
+  minPayoutUsdCents: number,
+  solUsdPriceMicroUsd: bigint
+): bigint {
+  return computeUsdCentsToLamports(minPayoutUsdCents, solUsdPriceMicroUsd);
 }
 
 function readCoinbaseUsdRate(payload: unknown): string {

@@ -1025,11 +1025,24 @@ model GameTokenPayout {
   tokenMintAddress     String
   tokenSymbol          String
   tokenAmountBaseUnits BigInt
+  recipientAmountBaseUnits BigInt?
+  burnAmountBaseUnits BigInt?
+  playerShareBps      Int                   @default(10000)
+  burnShareBps        Int                   @default(0)
+  rewardUsdCents      Int?
+  rewardSolLamports   BigInt?
+  solUsdPriceMicroUsd BigInt?
+  priceSource         String?
+  priceObservedAt     DateTime?
   tokenDecimals        Int?
+  tokenProgramId       String?
   treasuryTokenAccount String?
   recipientTokenAccount String?
   status               GameTokenPayoutStatus @default(pending)
   signature            String?               @unique
+  conversionSignature  String?               @unique
+  convertedTokenBaseUnits BigInt?
+  burnSignature        String?               @unique
   idempotencyKey       String                @unique
   attemptCount         Int                   @default(0)
   lastError            String?
