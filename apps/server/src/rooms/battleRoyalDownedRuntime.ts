@@ -170,6 +170,11 @@ export class BattleRoyalDownedRuntime {
 
       if (remainingMs <= 0) {
         this.deps.finalEliminate(player, null, 'bleed_out', now);
+      } else if (player.downedExpiresAt <= 0) {
+        // No reviver is holding the timer frozen, so an unset expiry would
+        // otherwise never count down — leaving the player downed forever and
+        // their team never registering as eliminated. Resume the countdown.
+        player.downedExpiresAt = now + remainingMs;
       }
     }
   }

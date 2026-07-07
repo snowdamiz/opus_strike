@@ -303,4 +303,33 @@ assert.equal(hasBattleRoyalHoldInteractionBreakingInput({
   assert.deepEqual(broadcasts, [{ transforms: true, forceVitals: true, forceMatch: true }]);
 }
 
+{
+  // A downed player with no reviver and an unset expiry must resume the
+  // bleed-out countdown instead of staying downed forever (which would keep
+  // the team "contesting" and block the team-eliminated end screen).
+  const frozen = player('frozen', 'br_09', 'downed');
+  frozen.downedRemainingMs = 5_000;
+  frozen.downedExpiresAt = 0;
+  const localEliminated: string[] = [];
+  const localRuntime = new BattleRoyalDownedRuntime({
+    getPlayerById: () => null,
+    prepareDownedPlayer: () => {},
+    prepareRevivedPlayer: () => {},
+    finalEliminate: (eliminatedPlayer) => {
+      localEliminated.push(eliminatedPlayer.id);
+    },
+    broadcastPlayerDowned: () => {},
+    broadcastReviveStarted: () => {},
+    broadcastReviveCancelled: () => {},
+    broadcastPlayerRevived: () => {},
+  });
+
+  localRuntime.update([frozen], 50_000);
+  assert.equal(frozen.downedExpiresAt, 55_000, 'frozen bleed-out timer should resume counting down');
+  assert.deepEqual(localEliminated, []);
+
+  localRuntime.update([frozen], 55_001);
+  assert.deepEqual(localEliminated, ['frozen'], 'player should bleed out once the resumed timer expires');
+}
+
 console.log('battle royal downed runtime tests passed');

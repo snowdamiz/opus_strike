@@ -171,4 +171,20 @@ function createRoomWithPlacement(): any {
   assert.equal(room.sent[0].payload.completedTeamPlacement, 2);
 }
 
+{
+  // The per-tick placement sweep delivers a summary that was never sent for an
+  // already-placed team (e.g. the send was missed on the tick the team wiped),
+  // and stays idempotent afterwards.
+  const room = createRoomWithPlacement();
+  room.updateBattleRoyalPlacement(2500);
+
+  assert.equal(room.sent.length, 2);
+  assert.deepEqual(room.sent.map((message: { sessionId: string }) => message.sessionId), ['local', 'teammate']);
+  assert.equal(room.sent[0].payload.completionReason, 'team_eliminated');
+  assert.equal(room.sent[0].payload.completedTeam, 'br_01');
+
+  room.updateBattleRoyalPlacement(2600);
+  assert.equal(room.sent.length, 2);
+}
+
 console.log('battle royal completion tests passed');

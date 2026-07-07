@@ -3138,9 +3138,11 @@ export class GameRoom extends Room<GameState> {
     const teamPlacement = this.battleRoyalPlacement.getTeamPlacement(team);
     if (!teamPlacement) return;
 
+    // Build before marking sent: if the build throws, the placement sweep
+    // retries next tick instead of permanently swallowing the summary.
+    const summary = this.buildBattleRoyalTeamEliminatedEvent(team, teamPlacement.placement, now);
     this.battleRoyalTeamSummarySent.add(team);
     const soulsChanged = this.battleRoyalSouls?.clearTeam(team) ?? false;
-    const summary = this.buildBattleRoyalTeamEliminatedEvent(team, teamPlacement.placement, now);
 
     for (const client of this.clients) {
       const player = this.state.players.get(client.sessionId);
@@ -11457,8 +11459,13 @@ export class GameRoom extends Room<GameState> {
 
   private updateBattleRoyalPlacement(now = Date.now()): void {
     if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
-    const newlyCompletedTeams = this.battleRoyalPlacement.update(this.state.players.values(), now);
-    for (const team of newlyCompletedTeams) {
+    this.battleRoyalPlacement.update(this.state.players.values(), now);
+    // Sweep every placed team rather than only newly placed ones, so a missed
+    // summary (send failure, or a placement recorded through another path)
+    // heals on the next tick instead of leaving an eliminated squad stuck
+    // in-match with no end screen. The sent-set keeps this idempotent.
+    for (const team of this.battleRoyalPlacement.getPlacedTeams()) {
+      if (this.battleRoyalTeamSummarySent.has(team)) continue;
       this.sendBattleRoyalTeamEliminatedSummary(team, now);
     }
   }

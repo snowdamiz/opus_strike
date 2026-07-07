@@ -88,6 +88,10 @@ export class BattleRoyalPlacementTracker {
     return this.placements.get(team) ?? null;
   }
 
+  getPlacedTeams(): Team[] {
+    return Array.from(this.placements.keys());
+  }
+
   hasTeamPlacement(team: Team): boolean {
     return this.placements.has(team);
   }
