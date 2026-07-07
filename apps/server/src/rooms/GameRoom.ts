@@ -72,6 +72,7 @@ import {
   addBattleRoyalDropParticipant,
   advanceBattleRoyalDropState,
   areAllBattleRoyalDropPlayersLanded,
+  areAllBattleRoyalHumanDropPlayersLanded,
   buildBattleRoyalDropSnapshot,
   createBattleRoyalDropState,
   forceLandBattleRoyalDropState,
@@ -1366,6 +1367,7 @@ export class GameRoom extends Room<GameState> {
   private battleRoyalDrop: BattleRoyalDropState | null = null;
   private readonly battleRoyalPlacement = new BattleRoyalPlacementTracker();
   private readonly battleRoyalTeamSummarySent = new Set<Team>();
+  private readonly battleRoyalDeploymentCombatInputLogAt = new Map<string, number>();
   private nextBattleRoyalSafeZoneDamageAt = 0;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
@@ -3161,6 +3163,7 @@ export class GameRoom extends Room<GameState> {
     if (this.battleRoyalTeamSummarySent.has(team)) return;
     const teamPlacement = this.battleRoyalPlacement.getTeamPlacement(team);
     if (!teamPlacement) return;
+    if (this.shouldSuppressBattleRoyalTeamEliminatedSummary(team, teamPlacement.placement, 'placement_sweep', now)) return;
 
     // Build before marking sent: if the build throws, the placement sweep
     // retries next tick instead of permanently swallowing the summary.
@@ -3183,8 +3186,35 @@ export class GameRoom extends Room<GameState> {
 
     const teamPlacement = this.battleRoyalPlacement.getTeamPlacement(team);
     if (!teamPlacement) return;
+    if (this.shouldSuppressBattleRoyalTeamEliminatedSummary(team, teamPlacement.placement, 'client_backfill', now)) return;
 
     this.sendTrackedAfterGameplayWork(client, 'gameEnd', this.buildBattleRoyalTeamEliminatedEvent(team, teamPlacement.placement, now));
+  }
+
+  private shouldSuppressBattleRoyalTeamEliminatedSummary(
+    team: Team,
+    placement: number,
+    source: 'placement_sweep' | 'client_backfill',
+    now = Date.now()
+  ): boolean {
+    const decision = resolveBattleRoyalMatchEnd(this.state.players.values());
+    if (placement > 1 && !decision.shouldEnd) return false;
+
+    loggers.room.warn('Battle Royal team eliminated summary suppressed', {
+      roomId: this.getRoomIdForDiagnostics(),
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      source,
+      team,
+      placement,
+      activeTeamCount: this.battleRoyalPlacement.activeTeamCount || null,
+      phase: this.state.phase,
+      shouldEnd: decision.shouldEnd,
+      winningTeam: decision.winningTeam,
+      contestingTeams: decision.aliveTeams,
+      serverTime: now,
+    });
+    return true;
   }
 
   private updateMetadata(): void {
@@ -7549,6 +7579,39 @@ export class GameRoom extends Room<GameState> {
     now = Date.now()
   ): void {
     if (this.isBattleRoyalDeploymentPhase()) {
+      const combatInputPressed = Boolean(
+        input.primaryFire ||
+        input.secondaryFire ||
+        input.reload ||
+        input.ability1 ||
+        input.ability2 ||
+        input.ultimate
+      );
+      if (combatInputPressed && !player.isBot && player.state === 'alive') {
+        const lastLoggedAt = this.battleRoyalDeploymentCombatInputLogAt.get(player.id) ?? 0;
+        if (now - lastLoggedAt >= 2000) {
+          this.battleRoyalDeploymentCombatInputLogAt.set(player.id, now);
+          loggers.room.warn('Battle Royal combat input ignored during deployment', {
+            roomId: this.getRoomIdForDiagnostics(),
+            lobbyId: this.lobbyId,
+            playerId: player.id,
+            userId: this.getDurableUserId(player.id),
+            team: player.team,
+            heroId: player.heroId,
+            input: {
+              primaryFire: Boolean(input.primaryFire),
+              secondaryFire: Boolean(input.secondaryFire),
+              reload: Boolean(input.reload),
+              ability1: Boolean(input.ability1),
+              ability2: Boolean(input.ability2),
+              ultimate: Boolean(input.ultimate),
+            },
+            statusCounts: this.getBattleRoyalDropStatusCounts(),
+            phaseEndsAt: this.state.phaseEndTime,
+            serverTime: now,
+          });
+        }
+      }
       this.playerPressStates.applyInput(player.id, {
         primaryFire: false,
         secondaryFire: false,
@@ -11312,6 +11375,36 @@ export class GameRoom extends Room<GameState> {
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
 
+  private getBattleRoyalDropStatusCounts(drop: BattleRoyalDropState | null = this.battleRoyalDrop): Record<string, number> {
+    const counts = {
+      total: 0,
+      human: 0,
+      bot: 0,
+      aboard: 0,
+      dropping: 0,
+      landed: 0,
+    };
+    if (!drop) return counts;
+
+    for (const player of drop.players.values()) {
+      counts.total++;
+      if (player.isBot) {
+        counts.bot++;
+      } else {
+        counts.human++;
+      }
+      if (player.status === 'aboard') counts.aboard++;
+      if (player.status === 'dropping') counts.dropping++;
+      if (player.status === 'landed') counts.landed++;
+    }
+
+    return counts;
+  }
+
+  private getRoomIdForDiagnostics(): string {
+    return this.state?.roomId || 'unknown';
+  }
+
   private startBattleRoyalDeployment(): void {
     if (this.matchCancelled) return;
     if (!isBattleRoyalMode(this.gameplayMode)) {
@@ -11329,6 +11422,19 @@ export class GameRoom extends Room<GameState> {
         isBot: player.isBot,
       }));
     this.battleRoyalDrop = createBattleRoyalDropState(this.getMapManifest(), participants, now);
+    loggers.room.info('Battle Royal deployment started', {
+      roomId: this.getRoomIdForDiagnostics(),
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      participantCount: participants.length,
+      humanCount: participants.filter((participant) => !participant.isBot).length,
+      botCount: participants.filter((participant) => participant.isBot).length,
+      statusCounts: this.getBattleRoyalDropStatusCounts(this.battleRoyalDrop),
+      phaseEndsAt: this.battleRoyalDrop.phaseEndsAt,
+      dropStartsAt: this.battleRoyalDrop.dropStartsAt,
+      dropEndsAt: this.battleRoyalDrop.dropEndsAt,
+      autoDropAt: this.battleRoyalDrop.autoDropAt,
+    });
     this.applyPhaseStatePatch(buildBattleRoyalDeploymentPhaseStatePatch({
       now,
       durationMs: BATTLE_ROYAL_DEPLOYMENT_PHASE_MS,
@@ -11491,12 +11597,37 @@ export class GameRoom extends Room<GameState> {
     const decision = resolveBattleRoyalMatchEnd(this.state.players.values());
     if (!decision.shouldEnd) return;
 
+    loggers.room.info('Battle Royal match end condition reached', {
+      roomId: this.getRoomIdForDiagnostics(),
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      winningTeam: decision.winningTeam,
+      contestingTeams: decision.aliveTeams,
+      activeTeamCount: this.battleRoyalPlacement.activeTeamCount || null,
+      placedTeams: this.battleRoyalPlacement.getPlacedTeams(),
+      phase: this.state.phase,
+      roundStartTime: this.state.roundStartTime,
+      serverTime: Date.now(),
+    });
     this.endGame(undefined, decision.winningTeam);
   }
 
   private updateBattleRoyalPlacement(now = Date.now()): void {
     if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
-    if (resolveBattleRoyalMatchEnd(this.state.players.values()).shouldEnd) return;
+    const decision = resolveBattleRoyalMatchEnd(this.state.players.values());
+    if (decision.shouldEnd) {
+      loggers.room.info('Battle Royal placement sweep skipped for match end', {
+        roomId: this.getRoomIdForDiagnostics(),
+        lobbyId: this.lobbyId,
+        matchMode: this.matchMode,
+        winningTeam: decision.winningTeam,
+        contestingTeams: decision.aliveTeams,
+        activeTeamCount: this.battleRoyalPlacement.activeTeamCount || null,
+        placedTeams: this.battleRoyalPlacement.getPlacedTeams(),
+        serverTime: now,
+      });
+      return;
+    }
 
     this.battleRoyalPlacement.update(this.state.players.values(), now);
     // Sweep every placed team rather than only newly placed ones, so a missed
@@ -11653,6 +11784,16 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (!player.isBot) {
+        loggers.room.info('Battle Royal human landed during deployment', {
+          roomId: this.getRoomIdForDiagnostics(),
+          lobbyId: this.lobbyId,
+          playerId: player.id,
+          userId: this.getDurableUserId(player.id),
+          team: player.team,
+          statusCounts: this.getBattleRoyalDropStatusCounts(drop),
+          phaseEndsAt: this.state.phaseEndTime,
+          serverTime: now,
+        });
         const client = this.clientRegistry.getClient(player.id);
         if (client) {
           this.sendSelfMovementAuthority(player, client, 'spawn');
@@ -11700,13 +11841,20 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private finishBattleRoyalDeployment(now = Date.now()): void {
+  private finishBattleRoyalDeployment(now = Date.now(), reason = 'unspecified'): void {
     const drop = this.battleRoyalDrop;
     if (!drop) {
+      loggers.room.warn('Battle Royal deployment finishing without drop state', {
+        roomId: this.getRoomIdForDiagnostics(),
+        lobbyId: this.lobbyId,
+        reason,
+        phase: this.state.phase,
+      });
       this.startPlaying();
       return;
     }
 
+    const statusCountsBefore = this.getBattleRoyalDropStatusCounts(drop);
     forceLandBattleRoyalDropState({
       state: drop,
       now,
@@ -11718,6 +11866,16 @@ export class GameRoom extends Room<GameState> {
     this.activateLandedBattleRoyalDropPlayers(now);
     this.state.players.forEach((player) => {
       this.markMovementBarrier(player.id, 'spawn');
+    });
+    loggers.room.info('Battle Royal deployment finished', {
+      roomId: this.getRoomIdForDiagnostics(),
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      reason,
+      statusCountsBefore,
+      statusCountsAfter: this.getBattleRoyalDropStatusCounts(drop),
+      phaseEndsAt: this.state.phaseEndTime,
+      serverTime: now,
     });
     this.startPlaying({
       preserveAlivePlayers: true,
@@ -11757,11 +11915,18 @@ export class GameRoom extends Room<GameState> {
 
     this.sendBattleRoyalDropAuthorities(now);
 
-    if (
-      areAllBattleRoyalDropPlayersLanded(drop) ||
-      hasPhaseDeadlineElapsed(this.state.phaseEndTime, now)
-    ) {
-      this.finishBattleRoyalDeployment(now);
+    const allPlayersLanded = areAllBattleRoyalDropPlayersLanded(drop);
+    const allHumansLanded = areAllBattleRoyalHumanDropPlayersLanded(drop);
+    const deadlineElapsed = hasPhaseDeadlineElapsed(this.state.phaseEndTime, now);
+    if (allPlayersLanded || allHumansLanded || deadlineElapsed) {
+      this.finishBattleRoyalDeployment(
+        now,
+        allPlayersLanded
+          ? 'all_players_landed'
+          : allHumansLanded
+            ? 'all_humans_landed'
+            : 'deadline_elapsed'
+      );
       return;
     }
 
