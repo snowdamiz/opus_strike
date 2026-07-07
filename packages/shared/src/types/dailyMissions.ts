@@ -6,20 +6,20 @@ import type { HeroSkinId } from './skins.js';
 export const DAILY_MISSION_RESET_POLICIES = ['utc'] as const;
 export type DailyMissionResetPolicy = typeof DAILY_MISSION_RESET_POLICIES[number];
 
+export const DAILY_MISSION_MATCH_MODES = ['quick_play', 'ranked'] as const satisfies readonly MatchMode[];
+export const DAILY_MISSION_GAMEPLAY_MODES = ['battle_royal'] as const satisfies readonly GameplayMode[];
+
 export const DAILY_MISSION_CRITERION_TYPES = [
   'matches_completed',
   'wins',
   'eliminations',
   'assists',
-  'flag_captures',
-  'flag_returns',
   'score',
   'experience',
   'play_hero',
   'eliminations_as_hero',
   'eliminations_against_hero',
   'eliminations_with_ability',
-  'flag_carrier_eliminations',
 ] as const;
 
 export type DailyMissionCriterionType = typeof DAILY_MISSION_CRITERION_TYPES[number];
@@ -43,11 +43,8 @@ export interface DailyMissionBasicCriterion extends DailyMissionCriterionBase {
     | 'wins'
     | 'eliminations'
     | 'assists'
-    | 'flag_captures'
-    | 'flag_returns'
     | 'score'
-    | 'experience'
-    | 'flag_carrier_eliminations';
+    | 'experience';
 }
 
 export interface DailyMissionHeroCriterion extends DailyMissionCriterionBase {
@@ -189,8 +186,8 @@ export interface DailyMissionAdminMissionRow {
 }
 
 export const DEFAULT_DAILY_MISSION_ELIGIBILITY: DailyMissionEligibility = {
-  matchModes: ['quick_play', 'ranked'],
-  gameplayModes: ['capture_the_flag', 'team_deathmatch', 'battle_royal'],
+  matchModes: [...DAILY_MISSION_MATCH_MODES],
+  gameplayModes: [...DAILY_MISSION_GAMEPLAY_MODES],
   rankedOnly: false,
   cleanIntegrityOnly: true,
   minDurationMs: 180000,
@@ -202,15 +199,12 @@ export const DAILY_MISSION_CRITERION_LABELS: Record<DailyMissionCriterionType, s
   wins: 'Win matches',
   eliminations: 'Get eliminations',
   assists: 'Get assists',
-  flag_captures: 'Capture flags',
-  flag_returns: 'Return flags',
   score: 'Earn score',
   experience: 'Earn XP',
   play_hero: 'Play hero',
   eliminations_as_hero: 'Elims as hero',
   eliminations_against_hero: 'Elims against hero',
   eliminations_with_ability: 'Ability eliminations',
-  flag_carrier_eliminations: 'Stop flag carriers',
 };
 
 export function getDailyMissionCriterionLabel(type: DailyMissionCriterionType): string {
@@ -243,4 +237,3 @@ export function getDailyMissionPercentComplete(
   ), 0);
   return Math.min(100, Math.floor(total / criteria.items.length));
 }
-
