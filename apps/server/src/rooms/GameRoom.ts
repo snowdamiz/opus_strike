@@ -487,6 +487,7 @@ import {
   MessageRateLimiter,
   type RateLimitRule,
 } from './rateLimiter';
+import { refreshRoomAuthDisplayName } from './roomPlayerNameRefresh';
 import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
 import { pregeneratedMapCatalogService } from '../maps/pregeneratedMapCatalog';
 import { validateMovementProposal, type LastSafeMovementState, type MovementBounds } from './movementValidation';
@@ -1839,6 +1840,16 @@ export class GameRoom extends Room<GameState> {
       this.handleChat(client, chat.message, chat.teamOnly);
     });
 
+    this.onRateLimitedMessage('refreshPlayerName', GAME_MESSAGE_RATE_LIMITS.profile, (client) => {
+      void this.handleRefreshPlayerName(client).catch((error) => {
+        loggers.room.warn('Failed to refresh game player name', {
+          roomId: this.roomId,
+          sessionId: client.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    });
+
     this.onRateLimitedMessage('playerReport', GAME_MESSAGE_RATE_LIMITS.playerReport, (client, data: unknown) => {
       void this.handlePlayerReport(client, data);
     }, (client, data) => {
@@ -1864,6 +1875,18 @@ export class GameRoom extends Room<GameState> {
     this.onRateLimitedMessage('streamerObserverReady', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client) => {
       this.handleStreamerObserverReady(client);
     });
+  }
+
+  private async handleRefreshPlayerName(client: Client): Promise<void> {
+    const player = this.state.players.get(client.sessionId);
+    const authContext = this.participantRegistry.getAuthContext(client.sessionId);
+    if (!player || player.isBot || !authContext) return;
+
+    const displayName = await refreshRoomAuthDisplayName(authContext);
+    if (!displayName) return;
+
+    player.name = displayName;
+    this.syncReconnectParticipantFromPlayer(player);
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -2529,11 +2552,12 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private isBattleRoyalDeploymentPhase(): boolean {
+    return isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'deployment';
+  }
+
   private isBattleRoyalActiveCombatPhase(): boolean {
-    return isBattleRoyalMode(this.gameplayMode) && (
-      this.state.phase === 'playing' ||
-      this.state.phase === 'deployment'
-    );
+    return isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing';
   }
 
   private updateActivePlayerRuntimes(now: number, dt: number): void {
@@ -7524,6 +7548,18 @@ export class GameRoom extends Room<GameState> {
     input: PlayerInput,
     now = Date.now()
   ): void {
+    if (this.isBattleRoyalDeploymentPhase()) {
+      this.playerPressStates.applyInput(player.id, {
+        primaryFire: false,
+        secondaryFire: false,
+        reload: false,
+        ability1: false,
+        ability2: false,
+        ultimate: false,
+      });
+      return;
+    }
+
     if (player.state === 'downed') {
       const previousDowned = this.playerPressStates.getOrCreate(player.id);
       const primaryFirePressed = Boolean(input.primaryFire) && !previousDowned.primaryFire;
@@ -8177,6 +8213,8 @@ export class GameRoom extends Room<GameState> {
     damageType: string,
     context: DamageContext = {}
   ): boolean {
+    if (this.isBattleRoyalDeploymentPhase()) return false;
+
     return this.damageRuntime.applyPlayerDamage(target, rawDamage, sourceId, damageType, context);
   }
 
@@ -8699,8 +8737,7 @@ export class GameRoom extends Room<GameState> {
 
       if (
         this.state.phase !== 'playing' &&
-        this.state.phase !== 'countdown' &&
-        !(this.state.phase === 'deployment' && isBattleRoyalMode(this.gameplayMode))
+        this.state.phase !== 'countdown'
       ) {
         return;
       }
@@ -11708,10 +11745,6 @@ export class GameRoom extends Room<GameState> {
       this.syncBattleRoyalDropPlayers(now);
       this.activateLandedBattleRoyalDropPlayers(now);
       this.updateActivePlayerRuntimes(now, dt);
-    });
-
-    this.measureTickSpan('powerups_objectives_effects', () => {
-      this.updateActiveGameplayEffects(now, dt);
     });
 
     this.updatePhysics();

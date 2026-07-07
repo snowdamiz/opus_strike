@@ -45,6 +45,7 @@ export const GAME_MESSAGE_RATE_LIMITS = {
   unstuck: { limit: 2, intervalMs: 15000 },
   mapPing: { limit: 12, intervalMs: 5000 },
   playerPingResponse: { limit: 30, intervalMs: 10000 },
+  profile: { limit: 4, intervalMs: 5000 },
   devCommand: { limit: 6, intervalMs: 5000 },
   voiceToken: { limit: 4, intervalMs: 60000 },
   playerReport: { limit: 3, intervalMs: 60000 },
@@ -56,6 +57,7 @@ export const LOBBY_MESSAGE_RATE_LIMITS = {
   hostAction: { limit: 8, intervalMs: 5000 },
   mapVote: { limit: 8, intervalMs: 5000 },
   chat: { limit: 4, intervalMs: 5000 },
+  profile: { limit: 4, intervalMs: 5000 },
   payment: { limit: 6, intervalMs: 60000 },
   devCommand: { limit: 6, intervalMs: 5000 },
 } satisfies Record<string, RateLimitRule>;

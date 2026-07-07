@@ -129,6 +129,7 @@ interface NetworkContextType {
   restoreParty: (playerName: string, persistentPartyId: string, heroId?: HeroId, selectedSkinId?: HeroSkinId) => Promise<void>;
   getActivePartySession: () => Promise<ActivePartySessionResponse>;
   leaveParty: () => void;
+  refreshActivePlayerName: () => void;
   setPartyHero: (heroId: HeroId) => void;
   setPartySkin: (skinId: HeroSkinId) => void;
   setPartyReady: (ready: boolean) => void;
@@ -984,6 +985,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     partyRoomRef.current?.send('start', options);
   }, []);
 
+  const refreshActivePlayerName = useCallback(() => {
+    partyRoomRef.current?.send('refreshPlayerName');
+    lobbyRoomRef.current?.send('refreshPlayerName');
+    gameRoomRef.current?.send('refreshPlayerName');
+  }, []);
+
   const leaveLobby = useCallback(() => {
     disconnectVoice('leave_lobby');
     useChatStore.getState().clearMessages();
@@ -1531,6 +1538,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     restoreParty,
     getActivePartySession,
     leaveParty,
+    refreshActivePlayerName,
     setPartyHero,
     setPartySkin,
     setPartyReady,
@@ -1611,6 +1619,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     quickPlay,
     rankedPlay,
     reconnectRunningGame,
+    refreshActivePlayerName,
     removeLobbyBot,
     reportMapVotePreviewsReady,
     reportMatchSceneReady,

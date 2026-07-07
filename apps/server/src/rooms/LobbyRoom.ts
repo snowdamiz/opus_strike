@@ -90,6 +90,7 @@ import {
   buildLobbyPlayerJoinedPayload,
   buildLobbyStatePayload,
 } from './lobbyNetworkPayloads';
+import { refreshRoomAuthDisplayName } from './roomPlayerNameRefresh';
 import {
   addMissingBotMapVotes as addMissingBotMapVotesForRoster,
   buildMapVoteStartedPayload,
@@ -481,6 +482,13 @@ export class LobbyRoom extends Room<LobbyState> {
       this.handleChat(client, chat.message);
     });
 
+    this.onMessage('refreshPlayerName', (client) => {
+      if (!this.consumeLobbyMessage(client, 'refreshPlayerName', LOBBY_MESSAGE_RATE_LIMITS.profile)) return;
+      this.handleRefreshPlayerName(client).catch((error) => {
+        client.send('error', { message: error instanceof Error ? error.message : 'Failed to refresh player name' });
+      });
+    });
+
     const initialBotCount = !this.gameplayRules.botsEnabled
       ? 0
       : Math.max(0, Math.min(this.gameplayRules.maxPlayers - 1, Math.floor(options.initialBotCount || 0)));
@@ -842,6 +850,18 @@ export class LobbyRoom extends Room<LobbyState> {
       isReady: player.isReady,
     });
     this.updateMetadata();
+    this.broadcastLobbyState();
+  }
+
+  private async handleRefreshPlayerName(client: Client): Promise<void> {
+    const player = this.state.players.get(client.sessionId);
+    const authContext = this.playerAuthContexts.get(client.sessionId);
+    if (!player || player.isBot || !authContext) return;
+
+    const displayName = await refreshRoomAuthDisplayName(authContext);
+    if (!displayName) return;
+
+    player.name = displayName;
     this.broadcastLobbyState();
   }
 
