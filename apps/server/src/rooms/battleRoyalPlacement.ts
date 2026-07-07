@@ -38,18 +38,25 @@ export class BattleRoyalPlacementTracker {
   update(players: Iterable<BattleRoyalPlacementPlayer>, now = Date.now()): Team[] {
     if (this.activeTeamIds.size === 0) return [];
     const contestingTeams = getBattleRoyalContestingTeamSet(players);
-    const unplacedCount = this.getUnplacedTeamCount();
-    const eliminatedAt = new Date(now);
     const newlyPlacedTeams: Team[] = [];
 
     for (const team of this.activeTeamIds) {
       if (this.placements.has(team) || contestingTeams.has(team)) continue;
-      this.placements.set(team, {
-        placement: Math.max(1, unplacedCount - this.getNewlyPlacedTeamCount(eliminatedAt)),
-        eliminatedAt,
-      });
       newlyPlacedTeams.push(team);
     }
+
+    if (newlyPlacedTeams.length === 0) return [];
+
+    const eliminatedAt = new Date(now);
+    const placement = Math.max(1, this.getUnplacedTeamCount() - newlyPlacedTeams.length + 1);
+
+    for (const team of newlyPlacedTeams) {
+      this.placements.set(team, {
+        placement,
+        eliminatedAt,
+      });
+    }
+
     return newlyPlacedTeams;
   }
 
@@ -100,13 +107,6 @@ export class BattleRoyalPlacementTracker {
     return Math.max(0, this.activeTeamIds.size - this.placements.size);
   }
 
-  private getNewlyPlacedTeamCount(eliminatedAt: Date): number {
-    let count = 0;
-    for (const placement of this.placements.values()) {
-      if (placement.eliminatedAt?.getTime() === eliminatedAt.getTime()) count++;
-    }
-    return count;
-  }
 }
 
 function getBattleRoyalCombatTeams(players: Iterable<BattleRoyalPlacementPlayer>): Team[] {
