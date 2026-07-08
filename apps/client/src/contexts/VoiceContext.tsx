@@ -54,6 +54,7 @@ const VOICE_TRACK_NAME_BY_TRANSMIT_MODE: Record<VoiceTransmitMode, string> = {
   team: 'team-microphone',
   proximity: 'proximity-microphone',
 };
+export const VOICE_PEER_CONNECTION_TIMEOUT_MS = 30000;
 const VOICE_CONNECT_RETRY_BASE_DELAY_MS = 1000;
 const VOICE_CONNECT_RETRY_MAX_DELAY_MS = 15000;
 
@@ -158,7 +159,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const localMicGainRef = useRef<GainNode | null>(null);
   const heldTransmitModesRef = useRef<VoiceTransmitMode[]>([]);
   const tokenRefreshTimeoutRef = useRef<number | null>(null);
-  const connectingKeyRef = useRef<string | null>(null);
+  const connectingAttemptRef = useRef<symbol | null>(null);
+  const connectingPromiseRef = useRef<Promise<boolean> | null>(null);
+  const connectingPromiseKeyRef = useRef<string | null>(null);
   const connectedKeyRef = useRef<string | null>(null);
   const activeConnectionKey = appPhase === 'in_game' && settings.voiceEnabled && roomId && localTeam
     ? `${roomId}:${localTeam}`
@@ -367,9 +370,16 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }, delayMs);
   }, [clearTokenRefresh, requestVoiceToken]);
 
-  const disconnectRoom = useCallback(async (reason: string | null = 'voice_disconnect') => {
+  const disconnectRoom = useCallback(async (
+    reason: string | null = 'voice_disconnect',
+    options: { preserveConnecting?: boolean } = {}
+  ) => {
     clearTokenRefresh();
-    connectingKeyRef.current = null;
+    if (!options.preserveConnecting) {
+      connectingAttemptRef.current = null;
+      connectingPromiseRef.current = null;
+      connectingPromiseKeyRef.current = null;
+    }
     connectedKeyRef.current = null;
     const room = livekitRoomRef.current;
     livekitRoomRef.current = null;
@@ -387,158 +397,207 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     useVoiceStore.getState().resetVoiceSession(reason);
   }, [clearTokenRefresh, cleanupLocalMicrophone, detachRemoteAudio]);
 
-  const connectRoom = useCallback(async (connectionKey: string): Promise<boolean> => {
-    if (connectingKeyRef.current === connectionKey) return true;
+  const connectRoom = useCallback((connectionKey: string): Promise<boolean> => {
+    if (connectingPromiseKeyRef.current === connectionKey && connectingPromiseRef.current) {
+      return connectingPromiseRef.current;
+    }
+
     if (
       livekitRoomRef.current &&
       useVoiceStore.getState().connectionState === 'connected' &&
       connectedKeyRef.current === connectionKey
     ) {
-      return true;
+      return Promise.resolve(true);
     }
 
-    connectingKeyRef.current = connectionKey;
-    useVoiceStore.getState().setConnectionState('requesting_token');
+    const attempt = Symbol(connectionKey);
+    connectingAttemptRef.current = attempt;
+    connectingPromiseKeyRef.current = connectionKey;
 
-    let response: VoiceTokenResponse;
-    try {
-      response = await requestVoiceToken('match');
-    } catch (error) {
-      useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice token request failed');
-      connectingKeyRef.current = null;
-      return false;
-    }
+    const connectPromise = (async () => {
+      useVoiceStore.getState().setConnectionState('requesting_token');
 
-    if (!response.enabled || !response.url || !response.token) {
-      const reason = response.reason || 'voice unavailable';
-      useVoiceStore.getState().setAvailability(false, reason);
-      const logVoiceTokenUnavailable = isExpectedVoiceDisabledReason(response.reason)
-        ? loggers.voice.debug
-        : loggers.voice.warn;
-      logVoiceTokenUnavailable('voice token unavailable', voiceLogState({ reason }));
-      connectingKeyRef.current = null;
-      return false;
-    }
+      let response: VoiceTokenResponse;
+      try {
+        response = await requestVoiceToken('match');
+      } catch (error) {
+        if (connectingAttemptRef.current === attempt) {
+          useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice token request failed');
+        }
+        return false;
+      }
 
-    await disconnectRoom(null);
-    useVoiceStore.getState().setAvailability(true);
-    useVoiceStore.getState().setRoomInfo({
-      roomName: response.roomName ?? null,
-      identity: response.identity ?? null,
-      playerId: response.playerId ?? null,
-      team: response.team ?? null,
-    });
-    useVoiceStore.getState().setConnectionState('connecting');
+      if (connectingAttemptRef.current !== attempt) return false;
 
-    let livekit: LiveKitModule;
-    try {
-      livekit = await loadLiveKit();
-      liveKitModuleRef.current = livekit;
-    } catch (error) {
-      useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice client failed to load');
-      loggers.audio.warn('voice client load failed', error);
-      connectingKeyRef.current = null;
-      return false;
-    }
+      if (!response.enabled || !response.url || !response.token) {
+        const reason = response.reason || 'voice unavailable';
+        useVoiceStore.getState().setAvailability(false, reason);
+        const logVoiceTokenUnavailable = isExpectedVoiceDisabledReason(response.reason)
+          ? loggers.voice.debug
+          : loggers.voice.warn;
+        logVoiceTokenUnavailable('voice token unavailable', voiceLogState({ reason }));
+        return false;
+      }
 
-    const room = new livekit.Room({
-      dynacast: false,
-      adaptiveStream: false,
-      publishDefaults: {
-        audioPreset: livekit.AudioPresets.speech,
-        dtx: true,
-        stopMicTrackOnMute: true,
-      },
-    });
-    livekitRoomRef.current = room;
+      await disconnectRoom(null, { preserveConnecting: true });
+      if (connectingAttemptRef.current !== attempt) return false;
 
-    room.on(livekit.RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
-      useVoiceStore.getState().setConnectionState(
-        state === livekit.ConnectionState.Connected
-          ? 'connected'
-          : state === livekit.ConnectionState.Reconnecting || state === livekit.ConnectionState.SignalReconnecting
-            ? 'reconnecting'
-            : state === livekit.ConnectionState.Disconnected
-              ? 'disconnected'
-              : 'connecting'
-      );
-    });
-    room.on(livekit.RoomEvent.Reconnecting, () => useVoiceStore.getState().markReconnect());
-    room.on(livekit.RoomEvent.SignalReconnecting, () => useVoiceStore.getState().markReconnect());
-    room.on(livekit.RoomEvent.Reconnected, () => useVoiceStore.getState().setConnectionState('connected'));
-    room.on(livekit.RoomEvent.Disconnected, () => {
-      detachRemoteAudio();
-      useVoiceStore.getState().setLocalMicState(true, false);
-      useVoiceStore.getState().setConnectionState('disconnected');
-    });
-    room.on(livekit.RoomEvent.ParticipantConnected, (participant) => {
-      useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, false));
-    });
-    room.on(livekit.RoomEvent.ParticipantDisconnected, (participant) => {
-      useVoiceStore.getState().removeParticipant(participant.identity);
-    });
-    room.on(livekit.RoomEvent.ParticipantMetadataChanged, (_prev, participant) => {
-      useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
-    });
-    room.on(livekit.RoomEvent.TrackSubscribed, attachRemoteAudio);
-    room.on(livekit.RoomEvent.TrackUnsubscribed, (_track, publication) => {
-      detachRemoteAudio(publication.trackSid);
-    });
-    room.on(livekit.RoomEvent.TrackMuted, (_publication, participant) => {
-      useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
-    });
-    room.on(livekit.RoomEvent.TrackUnmuted, (_publication, participant) => {
-      useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
-    });
-    room.on(livekit.RoomEvent.ActiveSpeakersChanged, (speakers) => {
-      useVoiceStore.getState().setSpeakingIdentities(new Set(speakers.map((speaker) => speaker.identity)));
-    });
-    room.on(livekit.RoomEvent.MediaDevicesChanged, () => {
-      void refreshDevices();
-    });
-    room.on(livekit.RoomEvent.LocalTrackPublished, () => {
-      useVoiceStore.getState().setLocalMicState(false, true);
-    });
-    room.on(livekit.RoomEvent.LocalTrackUnpublished, () => {
-      useVoiceStore.getState().setLocalMicState(true, false);
-    });
-
-    try {
-      await room.connect(response.url, response.token, { autoSubscribe: true });
-      syncParticipants(room, response);
-      useVoiceStore.getState().setConnectionState('connected');
-      useVoiceStore.getState().setLocalMicState(true, false);
-      connectedKeyRef.current = connectionKey;
-      loggers.voice.info('voice room connected', voiceLogState({
-        livekitRoom: response.roomName ?? null,
-        urlHost: (() => {
-          try {
-            return new URL(response.url).host;
-          } catch {
-            return 'invalid-url';
-          }
-        })(),
-      }));
-      scheduleTokenRefresh(response);
-      void room.startAudio().catch((error) => {
-        loggers.audio.debug('voice audio playback needs user gesture', error);
+      useVoiceStore.getState().setAvailability(true);
+      useVoiceStore.getState().setRoomInfo({
+        roomName: response.roomName ?? null,
+        identity: response.identity ?? null,
+        playerId: response.playerId ?? null,
+        team: response.team ?? null,
       });
-      void refreshDevices();
-      return true;
-    } catch (error) {
-      room.removeAllListeners();
-      livekitRoomRef.current = null;
-      detachRemoteAudio();
-      useVoiceStore.getState().setLocalMicState(true, false);
-      useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice connection failed');
-      loggers.audio.warn('voice connection failed', error);
-      loggers.voice.warn('voice room connection failed', voiceLogState({
-        error: error instanceof Error ? error.message : 'voice connection failed',
-      }));
-      return false;
-    } finally {
-      connectingKeyRef.current = null;
-    }
+      useVoiceStore.getState().setConnectionState('connecting');
+
+      let livekit: LiveKitModule;
+      try {
+        livekit = await loadLiveKit();
+        liveKitModuleRef.current = livekit;
+      } catch (error) {
+        if (connectingAttemptRef.current === attempt) {
+          useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice client failed to load');
+        }
+        loggers.audio.warn('voice client load failed', error);
+        return false;
+      }
+
+      if (connectingAttemptRef.current !== attempt) return false;
+
+      const room = new livekit.Room({
+        dynacast: false,
+        adaptiveStream: false,
+        publishDefaults: {
+          audioPreset: livekit.AudioPresets.speech,
+          dtx: true,
+          stopMicTrackOnMute: true,
+        },
+      });
+      livekitRoomRef.current = room;
+
+      room.on(livekit.RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+        if (livekitRoomRef.current !== room) return;
+        useVoiceStore.getState().setConnectionState(
+          state === livekit.ConnectionState.Connected
+            ? 'connected'
+            : state === livekit.ConnectionState.Reconnecting || state === livekit.ConnectionState.SignalReconnecting
+              ? 'reconnecting'
+              : state === livekit.ConnectionState.Disconnected
+                ? 'disconnected'
+                : 'connecting'
+        );
+      });
+      room.on(livekit.RoomEvent.Reconnecting, () => useVoiceStore.getState().markReconnect());
+      room.on(livekit.RoomEvent.SignalReconnecting, () => useVoiceStore.getState().markReconnect());
+      room.on(livekit.RoomEvent.Reconnected, () => useVoiceStore.getState().setConnectionState('connected'));
+      room.on(livekit.RoomEvent.Disconnected, () => {
+        if (livekitRoomRef.current !== room) return;
+        detachRemoteAudio();
+        useVoiceStore.getState().setLocalMicState(true, false);
+        useVoiceStore.getState().setConnectionState('disconnected');
+      });
+      room.on(livekit.RoomEvent.ParticipantConnected, (participant) => {
+        useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, false));
+      });
+      room.on(livekit.RoomEvent.ParticipantDisconnected, (participant) => {
+        useVoiceStore.getState().removeParticipant(participant.identity);
+      });
+      room.on(livekit.RoomEvent.ParticipantMetadataChanged, (_prev, participant) => {
+        useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
+      });
+      room.on(livekit.RoomEvent.TrackSubscribed, attachRemoteAudio);
+      room.on(livekit.RoomEvent.TrackUnsubscribed, (_track, publication) => {
+        detachRemoteAudio(publication.trackSid);
+      });
+      room.on(livekit.RoomEvent.TrackMuted, (_publication, participant) => {
+        useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
+      });
+      room.on(livekit.RoomEvent.TrackUnmuted, (_publication, participant) => {
+        useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
+      });
+      room.on(livekit.RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        useVoiceStore.getState().setSpeakingIdentities(new Set(speakers.map((speaker) => speaker.identity)));
+      });
+      room.on(livekit.RoomEvent.MediaDevicesChanged, () => {
+        void refreshDevices();
+      });
+      room.on(livekit.RoomEvent.LocalTrackPublished, () => {
+        useVoiceStore.getState().setLocalMicState(false, true);
+      });
+      room.on(livekit.RoomEvent.LocalTrackUnpublished, () => {
+        useVoiceStore.getState().setLocalMicState(true, false);
+      });
+
+      try {
+        await room.connect(response.url, response.token, {
+          autoSubscribe: true,
+          peerConnectionTimeout: VOICE_PEER_CONNECTION_TIMEOUT_MS,
+        });
+
+        if (connectingAttemptRef.current !== attempt || livekitRoomRef.current !== room) {
+          room.removeAllListeners();
+          await room.disconnect(true).catch((error) => {
+            loggers.audio.debug('stale voice room disconnect failed', error);
+          });
+          return false;
+        }
+
+        syncParticipants(room, response);
+        useVoiceStore.getState().setConnectionState('connected');
+        useVoiceStore.getState().setLocalMicState(true, false);
+        connectedKeyRef.current = connectionKey;
+        loggers.voice.info('voice room connected', voiceLogState({
+          livekitRoom: response.roomName ?? null,
+          peerConnectionTimeoutMs: VOICE_PEER_CONNECTION_TIMEOUT_MS,
+          urlHost: (() => {
+            try {
+              return new URL(response.url).host;
+            } catch {
+              return 'invalid-url';
+            }
+          })(),
+        }));
+        scheduleTokenRefresh(response);
+        void room.startAudio().catch((error) => {
+          loggers.audio.debug('voice audio playback needs user gesture', error);
+        });
+        void refreshDevices();
+        return true;
+      } catch (error) {
+        room.removeAllListeners();
+        if (livekitRoomRef.current === room) {
+          livekitRoomRef.current = null;
+          detachRemoteAudio();
+        }
+        if (connectingAttemptRef.current === attempt) {
+          useVoiceStore.getState().setLocalMicState(true, false);
+          useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice connection failed');
+          loggers.voice.warn('voice room connection failed', voiceLogState({
+            error: error instanceof Error ? error.message : 'voice connection failed',
+            peerConnectionTimeoutMs: VOICE_PEER_CONNECTION_TIMEOUT_MS,
+          }));
+        } else {
+          loggers.voice.debug('ignored stale voice room connection failure', {
+            error: error instanceof Error ? error.message : 'voice connection failed',
+          });
+        }
+        loggers.audio.warn('voice connection failed', error);
+        return false;
+      }
+    })();
+
+    connectingPromiseRef.current = connectPromise;
+
+    return connectPromise.finally(() => {
+      if (connectingAttemptRef.current === attempt) {
+        connectingAttemptRef.current = null;
+      }
+      if (connectingPromiseRef.current === connectPromise) {
+        connectingPromiseRef.current = null;
+        connectingPromiseKeyRef.current = null;
+      }
+    });
   }, [
     attachRemoteAudio,
     detachRemoteAudio,
