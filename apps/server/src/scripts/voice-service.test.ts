@@ -33,12 +33,8 @@ async function run() {
   const service = new VoiceService(config, roomClient);
 
   assert.equal(
-    service.buildMatchTeamRoomName('game-123', 'red'),
-    'opus:test:match:game-123:red'
-  );
-  assert.equal(
-    service.buildMatchTeamRoomName('game-123', 'blue'),
-    'opus:test:match:game-123:blue'
+    service.buildMatchVoiceRoomName('game-123'),
+    'opus:test:match:game-123'
   );
 
   const tokenResponse = await service.issueMatchVoiceToken({
@@ -55,7 +51,8 @@ async function run() {
 
   assert.equal(tokenResponse.enabled, true);
   assert.equal(tokenResponse.url, 'wss://livekit.test');
-  assert.equal(tokenResponse.roomName, 'opus:test:match:game-123:red');
+  assert.equal(tokenResponse.mode, 'team_proximity');
+  assert.equal(tokenResponse.roomName, 'opus:test:match:game-123');
   assert.equal(tokenResponse.team, 'red');
   assert.ok(tokenResponse.token);
   assert.equal(JSON.stringify(tokenResponse).includes(config.apiSecret!), false);
@@ -63,7 +60,7 @@ async function run() {
   const verifier = new TokenVerifier(config.apiKey!, config.apiSecret!);
   const claims = await verifier.verify(tokenResponse.token!);
   assert.equal(claims.video?.roomJoin, true);
-  assert.equal(claims.video?.room, 'opus:test:match:game-123:red');
+  assert.equal(claims.video?.room, 'opus:test:match:game-123');
   assert.equal(claims.video?.canSubscribe, true);
   assert.equal(claims.video?.canPublish, true);
   assert.equal(claims.video?.canPublishData, false);
@@ -89,13 +86,12 @@ async function run() {
   assert.equal(botResponse.enabled, false);
   assert.equal(botResponse.reason, 'bots cannot join voice');
 
-  await service.removeMatchParticipant('game-123', 'user:lobby-red', null, 'test');
+  await service.removeMatchParticipant('game-123', 'user:lobby-red', 'test');
   assert.deepEqual(removedParticipants, [
-    { room: 'opus:test:match:game-123:red', identity: 'user:lobby-red' },
-    { room: 'opus:test:match:game-123:blue', identity: 'user:lobby-red' },
+    { room: 'opus:test:match:game-123', identity: 'user:lobby-red' },
   ]);
 
-  assert.deepEqual(createdRooms, ['opus:test:match:game-123:red']);
+  assert.deepEqual(createdRooms, ['opus:test:match:game-123']);
 }
 
 run().catch((error) => {

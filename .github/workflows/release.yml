@@ -15,8 +15,10 @@ concurrency:
   queue: max
 
 env:
+  LIVEKIT_APP: opus-strike-livekit
   SERVER_APP: opus-strike-server
   CLIENT_APP: opus-strike-client
+  LIVEKIT_ORIGIN: https://opus-strike-livekit.fly.dev
   SERVER_ORIGIN: https://api.slopheroes.xyz
   CLIENT_ORIGIN: https://slopheroes.xyz
   EXPECTED_CLIENT_SERVER_URL: wss://api.slopheroes.xyz
@@ -74,8 +76,22 @@ jobs:
         with:
           version: 0.4.67
 
+      - name: Deploy LiveKit
+        run: >
+          bash scripts/fly-deploy-with-retry.sh
+          flyctl deploy . --config apps/livekit/fly.toml --app "$LIVEKIT_APP" --remote-only
+          --dockerfile apps/livekit/Dockerfile
+          --wait-timeout 10m
+          --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify deployed LiveKit health
+        run: curl -fsSL "$LIVEKIT_ORIGIN/" >/dev/null
+
       - name: Deploy server
         run: >
+          bash scripts/fly-deploy-with-retry.sh
           flyctl deploy . --config apps/server/fly.toml --app "$SERVER_APP" --remote-only
           --dockerfile apps/server/Dockerfile
           --release-command-timeout 10m
@@ -108,8 +124,10 @@ jobs:
 
       - name: Deploy client
         run: >
+          bash scripts/fly-deploy-with-retry.sh
           flyctl deploy . --config apps/client/fly.toml --app "$CLIENT_APP" --remote-only
           --dockerfile apps/client/Dockerfile
+          --wait-timeout 10m
           --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -1,34 +1,7 @@
 import { AccessToken, RoomServiceClient, TrackSource, type CreateOptions } from 'livekit-server-sdk';
-import type { Team } from '@voxel-strike/shared';
+import type { Team, VoiceParticipantMetadata, VoiceScope, VoiceTokenResponse } from '@voxel-strike/shared';
 import { loggers } from '../utils/logger';
 import { resolveVoiceConfig, type VoiceConfig } from './config';
-
-type VoiceScope = 'match';
-
-interface VoiceParticipantMetadata {
-  displayName: string;
-  colyseusSessionId: string;
-  team: Team;
-  lobbyId: string | null;
-  gameRoomId: string;
-  human: boolean;
-}
-
-interface VoiceTokenResponse {
-  requestId: string;
-  enabled: boolean;
-  scope: VoiceScope;
-  mode: 'team';
-  url?: string;
-  token?: string;
-  roomName?: string;
-  identity?: string;
-  playerId?: string;
-  team?: Team;
-  ttlSeconds?: number;
-  expiresAt?: number;
-  reason?: string;
-}
 
 interface IssueMatchVoiceTokenInput {
   requestId: string;
@@ -91,12 +64,8 @@ export class VoiceService {
     };
   }
 
-  buildMatchTeamRoomName(gameRoomId: string, team: Team): string {
-    return `opus:${this.config.environmentName}:match:${gameRoomId}:${team}`;
-  }
-
-  buildLobbyRoomName(lobbyId: string): string {
-    return `opus:${this.config.environmentName}:lobby:${lobbyId}`;
+  buildMatchVoiceRoomName(gameRoomId: string): string {
+    return `opus:${this.config.environmentName}:match:${gameRoomId}`;
   }
 
   createDisabledResponse(requestId: string, reason = this.config.disabledReason || 'voice disabled'): VoiceTokenResponse {
@@ -104,7 +73,7 @@ export class VoiceService {
       requestId,
       enabled: false,
       scope: 'match',
-      mode: 'team',
+      mode: 'team_proximity',
       reason,
     };
   }
@@ -119,7 +88,7 @@ export class VoiceService {
       return this.createDisabledResponse(input.requestId, 'bots cannot join voice');
     }
 
-    const roomName = this.buildMatchTeamRoomName(input.gameRoomId, input.team);
+    const roomName = this.buildMatchVoiceRoomName(input.gameRoomId);
     const now = Date.now();
     const expiresAt = now + this.config.tokenTtlSeconds * 1000;
     const metadata: VoiceParticipantMetadata = {
@@ -163,7 +132,7 @@ export class VoiceService {
         requestId: input.requestId,
         enabled: true,
         scope,
-        mode: 'team',
+        mode: 'team_proximity',
         url: this.config.livekitWsUrl,
         token: await token.toJwt(),
         roomName,
@@ -188,16 +157,11 @@ export class VoiceService {
   async removeMatchParticipant(
     gameRoomId: string,
     identity: string,
-    team?: Team | null,
     reason = 'game_lifecycle'
   ): Promise<void> {
     if (!this.config.enabled || !this.roomClient) return;
 
-    const teams: Team[] = team ? [team] : ['red', 'blue'];
-    await Promise.all(teams.map(async (candidateTeam) => {
-      const roomName = this.buildMatchTeamRoomName(gameRoomId, candidateTeam);
-      await this.removeParticipant(roomName, identity, reason);
-    }));
+    await this.removeParticipant(this.buildMatchVoiceRoomName(gameRoomId), identity, reason);
   }
 
   private async ensureRoom(roomName: string): Promise<void> {

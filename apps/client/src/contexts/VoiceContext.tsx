@@ -16,6 +16,7 @@ import { useGameStore } from '../store/gameStore';
 import { useSettingsStore, type ClientSettings } from '../store/settingsStore';
 import {
   computeVoiceElementVolume,
+  computeVoiceProximityGain,
   shouldHandlePushToTalkKey,
   useVoiceStore,
   type VoiceParticipant,
@@ -143,15 +144,24 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 
   const updateAttachmentVolumes = useCallback(() => {
     const state = useVoiceStore.getState();
+    const gameState = useGameStore.getState();
     const currentSettings = settingsRef.current;
 
     attachmentsRef.current.forEach((attachment) => {
       const muted = attachment.playerId ? state.mutedPlayerIds.has(attachment.playerId) : false;
+      const participantTeam = state.participants.get(attachment.identity)?.team ?? null;
+      const proximityGain = computeVoiceProximityGain({
+        localPlayer: gameState.localPlayer,
+        remotePlayer: attachment.playerId ? gameState.players.get(attachment.playerId) ?? null : null,
+        participantPlayerId: attachment.playerId,
+        participantTeam,
+      });
       const volume = computeVoiceElementVolume(
         currentSettings.masterVolume,
         currentSettings.voiceVolume,
         state.deafened,
-        muted
+        muted,
+        proximityGain
       );
       attachment.element.volume = volume;
       attachment.track.setVolume(volume);
@@ -630,6 +640,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     updateAttachmentVolumes,
     applyOutputDevice,
   ]);
+
+  useEffect(() => {
+    if (appPhase !== 'in_game') return;
+    const intervalId = window.setInterval(updateAttachmentVolumes, 200);
+    return () => window.clearInterval(intervalId);
+  }, [appPhase, updateAttachmentVolumes]);
 
   useEffect(() => {
     const room = livekitRoomRef.current;

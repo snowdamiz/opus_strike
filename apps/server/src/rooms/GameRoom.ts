@@ -5138,7 +5138,7 @@ export class GameRoom extends Room<GameState> {
     if (!voiceService.isEnabled()) return;
     const identity = this.getDurableUserId(playerId);
     if (!identity) return;
-    await voiceService.removeMatchParticipant(this.roomId, identity, team, reason);
+    await voiceService.removeMatchParticipant(this.roomId, identity, reason);
   }
 
   private recordSecurityEvent(event: RoomSecurityEventInput): void {

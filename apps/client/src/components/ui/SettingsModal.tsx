@@ -716,7 +716,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
                 <div className="pt-3 border-t border-white/5" />
 
-                <SettingRow label="Team Voice" description="Enable match voice connection">
+                <SettingRow label="Match Voice" description="Enable team and proximity voice">
                   <ToggleInput
                     value={settings.voiceEnabled}
                     onChange={(v) => updateSetting('voiceEnabled', v)}
@@ -743,7 +743,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Input Device" description="Microphone used for team voice">
+                <SettingRow label="Input Device" description="Microphone used for match voice">
                   <SelectInput
                     value={settings.voiceInputDeviceId}
                     onChange={(v) => updateSetting('voiceInputDeviceId', v)}
@@ -751,7 +751,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Output Device" description="Speaker used for teammate voice">
+                <SettingRow label="Output Device" description="Speaker used for match voice">
                   <SelectInput
                     value={settings.voiceOutputDeviceId}
                     onChange={(v) => updateSetting('voiceOutputDeviceId', v)}

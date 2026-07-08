@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   computeVoiceElementVolume,
+  computeVoiceProximityGain,
   initialVoiceState,
   shouldHandlePushToTalkKey,
   useVoiceStore,
@@ -24,6 +25,58 @@ assert.equal(computeVoiceElementVolume(80, 50, true, false), 0);
 assert.equal(computeVoiceElementVolume(80, 50, false, true), 0);
 assert.equal(computeVoiceElementVolume(150, 100, false, false), 1);
 assert.equal(computeVoiceElementVolume(-10, 100, false, false), 0);
+assert.equal(computeVoiceElementVolume(100, 80, false, false, 0.5), 0.4);
+
+const localPlayer = {
+  id: 'local',
+  team: 'red' as const,
+  state: 'alive',
+  position: { x: 0, y: 0, z: 0 },
+};
+assert.equal(computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer: {
+    id: 'teammate',
+    team: 'red',
+    state: 'dead',
+    position: { x: 999, y: 0, z: 999 },
+  },
+  participantPlayerId: 'teammate',
+  participantTeam: 'red',
+}), 1);
+assert.equal(computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer: {
+    id: 'near-enemy',
+    team: 'blue',
+    state: 'alive',
+    position: { x: 8, y: 0, z: 0 },
+  },
+  participantPlayerId: 'near-enemy',
+  participantTeam: 'blue',
+}), 1);
+assert.equal(computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer: {
+    id: 'far-enemy',
+    team: 'blue',
+    state: 'alive',
+    position: { x: 40, y: 0, z: 0 },
+  },
+  participantPlayerId: 'far-enemy',
+  participantTeam: 'blue',
+}), 0);
+assert.equal(computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer: {
+    id: 'dead-enemy',
+    team: 'blue',
+    state: 'dead',
+    position: { x: 4, y: 0, z: 0 },
+  },
+  participantPlayerId: 'dead-enemy',
+  participantTeam: 'blue',
+}), 0);
 
 assert.equal(shouldHandlePushToTalkKey('KeyV', 'KeyV'), true);
 assert.equal(shouldHandlePushToTalkKey('KeyB', 'KeyV'), false);

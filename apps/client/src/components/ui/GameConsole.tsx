@@ -4,6 +4,7 @@ import { setGameConsoleOpen } from '../../store/gameConsoleState';
 import { useChatStore, type ChatMessage } from '../../store/chatStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { config } from '../../config/environment';
+import { copyTextToClipboard } from '../../utils/clipboard';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_FLAMETHROWER_MAX_FUEL,
@@ -59,36 +60,6 @@ const BOT_SKILL_KEYS: Record<string, string> = {
   secondary: 'rmb',
   shield: 'rmb',
 };
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to the selection-based copy path below.
-    }
-  }
-
-  if (typeof document === 'undefined') return false;
-
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  textarea.style.pointerEvents = 'none';
-  document.body.appendChild(textarea);
-  textarea.select();
-
-  try {
-    return document.execCommand('copy');
-  } catch {
-    return false;
-  } finally {
-    document.body.removeChild(textarea);
-  }
-}
 
 let devImmuneModeGlobal = false;
 
