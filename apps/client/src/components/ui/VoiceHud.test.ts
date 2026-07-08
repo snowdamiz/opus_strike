@@ -151,6 +151,8 @@ assert.deepEqual(
 
 assert.equal(voiceHudStatusMessage('permission_denied', null), 'MIC DENIED');
 assert.equal(voiceHudStatusMessage('error', 'microphone unavailable'), 'microphone unavailable');
+assert.equal(voiceHudStatusMessage('error', 'could not establish pc connection'), 'VOICE LINK FAILED');
+assert.equal(voiceHudStatusMessage('reconnecting', 'could not establish pc connection'), 'RETRYING VOICE LINK');
 assert.equal(voiceHudStatusMessage('connected', null), null);
 
 console.log('voice hud tests passed');
