@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import {
+  getStatusPlateMaxShield,
+  getStatusPlateShield,
   getRemoteStatusPlateMode,
   isEnemyRemotePlayer,
   shouldShowRemoteNameplate,
@@ -37,16 +39,26 @@ function makePlayer({
   heroId = 'phantom',
   position = vec3(0, 1, 0),
   state = 'alive',
+  shield = 0,
+  maxShield = 0,
   downedHealth = null,
   downedMaxHealth = null,
+  knockdownShieldHealth = null,
+  knockdownShieldMaxHealth = null,
+  knockdownShieldActive = false,
 }: {
   id: string;
   team: Team;
   heroId?: HeroId;
   position?: { x: number; y: number; z: number };
   state?: Player['state'];
+  shield?: number;
+  maxShield?: number;
   downedHealth?: number | null;
   downedMaxHealth?: number | null;
+  knockdownShieldHealth?: number | null;
+  knockdownShieldMaxHealth?: number | null;
+  knockdownShieldActive?: boolean;
 }): Player {
   return {
     id,
@@ -62,8 +74,13 @@ function makePlayer({
     lookPitch: 0,
     health: 72,
     maxHealth: 100,
+    shield,
+    maxShield,
     downedHealth,
     downedMaxHealth,
+    knockdownShieldHealth,
+    knockdownShieldMaxHealth,
+    knockdownShieldActive,
     ultimateCharge: 0,
     movement: {
       isGrounded: true,
@@ -173,6 +190,41 @@ assert.equal(
   getRemoteStatusPlateMode(teammate, NAMEPLATES_DISABLED_CONFIG, false, localTeam, anchorPosition),
   null,
   'disabled nameplates should stay disabled for teammates'
+);
+
+assert.equal(
+  getStatusPlateShield(makePlayer({ id: 'shielded-enemy', team: 'blue', shield: 35, maxShield: 50 }), 'enemyHealth'),
+  35,
+  'enemy health plates should read BR body shield health'
+);
+assert.equal(
+  getStatusPlateMaxShield(makePlayer({ id: 'shielded-enemy-max', team: 'blue', shield: 35, maxShield: 50 }), 'enemyHealth'),
+  50,
+  'enemy health plates should read BR body shield max health'
+);
+assert.equal(
+  getStatusPlateShield(makePlayer({
+    id: 'shielded-downed-enemy',
+    team: 'blue',
+    state: 'downed',
+    knockdownShieldHealth: 90,
+    knockdownShieldMaxHealth: 150,
+    knockdownShieldActive: true,
+  }), 'enemyDowned'),
+  90,
+  'downed enemy plates should read active knockdown shield health'
+);
+assert.equal(
+  getStatusPlateMaxShield(makePlayer({
+    id: 'inactive-downed-shield-enemy',
+    team: 'blue',
+    state: 'downed',
+    knockdownShieldHealth: 90,
+    knockdownShieldMaxHealth: 150,
+    knockdownShieldActive: false,
+  }), 'enemyDowned'),
+  0,
+  'inactive downed enemy shields should not draw a shield bar'
 );
 
 assert.equal(

@@ -126,7 +126,9 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
         statusPlateMode,
         player.name,
         getStatusPlateHealth(player, statusPlateMode),
-        getStatusPlateMaxHealth(player, statusPlateMode)
+        getStatusPlateMaxHealth(player, statusPlateMode),
+        getStatusPlateShield(player, statusPlateMode),
+        getStatusPlateMaxShield(player, statusPlateMode)
       );
     }
   }, [config.showNameplates, config.nameplateDistance, isBattleRoyal, localPlayerId, localPlayerTeam, nameplateAnchorPosition, otherPlayers, playerId]);
@@ -341,6 +343,26 @@ function getStatusPlateHealth(player: Player, mode: RemoteStatusPlateMode): numb
 
 function getStatusPlateMaxHealth(player: Player, mode: RemoteStatusPlateMode): number {
   return mode === 'enemyDowned' ? player.downedMaxHealth ?? player.maxHealth : player.maxHealth;
+}
+
+export function getStatusPlateShield(player: Player, mode: RemoteStatusPlateMode): number {
+  if (mode === 'enemyDowned') {
+    return player.knockdownShieldActive ? Math.max(0, player.knockdownShieldHealth ?? 0) : 0;
+  }
+  if (mode === 'enemyHealth') {
+    return Math.max(0, player.shield ?? 0);
+  }
+  return 0;
+}
+
+export function getStatusPlateMaxShield(player: Player, mode: RemoteStatusPlateMode): number {
+  if (mode === 'enemyDowned') {
+    return player.knockdownShieldActive ? Math.max(0, player.knockdownShieldMaxHealth ?? 0) : 0;
+  }
+  if (mode === 'enemyHealth') {
+    return Math.max(0, player.maxShield ?? 0);
+  }
+  return 0;
 }
 
 function shouldRenderRemotePlayerFallback(
@@ -601,6 +623,8 @@ const OtherPlayer = memo(function OtherPlayer({
           name={player.name}
           health={getStatusPlateHealth(player, statusPlateMode)}
           maxHealth={getStatusPlateMaxHealth(player, statusPlateMode)}
+          shield={getStatusPlateShield(player, statusPlateMode)}
+          maxShield={getStatusPlateMaxShield(player, statusPlateMode)}
           height={visibleHeight}
         />
       )}
@@ -618,6 +642,8 @@ interface StatusPlateProps {
   name: string;
   health: number;
   maxHealth: number;
+  shield: number;
+  maxShield: number;
   height: number;
 }
 
@@ -629,6 +655,7 @@ const NAMEPLATE_HEALTH_CANVAS_HEIGHT = 28;
 const NAMEPLATE_DOWNED_CANVAS_WIDTH = 192;
 const NAMEPLATE_DOWNED_CANVAS_HEIGHT = 58;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
+const NAMEPLATE_SHIELD_BUCKETS = 40;
 const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
 const NAMEPLATE_FULL_SPRITE_HEIGHT = 0.68;
 const NAMEPLATE_TEAM_SPRITE_HEIGHT = 0.9;
@@ -715,11 +742,39 @@ function drawHealthBar(
   ctx.fill();
 }
 
+function drawShieldBar(
+  ctx: CanvasRenderingContext2D,
+  barX: number,
+  barY: number,
+  barWidth: number,
+  barHeight: number,
+  shieldPercent: number
+): void {
+  const barRadius = barHeight / 2;
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  roundedRectPath(ctx, barX, barY, barWidth, barHeight, barRadius);
+  ctx.fillStyle = 'rgba(5, 18, 33, 0.78)';
+  ctx.fill();
+
+  const fillWidth = Math.max(0, Math.min(barWidth, barWidth * shieldPercent));
+  if (fillWidth <= 0) return;
+
+  roundedRectPath(ctx, barX, barY, fillWidth, barHeight, barRadius);
+  const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+  gradient.addColorStop(0, '#38bdf8');
+  gradient.addColorStop(1, '#2563eb');
+  ctx.fillStyle = gradient;
+  ctx.fill();
+}
+
 function drawStatusPlateTexture(
   canvas: HTMLCanvasElement,
   mode: RemoteStatusPlateMode,
   name: string,
-  healthPercent: number
+  healthPercent: number,
+  shieldPercent: number | null
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -728,16 +783,23 @@ function drawStatusPlateTexture(
 
   if (mode === 'enemyHealth') {
     const barX = 10;
-    const barY = 9;
     const barWidth = NAMEPLATE_HEALTH_CANVAS_WIDTH - barX * 2;
-    const barHeight = 10;
+    const hasShield = shieldPercent !== null;
+    const plateY = hasShield ? 3 : 7;
+    const plateHeight = hasShield ? 23 : 14;
+    const shieldY = 6;
+    const healthY = hasShield ? 17 : 9;
+    const healthHeight = hasShield ? 7 : 10;
     ctx.shadowColor = 'rgba(0, 0, 0, 0.88)';
     ctx.shadowBlur = 6;
     ctx.shadowOffsetY = 1;
-    roundedRectPath(ctx, barX - 2, barY - 2, barWidth + 4, barHeight + 4, 7);
+    roundedRectPath(ctx, barX - 2, plateY, barWidth + 4, plateHeight, 7);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
     ctx.fill();
-    drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent);
+    if (hasShield) {
+      drawShieldBar(ctx, barX, shieldY, barWidth, 5, shieldPercent);
+    }
+    drawHealthBar(ctx, barX, healthY, barWidth, healthHeight, healthPercent);
     return;
   }
 
@@ -766,10 +828,14 @@ function drawStatusPlateTexture(
     ctx.fillText('DOWNED', NAMEPLATE_DOWNED_CANVAS_WIDTH / 2, tagY + tagHeight / 2 + 1);
 
     const barX = 22;
-    const barY = 41;
     const barWidth = NAMEPLATE_DOWNED_CANVAS_WIDTH - barX * 2;
     const barHeight = 8;
-    drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent, 'downed');
+    if (shieldPercent !== null) {
+      drawShieldBar(ctx, barX, 35, barWidth, 5, shieldPercent);
+      drawHealthBar(ctx, barX, 45, barWidth, barHeight, healthPercent, 'downed');
+    } else {
+      drawHealthBar(ctx, barX, 41, barWidth, barHeight, healthPercent, 'downed');
+    }
     return;
   }
 
@@ -824,19 +890,27 @@ function getQuantizedNameplateHealthPercent(health: number, maxHealth: number): 
   return Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
 }
 
+function getQuantizedNameplateShieldPercent(shield: number, maxShield: number): number | null {
+  if (maxShield <= 0) return null;
+  const shieldPercent = Math.max(0, Math.min(1, shield / maxShield));
+  return Math.round(shieldPercent * NAMEPLATE_SHIELD_BUCKETS) / NAMEPLATE_SHIELD_BUCKETS;
+}
+
 function getStatusPlateTextureKey(
   mode: RemoteStatusPlateMode,
   name: string,
-  healthPercent: number
+  healthPercent: number,
+  shieldPercent: number | null
 ): string {
   const playerKey = mode === 'full' || mode === 'fullTeam' ? name : 'enemy';
-  return `${mode}:${playerKey}:${healthPercent}`;
+  return `${mode}:${playerKey}:${healthPercent}:${shieldPercent ?? 'none'}`;
 }
 
 function createStatusPlateTexture(
   mode: RemoteStatusPlateMode,
   name: string,
-  healthPercent: number
+  healthPercent: number,
+  shieldPercent: number | null
 ): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   if (mode === 'fullTeam') {
@@ -849,7 +923,7 @@ function createStatusPlateTexture(
     canvas.width = mode === 'full' ? NAMEPLATE_CANVAS_WIDTH : NAMEPLATE_HEALTH_CANVAS_WIDTH;
     canvas.height = mode === 'full' ? NAMEPLATE_CANVAS_HEIGHT : NAMEPLATE_HEALTH_CANVAS_HEIGHT;
   }
-  drawStatusPlateTexture(canvas, mode, name, healthPercent);
+  drawStatusPlateTexture(canvas, mode, name, healthPercent, shieldPercent);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -883,13 +957,14 @@ function evictUnusedStatusPlateTextures(): void {
 function acquireStatusPlateTexture(
   mode: RemoteStatusPlateMode,
   name: string,
-  healthPercent: number
+  healthPercent: number,
+  shieldPercent: number | null
 ): THREE.CanvasTexture {
-  const key = getStatusPlateTextureKey(mode, name, healthPercent);
+  const key = getStatusPlateTextureKey(mode, name, healthPercent, shieldPercent);
   let entry = statusPlateTextureCache.get(key);
   if (!entry) {
     entry = {
-      texture: createStatusPlateTexture(mode, name, healthPercent),
+      texture: createStatusPlateTexture(mode, name, healthPercent, shieldPercent),
       refCount: 0,
       lastUsedAt: 0,
     };
@@ -905,9 +980,10 @@ function acquireStatusPlateTexture(
 function releaseStatusPlateTexture(
   mode: RemoteStatusPlateMode,
   name: string,
-  healthPercent: number
+  healthPercent: number,
+  shieldPercent: number | null
 ): void {
-  const entry = statusPlateTextureCache.get(getStatusPlateTextureKey(mode, name, healthPercent));
+  const entry = statusPlateTextureCache.get(getStatusPlateTextureKey(mode, name, healthPercent, shieldPercent));
   if (!entry) return;
   entry.refCount = Math.max(0, entry.refCount - 1);
   entry.lastUsedAt = ++statusPlateTextureUseCounter;
@@ -918,25 +994,29 @@ function prewarmStatusPlateTexture(
   mode: RemoteStatusPlateMode,
   name: string,
   health: number,
-  maxHealth: number
+  maxHealth: number,
+  shield: number,
+  maxShield: number
 ): void {
   if (typeof document === 'undefined') return;
   const healthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
-  const texture = acquireStatusPlateTexture(mode, name, healthPercent);
-  releaseStatusPlateTexture(mode, name, healthPercent);
+  const shieldPercent = getQuantizedNameplateShieldPercent(shield, maxShield);
+  const texture = acquireStatusPlateTexture(mode, name, healthPercent, shieldPercent);
+  releaseStatusPlateTexture(mode, name, healthPercent, shieldPercent);
   texture.needsUpdate = true;
 }
 
-const StatusPlate = memo(function StatusPlate({ mode, name, health, maxHealth, height }: StatusPlateProps) {
+const StatusPlate = memo(function StatusPlate({ mode, name, health, maxHealth, shield, maxShield, height }: StatusPlateProps) {
   const quantizedHealthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
+  const quantizedShieldPercent = getQuantizedNameplateShieldPercent(shield, maxShield);
   const texture = useMemo(
-    () => acquireStatusPlateTexture(mode, name, quantizedHealthPercent),
-    [mode, name, quantizedHealthPercent]
+    () => acquireStatusPlateTexture(mode, name, quantizedHealthPercent, quantizedShieldPercent),
+    [mode, name, quantizedHealthPercent, quantizedShieldPercent]
   );
 
   useEffect(
-    () => () => releaseStatusPlateTexture(mode, name, quantizedHealthPercent),
-    [mode, name, quantizedHealthPercent]
+    () => () => releaseStatusPlateTexture(mode, name, quantizedHealthPercent, quantizedShieldPercent),
+    [mode, name, quantizedHealthPercent, quantizedShieldPercent]
   );
 
   const width = mode === 'full'

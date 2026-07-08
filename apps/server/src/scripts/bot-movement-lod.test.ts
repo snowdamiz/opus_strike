@@ -26,6 +26,12 @@ type BotMovementLodRoom = {
   stepServerOwnedBotMovementLodProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
   stepServerOwnedBotKinematicMovementProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
   getBotPlanningBudgets(scheduledBotCount: number): { urgentBudget: number; deferredBudget: number };
+  getServerOwnedBotSimulationTier(
+    bot: Player,
+    now: number,
+    brain?: undefined,
+    recordCounter?: boolean
+  ): 'critical' | 'near' | 'background';
   consumeServerOwnedBotMovementFullStepBudget(
     aliveBotCount: number,
     simulationTier?: 'critical' | 'near' | 'background'
@@ -78,10 +84,18 @@ type BotMovementLodRoom = {
   gameplayMode: GameplayMode;
   tickProfiler: { recordCounter(name: string, count?: number): void };
   botRuntime: { getBrain(botId: string): undefined };
+  replicationState: {
+    getRecentCombatTransformUntil(playerId: string): number;
+    getRecentCombatInterestUntil(recipientId: string, targetId: string): number;
+  };
+  botMovementLodCountTick: number;
+  aliveBotMovementLodCount: number;
   botSteeringPathCache: Map<string, { clear: boolean; expiresAt: number; collisionRevision: number }>;
   botsWithReusedInputThisTick: Set<string>;
   playerPressStates: PlayerPressStateTracker;
   botSimulationHumanScratch: Player[];
+  botSimulationTierTick: number;
+  botSimulationTierById: Map<string, 'critical' | 'near' | 'background'>;
   streamerManagedBotGame?: boolean;
   streamerFeedMode?: string | null;
   botMovementFullStepBudgetTick: number;
@@ -108,10 +122,18 @@ function createRoom(): BotMovementLodRoom {
   room.gameplayMode = DEFAULT_GAMEPLAY_MODE;
   room.tickProfiler = { recordCounter: () => undefined };
   room.botRuntime = { getBrain: () => undefined };
+  room.replicationState = {
+    getRecentCombatTransformUntil: () => 0,
+    getRecentCombatInterestUntil: () => 0,
+  };
+  room.botMovementLodCountTick = -1;
+  room.aliveBotMovementLodCount = 0;
   room.botSteeringPathCache = new Map();
   room.botsWithReusedInputThisTick = new Set();
   room.playerPressStates = new PlayerPressStateTracker();
   room.botSimulationHumanScratch = [];
+  room.botSimulationTierTick = -1;
+  room.botSimulationTierById = new Map();
   room.botMovementFullStepBudgetTick = -1;
   room.botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
   room.clampToPlayableMap = (position) => ({ ...position });
@@ -653,6 +675,31 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(room.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput('critical'), false);
   assert.equal(room.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput('near'), true);
   assert.equal(room.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput('background'), true);
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const survivorBot = createBot(room, { id: 'survivor-bot', team: 'br_01', x: 0, z: 0 });
+  createBot(room, { id: 'eliminated-human', team: 'br_01', isBot: false, state: 'dead', x: 80, z: 0 });
+  for (let index = 0; index < 8; index++) {
+    createBot(room, { id: `remote-bot-${index}`, team: 'br_02', x: 200 + index * 4, z: 0 });
+  }
+
+  assert.equal(room.isBattleRoyalPriorityBot(survivorBot, 1_800_000_000_000), true);
+  assert.equal(room.getServerOwnedBotSimulationTier(survivorBot, 1_800_000_000_000), 'critical');
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const botOnlySurvivor = createBot(room, { id: 'bot-only-survivor', team: 'br_01', x: 0, z: 0 });
+  for (let index = 0; index < 8; index++) {
+    createBot(room, { id: `bot-only-remote-${index}`, team: 'br_02', x: 200 + index * 4, z: 0 });
+  }
+
+  assert.equal(room.isBattleRoyalPriorityBot(botOnlySurvivor, 1_800_000_000_000), false);
+  assert.equal(room.getServerOwnedBotSimulationTier(botOnlySurvivor, 1_800_000_000_000), 'background');
 }
 
 {

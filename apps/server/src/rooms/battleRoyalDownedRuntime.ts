@@ -127,7 +127,7 @@ export class BattleRoyalDownedRuntime {
     target.reviveStartedAt = 0;
     target.reviveCompletesAt = 0;
     target.reviveByPlayerId = '';
-    // Fresh knockdown shield each down; the player raises it with interact.
+    // Fresh knockdown shield each down; the player raises it with primary fire.
     // Bots raise theirs immediately.
     target.knockdownShieldHealth = BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP;
     target.knockdownShieldMaxHealth = BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP;

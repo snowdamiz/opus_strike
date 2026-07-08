@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import type { BattleRoyalTeamSpectatorTarget } from './BattleRoyalTeamSpectatorCameraController';
 import {
+  getBattleRoyalSpectatorDampingAlpha,
   getBattleRoyalTeamSpectatorTargets,
   getNextBattleRoyalTeamSpectatorTargetId,
   writeBattleRoyalSpectatorCameraOffset,
@@ -81,6 +82,19 @@ assert.equal(
   downwardLookOffset.y > neutralOffset.y,
   true,
   'negative spectator pitch should raise the orbit camera for downward free look'
+);
+
+const normalFrameAlpha = getBattleRoyalSpectatorDampingAlpha(9, 1 / 60);
+const slowFrameAlpha = getBattleRoyalSpectatorDampingAlpha(9, 1 / 20);
+assert.equal(
+  normalFrameAlpha > 0 && normalFrameAlpha < 1,
+  true,
+  'spectator camera damping should move partway on a normal frame'
+);
+assert.equal(
+  slowFrameAlpha > normalFrameAlpha,
+  true,
+  'spectator camera damping should stay time-based across slower frames'
 );
 
 console.log('battle royal team spectator camera tests passed');
