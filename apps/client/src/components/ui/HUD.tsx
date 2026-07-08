@@ -1898,13 +1898,14 @@ export function HUD() {
   if (localPlayerId === null || localPlayerRole === 'observer') return null;
 
   const isLocalDowned = localPlayerState === 'downed';
+  const isLocalCombatant = localPlayerState === 'alive' || isLocalDowned;
   const isLocalReviving = Boolean(reviveChannelTarget);
   const isLocalSoulInteracting = Boolean(soulChannelInteraction);
   const displayedHealth = isLocalDowned ? localDownedHealth ?? 0 : localHealth ?? 0;
   const displayedMaxHealth = isLocalDowned ? Math.max(1, localDownedMaxHealth ?? 1) : localMaxHealth ?? 0;
   const healthPercent = (displayedHealth / displayedMaxHealth) * 100;
-  const isLowHealth = healthPercent < 30;
-  const isCriticalHealth = healthPercent < 15;
+  const isLowHealth = isLocalCombatant && healthPercent < 30;
+  const isCriticalHealth = isLocalCombatant && healthPercent < 15;
   const ultimatePercent = localUltimateCharge ?? 0;
   const heroSkillItems = localHeroId ? getHeroSkillItems(localHeroId) : [];
   const skillAccent = localHeroId ? HUD_HERO_COLORS[localHeroId].primary : HUD_HERO_COLORS.blaze.primary;
@@ -1987,7 +1988,7 @@ export function HUD() {
           }`}
         />
       )}
-      <LocalDamageFeedback events={localDamageEvents} />
+      {isLocalCombatant && <LocalDamageFeedback events={localDamageEvents} />}
 
       {/* Crosshair - changes for Meteor Strike targeting mode */}
       {!suppressCombatHud && (

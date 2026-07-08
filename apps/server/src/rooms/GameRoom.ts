@@ -377,6 +377,7 @@ import {
   canReceiveLiveTransform,
   getPlayerRole,
   isObserverPlayer,
+  isBattleRoyalContestant,
   isPlayerAliveOrDowned,
   isHeroSkinId,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
@@ -5331,7 +5332,7 @@ export class GameRoom extends Room<GameState> {
       crouch: false,
       crouchPressed: false,
       sprint: false,
-      primaryFire: false,
+      primaryFire: input.primaryFire,
       secondaryFire: false,
       reload: false,
       ability1: false,
@@ -7624,8 +7625,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (player.state === 'downed') {
-      const previousDowned = this.playerPressStates.getOrCreate(player.id);
-      const primaryFirePressed = Boolean(input.primaryFire) && !previousDowned.primaryFire;
       this.playerPressStates.applyInput(player.id, {
         primaryFire: Boolean(input.primaryFire),
         secondaryFire: Boolean(input.secondaryFire),
@@ -7637,7 +7636,7 @@ export class GameRoom extends Room<GameState> {
       if (
         isBattleRoyalMode(this.gameplayMode) &&
         this.state.phase === 'playing' &&
-        primaryFirePressed
+        input.primaryFire
       ) {
         this.tryRaiseBattleRoyalKnockdownShield(player);
       }
@@ -9050,6 +9049,7 @@ export class GameRoom extends Room<GameState> {
   private isBattleRoyalPriorityBot(bot: Player, now: number): boolean {
     if (!isBattleRoyalMode(this.gameplayMode)) return false;
     if (this.isBattleRoyalSafeZonePriorityBot(bot)) return true;
+    if (this.isBattleRoyalHumanSquadSurvivorBot(bot)) return true;
     if (this.isServerOwnedBotNearBattleRoyalDownedPlayer(bot, 18 * 18)) return true;
     if (this.isServerOwnedBotNearBattleRoyalEnemy(bot, BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ)) return true;
     if (
@@ -9059,6 +9059,21 @@ export class GameRoom extends Room<GameState> {
       return true;
     }
     return false;
+  }
+
+  private isBattleRoyalHumanSquadSurvivorBot(bot: Player): boolean {
+    if (!isBattleRoyalMode(this.gameplayMode) || !bot.isBot || bot.state !== 'alive' || !isTeam(bot.team)) {
+      return false;
+    }
+
+    let hasHumanSquadmate = false;
+    for (const player of this.state.players.values()) {
+      if (player.team !== bot.team || player.isBot || isObserverPlayer(player)) continue;
+      hasHumanSquadmate = true;
+      if (isBattleRoyalContestant(player)) return false;
+    }
+
+    return hasHumanSquadmate;
   }
 
   private isBattleRoyalSafeZonePriorityBot(bot: Player): boolean {

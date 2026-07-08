@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_ROYAL_DOWNED_DURATION_MS,
   BATTLE_ROYAL_DOWNED_MAX_HP,
+  BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP,
   BATTLE_ROYAL_REVIVE_DURATION_MS,
   BATTLE_ROYAL_REVIVED_HEALTH,
 } from '@voxel-strike/shared';
@@ -189,10 +190,30 @@ assert.equal(hasBattleRoyalHoldInteractionBreakingInput({
   assert.equal(sanitizedDownedInput.moveLeft, true);
   assert.equal(sanitizedDownedInput.jump, false);
   assert.equal(sanitizedDownedInput.sprint, false);
-  assert.equal(sanitizedDownedInput.primaryFire, false);
+  assert.equal(sanitizedDownedInput.primaryFire, true);
   assert.equal(sanitizedDownedInput.ability2, false);
   assert.equal(sanitizedDownedInput.ultimate, false);
   assert.equal(sanitizedDownedInput.interact, false);
+
+  const heldPrimaryDownedPlayer = player('held-primary-downed', 'br_01', 'downed');
+  heldPrimaryDownedPlayer.knockdownShieldHealth = BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP;
+  heldPrimaryDownedPlayer.knockdownShieldMaxHealth = BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP;
+  heldPrimaryDownedPlayer.knockdownShieldActive = false;
+  room.gameplayMode = 'battle_royal';
+  room.state.phase = 'playing';
+  room.playerPressStates = {
+    applyInput: () => {},
+  };
+  room.processPlayerInput(
+    heldPrimaryDownedPlayer,
+    input({ primaryFire: true }),
+    now
+  );
+  assert.equal(
+    heldPrimaryDownedPlayer.knockdownShieldActive,
+    true,
+    'held primary fire should raise the BR knockdown shield'
+  );
 
   room.battleRoyalDownedRuntime.isBeingRevived = () => true;
   const frozenDownedInput = room.getSanitizedMovementInput(

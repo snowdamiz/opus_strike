@@ -80,7 +80,7 @@ export const BATTLE_ROYAL_REVIVED_HEALTH = 35;
 // recharges out of combat. Battle royale only; safe-zone damage bypasses it.
 export const BATTLE_ROYAL_BODY_SHIELD_MAX_HP = 50;
 export const BATTLE_ROYAL_BODY_SHIELD_REGEN_PER_SECOND = 8;
-// Knockdown shield: a downed player raises it (interact) for a one-per-down
+// Knockdown shield: a downed player raises it (primary fire) for a one-per-down
 // damage pool that absorbs hits to their downed health until it breaks.
 export const BATTLE_ROYAL_KNOCKDOWN_SHIELD_HP = 150;
 export const BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER = 0.32;

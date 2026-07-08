@@ -10,15 +10,24 @@ import { useGameStore } from '../../store/gameStore';
 import { consumeLookDelta } from '../../store/lookInputStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import type { Player } from '../../store/types';
+import {
+  sampleRemoteTransformInto,
+  visualStore,
+  type SampledRemoteTransform,
+} from '../../store/visualStore';
 
 const CAMERA_DISTANCE = 6.4;
 const CAMERA_HEIGHT = 2.6;
 const LOOK_HEIGHT = 1.15;
 const DOWNED_CAMERA_HEIGHT = 1.7;
 const DOWNED_LOOK_HEIGHT = 0.45;
-const POSITION_LERP = 0.16;
 const SPECTATOR_PITCH_LIMIT = Math.min(PITCH_LIMIT, Math.PI / 3);
 const SPECTATOR_VERTICAL_ORBIT_DISTANCE = 3.2;
+const SPECTATOR_TARGET_POSITION_DAMPING = 14;
+const SPECTATOR_CAMERA_POSITION_DAMPING = 9;
+const SPECTATOR_LOOK_TARGET_DAMPING = 18;
+const SPECTATOR_SNAP_DISTANCE_SQ = 36;
+const SPECTATOR_FRAME_DELTA_CAP_SECONDS = 0.05;
 
 export type BattleRoyalTeamSpectatorTarget = Pick<Player, 'id' | 'name' | 'team' | 'state'>;
 
@@ -76,6 +85,63 @@ export function writeBattleRoyalSpectatorCameraOffset(
   );
 }
 
+export function getBattleRoyalSpectatorDampingAlpha(damping: number, deltaSeconds: number): number {
+  if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return 0;
+  if (!Number.isFinite(damping) || damping <= 0) return 1;
+  return THREE.MathUtils.clamp(1 - Math.exp(-damping * deltaSeconds), 0, 1);
+}
+
+function dampBattleRoyalSpectatorVector(
+  current: THREE.Vector3,
+  target: THREE.Vector3,
+  damping: number,
+  deltaSeconds: number
+): THREE.Vector3 {
+  return current.lerp(target, getBattleRoyalSpectatorDampingAlpha(damping, deltaSeconds));
+}
+
+function createSampledRemoteTransform(): SampledRemoteTransform {
+  return {
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    extrapolatedMs: 0,
+    stale: false,
+  };
+}
+
+function writeBattleRoyalSpectatorTargetCenter(
+  player: Player,
+  sampledTransform: SampledRemoteTransform,
+  target: THREE.Vector3,
+  nowMs: number
+): THREE.Vector3 {
+  const visualState = visualStore.getState();
+  const renderedPosition = visualState.renderedPlayerPositions.get(player.id);
+  if (renderedPosition) {
+    return target.set(renderedPosition.x, renderedPosition.y, renderedPosition.z);
+  }
+
+  if (sampleRemoteTransformInto(player.id, sampledTransform, nowMs)) {
+    return target.set(
+      sampledTransform.position.x,
+      sampledTransform.position.y,
+      sampledTransform.position.z
+    );
+  }
+
+  const visualPosition = visualState.playerPositions.get(player.id);
+  return target.set(
+    visualPosition?.x ?? player.position.x,
+    visualPosition?.y ?? player.position.y,
+    visualPosition?.z ?? player.position.z
+  );
+}
+
 function requestCanvasPointerLock(canvas: HTMLCanvasElement): void {
   if (document.pointerLockElement === canvas) return;
 
@@ -97,8 +163,12 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   const yawRef = useRef(0);
   const pitchRef = useRef(0);
   const targetPositionRef = useRef(new THREE.Vector3());
+  const rawTargetCenterRef = useRef(new THREE.Vector3());
+  const smoothedTargetPositionRef = useRef(new THREE.Vector3());
+  const cameraLookTargetRef = useRef(new THREE.Vector3());
   const desiredPositionRef = useRef(new THREE.Vector3());
   const behindOffsetRef = useRef(new THREE.Vector3());
+  const sampledTransformRef = useRef(createSampledRemoteTransform());
   useGamepadInput(enabled);
 
   const teammateTargets = useMemo(() => {
@@ -193,7 +263,7 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
     return () => canvas.removeEventListener('mousedown', handleMouseDown);
   }, [cycleTarget, enabled, gl, teammateTargets.length]);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!enabled) return;
 
     const target = (targetId ? teammateTargetById.get(targetId) : undefined)
@@ -202,10 +272,18 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
     if (!target) return;
 
     const isDowned = target.state === 'downed';
-    const targetPosition = targetPositionRef.current.set(
-      target.position.x,
-      target.position.y + (isDowned ? DOWNED_LOOK_HEIGHT : LOOK_HEIGHT),
-      target.position.z
+    const frameDelta = Math.min(Math.max(0, delta), SPECTATOR_FRAME_DELTA_CAP_SECONDS);
+    const rawTargetCenter = writeBattleRoyalSpectatorTargetCenter(
+      target,
+      sampledTransformRef.current,
+      rawTargetCenterRef.current,
+      Date.now()
+    );
+    const rawLookTargetY = rawTargetCenter.y + (isDowned ? DOWNED_LOOK_HEIGHT : LOOK_HEIGHT);
+    const rawLookTarget = targetPositionRef.current.set(
+      rawTargetCenter.x,
+      rawLookTargetY,
+      rawTargetCenter.z
     );
     if (!initializedLookRef.current) {
       yawRef.current = Number.isFinite(target.lookYaw) ? target.lookYaw : 0;
@@ -218,8 +296,30 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
       applyLookDelta(lookDelta.x, lookDelta.y);
     }
 
+    const targetChanged = initializedTargetRef.current !== target.id;
+    if (
+      targetChanged ||
+      smoothedTargetPositionRef.current.distanceToSquared(rawLookTarget) > SPECTATOR_SNAP_DISTANCE_SQ
+    ) {
+      smoothedTargetPositionRef.current.copy(rawLookTarget);
+      cameraLookTargetRef.current.copy(rawLookTarget);
+    } else {
+      dampBattleRoyalSpectatorVector(
+        smoothedTargetPositionRef.current,
+        rawLookTarget,
+        SPECTATOR_TARGET_POSITION_DAMPING,
+        frameDelta
+      );
+      dampBattleRoyalSpectatorVector(
+        cameraLookTargetRef.current,
+        rawLookTarget,
+        SPECTATOR_LOOK_TARGET_DAMPING,
+        frameDelta
+      );
+    }
+
     const desiredPosition = desiredPositionRef.current
-      .copy(targetPosition)
+      .copy(smoothedTargetPositionRef.current)
       .add(writeBattleRoyalSpectatorCameraOffset(
         yawRef.current,
         pitchRef.current,
@@ -227,13 +327,18 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
         behindOffsetRef.current
       ));
 
-    if (initializedTargetRef.current !== target.id) {
+    if (targetChanged) {
       camera.position.copy(desiredPosition);
       initializedTargetRef.current = target.id;
     } else {
-      camera.position.lerp(desiredPosition, POSITION_LERP);
+      dampBattleRoyalSpectatorVector(
+        camera.position,
+        desiredPosition,
+        SPECTATOR_CAMERA_POSITION_DAMPING,
+        frameDelta
+      );
     }
-    camera.lookAt(targetPosition);
+    camera.lookAt(cameraLookTargetRef.current);
   });
 
   return null;
