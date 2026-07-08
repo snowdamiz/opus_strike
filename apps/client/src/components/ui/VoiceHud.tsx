@@ -30,7 +30,11 @@ function MicrophoneIcon() {
 
 export function voiceHudStatusMessage(state: VoiceConnectionState, error: string | null): string | null {
   if (state === 'permission_denied') return error || 'MIC DENIED';
-  if (state === 'error') return error || 'VOICE ERROR';
+  if (state === 'reconnecting' && error) return 'RETRYING VOICE LINK';
+  if (state === 'error') {
+    if (error && /pc connection/i.test(error)) return 'VOICE LINK FAILED';
+    return error || 'VOICE ERROR';
+  }
   return null;
 }
 
@@ -178,34 +182,34 @@ export function VoiceHud() {
       desktopClassName="hud-voice absolute z-[130] pointer-events-none select-none"
       desktopStyle={{
         left: 'clamp(0.75rem, 1.25vw, 1.125rem)',
-        bottom: 'calc(clamp(0.75rem, 1.25vw, 1.125rem) + 1.35rem)',
+        bottom: 'clamp(13.25rem, 24vh, 18rem)',
       }}
       mobileClassName="hud-voice z-[130] select-none"
-      contentClassName="flex h-full w-full items-end justify-start"
+      contentClassName="flex h-full w-full items-start justify-start"
     >
-      <div className="flex max-w-[min(15rem,44vw)] flex-col items-start gap-1.5">
+      <div className="flex max-w-[min(18rem,52vw)] flex-col items-start gap-1.5">
         {talkers.map((talker) => (
           <div
             key={talker.id}
-            className={`flex h-8 items-center gap-2 rounded-md border px-2.5 font-body text-xs shadow-lg backdrop-blur-md animate-fade-in ${
+            className={`flex min-h-9 min-w-[11rem] items-center gap-2 rounded-md border px-3 font-body text-xs font-semibold shadow-[0_10px_26px_rgba(0,0,0,0.46)] backdrop-blur-md animate-fade-in ${
               talker.isLocal
                 ? talker.isPublishing
-                  ? 'border-emerald-300/32 bg-emerald-500/18 text-emerald-50'
-                  : 'border-amber-300/28 bg-amber-400/14 text-amber-50'
-                : 'border-white/12 bg-black/46 text-white/86'
+                  ? 'border-emerald-200/70 bg-emerald-950/86 text-emerald-50'
+                  : 'border-amber-200/70 bg-amber-950/86 text-amber-50'
+                : 'border-cyan-100/45 bg-slate-950/88 text-white'
             }`}
           >
             <span className={talker.isLocal ? talker.isPublishing ? 'text-emerald-200' : 'text-amber-200' : 'text-cyan-200'}>
               {talker.isLocal ? <MicrophoneIcon /> : <SpeakerIcon />}
             </span>
-            <span className="max-w-[10rem] truncate">{talker.name}</span>
+            <span className="max-w-[13rem] truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">{talker.name}</span>
           </div>
         ))}
 
         {message && (
-          <div className="flex h-8 items-center gap-2 rounded-md border border-red-300/26 bg-red-500/16 px-2.5 font-body text-xs text-red-100 shadow-lg backdrop-blur-md animate-fade-in">
-            <SpeakerIcon />
-            <span className="max-w-[12rem] truncate">{message}</span>
+          <div className="flex min-h-9 min-w-[13rem] items-center gap-2 rounded-md border border-red-200/78 bg-red-950/90 px-3 font-body text-xs font-bold uppercase tracking-wide text-red-50 shadow-[0_10px_26px_rgba(0,0,0,0.52),0_0_18px_rgba(248,113,113,0.22)] backdrop-blur-md animate-fade-in">
+            <span className="text-red-200"><SpeakerIcon /></span>
+            <span className="max-w-[14rem] truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">{message}</span>
           </div>
         )}
       </div>

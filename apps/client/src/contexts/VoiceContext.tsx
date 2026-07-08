@@ -54,9 +54,21 @@ const VOICE_TRACK_NAME_BY_TRANSMIT_MODE: Record<VoiceTransmitMode, string> = {
   team: 'team-microphone',
   proximity: 'proximity-microphone',
 };
+const VOICE_CONNECT_RETRY_BASE_DELAY_MS = 1000;
+const VOICE_CONNECT_RETRY_MAX_DELAY_MS = 15000;
 
 function getVoiceTransmitModeForTrackName(trackName: string): VoiceTransmitMode {
   return trackName === VOICE_TRACK_NAME_BY_TRANSMIT_MODE.proximity ? 'proximity' : 'team';
+}
+
+export function computeVoiceConnectRetryDelayMs(attempt: number, jitterRatio = Math.random()): number {
+  const boundedAttempt = Math.max(0, Math.min(4, attempt));
+  const baseDelay = Math.min(
+    VOICE_CONNECT_RETRY_MAX_DELAY_MS,
+    VOICE_CONNECT_RETRY_BASE_DELAY_MS * (2 ** boundedAttempt)
+  );
+  const jitter = Math.round(baseDelay * 0.25 * Math.max(0, Math.min(1, jitterRatio)));
+  return baseDelay + jitter;
 }
 
 function getVoiceTransmitModeForKey(eventCode: string, keybindings: ClientSettings['keybindings']): VoiceTransmitMode | null {
@@ -375,14 +387,14 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     useVoiceStore.getState().resetVoiceSession(reason);
   }, [clearTokenRefresh, cleanupLocalMicrophone, detachRemoteAudio]);
 
-  const connectRoom = useCallback(async (connectionKey: string) => {
-    if (connectingKeyRef.current === connectionKey) return;
+  const connectRoom = useCallback(async (connectionKey: string): Promise<boolean> => {
+    if (connectingKeyRef.current === connectionKey) return true;
     if (
       livekitRoomRef.current &&
       useVoiceStore.getState().connectionState === 'connected' &&
       connectedKeyRef.current === connectionKey
     ) {
-      return;
+      return true;
     }
 
     connectingKeyRef.current = connectionKey;
@@ -394,7 +406,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice token request failed');
       connectingKeyRef.current = null;
-      return;
+      return false;
     }
 
     if (!response.enabled || !response.url || !response.token) {
@@ -405,7 +417,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         : loggers.voice.warn;
       logVoiceTokenUnavailable('voice token unavailable', voiceLogState({ reason }));
       connectingKeyRef.current = null;
-      return;
+      return false;
     }
 
     await disconnectRoom(null);
@@ -426,7 +438,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice client failed to load');
       loggers.audio.warn('voice client load failed', error);
       connectingKeyRef.current = null;
-      return;
+      return false;
     }
 
     const room = new livekit.Room({
@@ -512,15 +524,18 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         loggers.audio.debug('voice audio playback needs user gesture', error);
       });
       void refreshDevices();
+      return true;
     } catch (error) {
       room.removeAllListeners();
       livekitRoomRef.current = null;
       detachRemoteAudio();
+      useVoiceStore.getState().setLocalMicState(true, false);
       useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice connection failed');
       loggers.audio.warn('voice connection failed', error);
       loggers.voice.warn('voice room connection failed', voiceLogState({
         error: error instanceof Error ? error.message : 'voice connection failed',
       }));
+      return false;
     } finally {
       connectingKeyRef.current = null;
     }
@@ -666,7 +681,38 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    void connectRoom(activeConnectionKey);
+    let cancelled = false;
+    let retryAttempt = 0;
+    let retryTimeoutId: number | null = null;
+
+    const attemptConnect = async () => {
+      const connected = await connectRoom(activeConnectionKey);
+      if (cancelled || connected) return;
+
+      const state = useVoiceStore.getState();
+      if (state.connectionState !== 'error') return;
+
+      const retryDelayMs = computeVoiceConnectRetryDelayMs(retryAttempt);
+      retryAttempt += 1;
+      loggers.voice.warn('scheduling voice room reconnect', voiceLogState({
+        retryAttempt,
+        retryDelayMs,
+      }));
+      useVoiceStore.getState().setConnectionState('reconnecting', state.error);
+      retryTimeoutId = window.setTimeout(() => {
+        retryTimeoutId = null;
+        void attemptConnect();
+      }, retryDelayMs);
+    };
+
+    void attemptConnect();
+
+    return () => {
+      cancelled = true;
+      if (retryTimeoutId !== null) {
+        window.clearTimeout(retryTimeoutId);
+      }
+    };
   }, [activeConnectionKey, connectRoom, disconnectRoom, settings.voiceEnabled]);
 
   useEffect(() => {
