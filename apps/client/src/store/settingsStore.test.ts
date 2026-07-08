@@ -41,6 +41,34 @@ assert.equal(loadedSettings.mobileHudLayoutEditing, false);
 assert.equal(loadedSettings.streamerModeEnabled, false);
 assert.equal(loadedSettings.streamerFeedMode, 'bot_deathmatch');
 
+localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+  ...defaultSettings,
+  keybindings: {
+    moveForward: 'KeyW',
+    moveBackward: 'KeyS',
+    moveLeft: 'KeyA',
+    moveRight: 'KeyD',
+    jump: 'Space',
+    crouch: 'KeyC',
+    sprint: 'ShiftLeft',
+    primaryFire: 'Mouse0',
+    secondaryFire: 'Mouse1',
+    reload: 'KeyR',
+    ability1: 'KeyE',
+    ability2: 'KeyQ',
+    ultimate: 'KeyF',
+    interact: 'KeyX',
+    scoreboard: 'Tab',
+    pushToTalk: 'KeyZ',
+    ping: 'Mouse2',
+  },
+}));
+
+const migratedVoiceKeySettings = loadSettings();
+assert.equal(migratedVoiceKeySettings.keybindings.teamPushToTalk, 'KeyZ');
+assert.equal(migratedVoiceKeySettings.keybindings.proximityPushToTalk, 'KeyB');
+assert.equal('pushToTalk' in migratedVoiceKeySettings.keybindings, false);
+
 useSettingsStore.getState().applySettings({
   ...defaultSettings,
   masterVolume: 42,

@@ -16,9 +16,11 @@ import { useGameStore } from '../store/gameStore';
 import { useSettingsStore, type ClientSettings } from '../store/settingsStore';
 import {
   computeVoiceElementVolume,
+  computeTeamVoiceGain,
   computeVoiceProximityGain,
-  shouldHandlePushToTalkKey,
+  shouldHandleVoiceKey,
   useVoiceStore,
+  type VoiceTransmitMode,
   type VoiceParticipant,
 } from '../store/voiceStore';
 import { loggers } from '../utils/logger';
@@ -45,7 +47,23 @@ type AudioAttachment = {
   element: HTMLMediaElement;
   identity: string;
   playerId: string | null;
+  transmitMode: VoiceTransmitMode;
 };
+
+const VOICE_TRACK_NAME_BY_TRANSMIT_MODE: Record<VoiceTransmitMode, string> = {
+  team: 'team-microphone',
+  proximity: 'proximity-microphone',
+};
+
+function getVoiceTransmitModeForTrackName(trackName: string): VoiceTransmitMode {
+  return trackName === VOICE_TRACK_NAME_BY_TRANSMIT_MODE.proximity ? 'proximity' : 'team';
+}
+
+function getVoiceTransmitModeForKey(eventCode: string, keybindings: ClientSettings['keybindings']): VoiceTransmitMode | null {
+  if (shouldHandleVoiceKey(eventCode, keybindings.teamPushToTalk)) return 'team';
+  if (shouldHandleVoiceKey(eventCode, keybindings.proximityPushToTalk)) return 'proximity';
+  return null;
+}
 
 function parseParticipantMetadata(metadata?: string): Partial<VoiceParticipantMetadata> {
   if (!metadata) return {};
@@ -94,6 +112,7 @@ function voiceLogState(extra: Record<string, unknown> = {}) {
     micMuted: state.micMuted,
     micPublishing: state.micPublishing,
     pushToTalkActive: state.pushToTalkActive,
+    activeTransmitMode: state.activeTransmitMode,
     remoteParticipantCount: state.diagnostics.remoteParticipantCount,
     ...extra,
   };
@@ -103,7 +122,7 @@ function isExpectedVoiceDisabledReason(reason?: string): boolean {
   return reason === 'VOICE_ENABLED is false' || reason === 'voice disabled';
 }
 
-function isEditablePushToTalkTarget(target: EventTarget | null): boolean {
+function isEditableVoiceTarget(target: EventTarget | null): boolean {
   if (document.body.dataset.rebindingKeybind === 'true') return true;
   if (!(target instanceof HTMLElement)) return false;
   return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
@@ -121,9 +140,11 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const audioRootRef = useRef<HTMLDivElement | null>(null);
   const attachmentsRef = useRef(new Map<string, AudioAttachment>());
   const localMicTrackRef = useRef<LocalAudioTrack | null>(null);
+  const localMicTransmitModeRef = useRef<VoiceTransmitMode | null>(null);
   const localMicSourceTrackRef = useRef<MediaStreamTrack | null>(null);
   const localMicAudioContextRef = useRef<AudioContext | null>(null);
   const localMicGainRef = useRef<GainNode | null>(null);
+  const heldTransmitModesRef = useRef<VoiceTransmitMode[]>([]);
   const tokenRefreshTimeoutRef = useRef<number | null>(null);
   const connectingKeyRef = useRef<string | null>(null);
   const connectedKeyRef = useRef<string | null>(null);
@@ -150,18 +171,26 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     attachmentsRef.current.forEach((attachment) => {
       const muted = attachment.playerId ? state.mutedPlayerIds.has(attachment.playerId) : false;
       const participantTeam = state.participants.get(attachment.identity)?.team ?? null;
-      const proximityGain = computeVoiceProximityGain({
-        localPlayer: gameState.localPlayer,
-        remotePlayer: attachment.playerId ? gameState.players.get(attachment.playerId) ?? null : null,
-        participantPlayerId: attachment.playerId,
-        participantTeam,
-      });
+      const remotePlayer = attachment.playerId ? gameState.players.get(attachment.playerId) ?? null : null;
+      const receiveGain = attachment.transmitMode === 'team'
+        ? computeTeamVoiceGain({
+            localPlayer: gameState.localPlayer,
+            remotePlayer,
+            participantPlayerId: attachment.playerId,
+            participantTeam,
+          })
+        : computeVoiceProximityGain({
+            localPlayer: gameState.localPlayer,
+            remotePlayer,
+            participantPlayerId: attachment.playerId,
+            participantTeam,
+          });
       const volume = computeVoiceElementVolume(
         currentSettings.masterVolume,
         currentSettings.voiceVolume,
         state.deafened,
         muted,
-        proximityGain
+        receiveGain
       );
       attachment.element.volume = volume;
       attachment.track.setVolume(volume);
@@ -189,6 +218,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     const room = livekitRoomRef.current;
     const localTrack = localMicTrackRef.current;
     localMicTrackRef.current = null;
+    localMicTransmitModeRef.current = null;
     localMicGainRef.current = null;
 
     if (room && localTrack) {
@@ -274,6 +304,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       element,
       identity: participant.identity,
       playerId: metadata.colyseusSessionId ?? null,
+      transmitMode: getVoiceTransmitModeForTrackName(publication.trackName),
     });
 
     void applyOutputDevice();
@@ -503,9 +534,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     syncParticipants,
   ]);
 
-  const setMicrophoneMuted = useCallback(async (muted: boolean) => {
+  const setMicrophoneTransmitMode = useCallback(async (mode: VoiceTransmitMode | null) => {
     const room = livekitRoomRef.current;
     const state = useVoiceStore.getState();
+    const muted = mode === null;
     if (!room || state.connectionState !== 'connected') {
       useVoiceStore.getState().setLocalMicState(true, false);
       if (!muted) {
@@ -531,16 +563,21 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       }
 
       if (localMicTrackRef.current) {
-        if (localMicGainRef.current) {
-          localMicGainRef.current.gain.value = currentSettings.micVolume / 100;
+        if (localMicTransmitModeRef.current !== mode) {
+          await cleanupLocalMicrophone();
+        } else {
+          if (localMicGainRef.current) {
+            localMicGainRef.current.gain.value = currentSettings.micVolume / 100;
+          }
+          useVoiceStore.getState().setLocalMicState(false, true);
+          loggers.voice.debug('microphone publish reused existing local track', voiceLogState({ transmitMode: mode }));
+          return;
         }
-        useVoiceStore.getState().setLocalMicState(false, true);
-        loggers.voice.debug('microphone publish reused existing local track', voiceLogState());
-        return;
       }
 
       const audioConstraints = buildAudioCaptureOptions(currentSettings);
       loggers.voice.info('microphone publish requested', voiceLogState({
+        transmitMode: mode,
         hasInputDeviceOverride: Boolean(currentSettings.voiceInputDeviceId),
         echoCancellation: currentSettings.echoCancellationEnabled,
         noiseSuppression: currentSettings.noiseSuppressionEnabled,
@@ -580,15 +617,17 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         audioPreset: livekit.AudioPresets.speech,
         dtx: true,
         stopMicTrackOnMute: true,
-        name: 'team-microphone',
+        name: VOICE_TRACK_NAME_BY_TRANSMIT_MODE[mode],
       });
 
       localMicSourceTrackRef.current = sourceTrack;
       localMicAudioContextRef.current = audioContext;
       localMicGainRef.current = gain;
       localMicTrackRef.current = localTrack;
+      localMicTransmitModeRef.current = mode;
       useVoiceStore.getState().setLocalMicState(false, true);
       loggers.voice.info('microphone published for push-to-talk', voiceLogState({
+        transmitMode: mode,
         hasInputDeviceOverride: Boolean(currentSettings.voiceInputDeviceId),
       }));
     } catch (error) {
@@ -652,10 +691,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     if (!room || useVoiceStore.getState().micMuted) return;
 
     void (async () => {
+      const activeTransmitMode = useVoiceStore.getState().activeTransmitMode;
+      if (!activeTransmitMode) return;
       await cleanupLocalMicrophone();
-      await setMicrophoneMuted(false);
+      await setMicrophoneTransmitMode(activeTransmitMode);
     })();
-  }, [cleanupLocalMicrophone, setMicrophoneMuted, settings.voiceInputDeviceId]);
+  }, [cleanupLocalMicrophone, setMicrophoneTransmitMode, settings.voiceInputDeviceId]);
 
   useEffect(() => {
     if (localMicGainRef.current) {
@@ -666,35 +707,40 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const currentSettings = settingsRef.current;
-      if (
-        event.repeat ||
-        isEditablePushToTalkTarget(event.target) ||
-        !shouldHandlePushToTalkKey(event.code, currentSettings.keybindings.pushToTalk)
-      ) {
+      const transmitMode = getVoiceTransmitModeForKey(event.code, currentSettings.keybindings);
+      if (event.repeat || isEditableVoiceTarget(event.target) || !transmitMode) {
         return;
       }
       event.preventDefault();
-      useVoiceStore.getState().setPushToTalkActive(true);
-      loggers.voice.info('push-to-talk pressed', voiceLogState({ key: event.code }));
-      void setMicrophoneMuted(false);
+      heldTransmitModesRef.current = [
+        ...heldTransmitModesRef.current.filter((mode) => mode !== transmitMode),
+        transmitMode,
+      ];
+      useVoiceStore.getState().setPushToTalkActive(true, transmitMode);
+      loggers.voice.info('push-to-talk pressed', voiceLogState({ key: event.code, transmitMode }));
+      void setMicrophoneTransmitMode(transmitMode);
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
       const currentSettings = settingsRef.current;
-      if (!shouldHandlePushToTalkKey(event.code, currentSettings.keybindings.pushToTalk)) {
+      const transmitMode = getVoiceTransmitModeForKey(event.code, currentSettings.keybindings);
+      if (!transmitMode) {
         return;
       }
       event.preventDefault();
-      useVoiceStore.getState().setPushToTalkActive(false);
-      loggers.voice.info('push-to-talk released', voiceLogState({ key: event.code, reason: 'keyup' }));
-      void setMicrophoneMuted(true);
+      heldTransmitModesRef.current = heldTransmitModesRef.current.filter((mode) => mode !== transmitMode);
+      const nextTransmitMode = heldTransmitModesRef.current[heldTransmitModesRef.current.length - 1] ?? null;
+      useVoiceStore.getState().setPushToTalkActive(Boolean(nextTransmitMode), nextTransmitMode);
+      loggers.voice.info('push-to-talk released', voiceLogState({ key: event.code, reason: 'keyup', transmitMode }));
+      void setMicrophoneTransmitMode(nextTransmitMode);
     };
 
     const releasePushToTalk = (reason = 'lost_focus') => {
       if (!useVoiceStore.getState().pushToTalkActive && useVoiceStore.getState().micMuted) return;
-      useVoiceStore.getState().setPushToTalkActive(false);
+      heldTransmitModesRef.current = [];
+      useVoiceStore.getState().setPushToTalkActive(false, null);
       loggers.voice.info('push-to-talk released', voiceLogState({ reason }));
-      void setMicrophoneMuted(true);
+      void setMicrophoneTransmitMode(null);
     };
 
     const handleVisibilityChange = () => {
@@ -715,12 +761,17 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [setMicrophoneMuted]);
+  }, [setMicrophoneTransmitMode]);
 
   useEffect(() => {
-    useVoiceStore.getState().setPushToTalkActive(false);
-    void setMicrophoneMuted(true);
-  }, [setMicrophoneMuted, settings.keybindings.pushToTalk]);
+    heldTransmitModesRef.current = [];
+    useVoiceStore.getState().setPushToTalkActive(false, null);
+    void setMicrophoneTransmitMode(null);
+  }, [
+    setMicrophoneTransmitMode,
+    settings.keybindings.teamPushToTalk,
+    settings.keybindings.proximityPushToTalk,
+  ]);
 
   useEffect(() => {
     const unsubscribe = useVoiceStore.subscribe((state, previousState) => {
