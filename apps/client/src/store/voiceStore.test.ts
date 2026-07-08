@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {
   computeVoiceElementVolume,
+  computeTeamVoiceGain,
   computeVoiceProximityGain,
   initialVoiceState,
-  shouldHandlePushToTalkKey,
+  shouldHandleVoiceKey,
   useVoiceStore,
 } from './voiceStore';
 
@@ -33,7 +34,7 @@ const localPlayer = {
   state: 'alive',
   position: { x: 0, y: 0, z: 0 },
 };
-assert.equal(computeVoiceProximityGain({
+assert.equal(computeTeamVoiceGain({
   localPlayer,
   remotePlayer: {
     id: 'teammate',
@@ -44,6 +45,17 @@ assert.equal(computeVoiceProximityGain({
   participantPlayerId: 'teammate',
   participantTeam: 'red',
 }), 1);
+assert.equal(computeTeamVoiceGain({
+  localPlayer,
+  remotePlayer: {
+    id: 'enemy',
+    team: 'blue',
+    state: 'alive',
+    position: { x: 2, y: 0, z: 0 },
+  },
+  participantPlayerId: 'enemy',
+  participantTeam: 'blue',
+}), 0);
 assert.equal(computeVoiceProximityGain({
   localPlayer,
   remotePlayer: {
@@ -54,6 +66,17 @@ assert.equal(computeVoiceProximityGain({
   },
   participantPlayerId: 'near-enemy',
   participantTeam: 'blue',
+}), 1);
+assert.equal(computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer: {
+    id: 'near-teammate',
+    team: 'red',
+    state: 'alive',
+    position: { x: 8, y: 0, z: 0 },
+  },
+  participantPlayerId: 'near-teammate',
+  participantTeam: 'red',
 }), 1);
 assert.equal(computeVoiceProximityGain({
   localPlayer,
@@ -69,6 +92,17 @@ assert.equal(computeVoiceProximityGain({
 assert.equal(computeVoiceProximityGain({
   localPlayer,
   remotePlayer: {
+    id: 'far-teammate',
+    team: 'red',
+    state: 'alive',
+    position: { x: 40, y: 0, z: 0 },
+  },
+  participantPlayerId: 'far-teammate',
+  participantTeam: 'red',
+}), 0);
+assert.equal(computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer: {
     id: 'dead-enemy',
     team: 'blue',
     state: 'dead',
@@ -78,9 +112,9 @@ assert.equal(computeVoiceProximityGain({
   participantTeam: 'blue',
 }), 0);
 
-assert.equal(shouldHandlePushToTalkKey('KeyV', 'KeyV'), true);
-assert.equal(shouldHandlePushToTalkKey('KeyB', 'KeyV'), false);
-assert.equal(shouldHandlePushToTalkKey('KeyV', ''), false);
+assert.equal(shouldHandleVoiceKey('KeyV', 'KeyV'), true);
+assert.equal(shouldHandleVoiceKey('KeyB', 'KeyV'), false);
+assert.equal(shouldHandleVoiceKey('KeyV', ''), false);
 
 useVoiceStore.getState().upsertParticipant({
   identity: 'identity-a',

@@ -11,6 +11,8 @@ interface VoiceSpatialPlayer {
   state?: string | null;
 }
 
+export type VoiceTransmitMode = 'team' | 'proximity';
+
 export type VoiceConnectionState =
   | 'disabled'
   | 'idle'
@@ -53,6 +55,7 @@ export interface VoiceStoreState {
   micMuted: boolean;
   micPublishing: boolean;
   pushToTalkActive: boolean;
+  activeTransmitMode: VoiceTransmitMode | null;
   deafened: boolean;
   mutedPlayerIds: Set<string>;
   participants: Map<string, VoiceParticipant>;
@@ -71,7 +74,7 @@ interface VoiceStoreActions {
     team: Team | null;
   }) => void;
   setLocalMicState: (micMuted: boolean, micPublishing: boolean) => void;
-  setPushToTalkActive: (active: boolean) => void;
+  setPushToTalkActive: (active: boolean, mode?: VoiceTransmitMode | null) => void;
   setDeafened: (deafened: boolean) => void;
   setDevices: (inputDevices: MediaDeviceInfo[], outputDevices: MediaDeviceInfo[]) => void;
   upsertParticipant: (participant: VoiceParticipant) => void;
@@ -108,6 +111,7 @@ export const initialVoiceState: VoiceStoreState = {
   micMuted: true,
   micPublishing: false,
   pushToTalkActive: false,
+  activeTransmitMode: null,
   deafened: false,
   mutedPlayerIds: new Set(),
   participants: new Map(),
@@ -143,7 +147,7 @@ function canEmitProximityVoice(state: string | null | undefined): boolean {
   return state === 'alive' || state === 'downed' || state === 'dropping' || state === 'spawning';
 }
 
-export function computeVoiceProximityGain({
+export function computeTeamVoiceGain({
   localPlayer,
   remotePlayer,
   participantPlayerId,
@@ -158,7 +162,22 @@ export function computeVoiceProximityGain({
   if (participantPlayerId && participantPlayerId === localPlayer.id) return 1;
 
   const remoteTeam = remotePlayer?.team ?? participantTeam;
-  if (remoteTeam && localPlayer.team && remoteTeam === localPlayer.team) return 1;
+  return remoteTeam && localPlayer.team && remoteTeam === localPlayer.team ? 1 : 0;
+}
+
+export function computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer,
+  participantPlayerId,
+}: {
+  localPlayer: VoiceSpatialPlayer | null;
+  remotePlayer: VoiceSpatialPlayer | null;
+  participantPlayerId: string | null;
+  participantTeam: Team | null;
+}): number {
+  if (!localPlayer) return 0;
+  if (participantPlayerId && participantPlayerId === localPlayer.id) return 1;
+
   if (!remotePlayer || !canEmitProximityVoice(remotePlayer.state)) return 0;
   if (!isFinitePosition(localPlayer.position) || !isFinitePosition(remotePlayer.position)) return 0;
 
@@ -176,11 +195,11 @@ export function computeVoiceProximityGain({
   return fade * fade;
 }
 
-export function shouldHandlePushToTalkKey(
+export function shouldHandleVoiceKey(
   eventCode: string,
-  pushToTalkKey: string
+  voiceKey: string
 ): boolean {
-  return pushToTalkKey.length > 0 && eventCode === pushToTalkKey;
+  return voiceKey.length > 0 && eventCode === voiceKey;
 }
 
 function updateRemoteCount(participants: Map<string, VoiceParticipant>): number {
@@ -215,7 +234,10 @@ export const useVoiceStore = create<VoiceStore>((set, get) => ({
 
   setLocalMicState: (micMuted, micPublishing) => set({ micMuted, micPublishing }),
 
-  setPushToTalkActive: (pushToTalkActive) => set({ pushToTalkActive }),
+  setPushToTalkActive: (pushToTalkActive, activeTransmitMode = pushToTalkActive ? get().activeTransmitMode : null) => set({
+    pushToTalkActive,
+    activeTransmitMode,
+  }),
 
   setDeafened: (deafened) => set({ deafened }),
 
@@ -303,6 +325,8 @@ export const useVoiceStore = create<VoiceStore>((set, get) => ({
     error: message,
     micMuted: true,
     micPublishing: false,
+    pushToTalkActive: false,
+    activeTransmitMode: null,
     diagnostics: {
       ...state.diagnostics,
       permissionDeniedCount: state.diagnostics.permissionDeniedCount + 1,

@@ -105,7 +105,8 @@ const keybindRows: { action: KeybindAction; label: string }[] = [
   { action: 'ultimate', label: 'Ultimate' },
   { action: 'interact', label: 'Interact' },
   { action: 'scoreboard', label: 'Scoreboard' },
-  { action: 'pushToTalk', label: 'Push To Talk' },
+  { action: 'teamPushToTalk', label: 'Team Voice' },
+  { action: 'proximityPushToTalk', label: 'Proximity Voice' },
   { action: 'ping', label: 'Ping' },
 ];
 

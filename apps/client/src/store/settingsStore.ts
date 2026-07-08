@@ -9,7 +9,7 @@ export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic'
 export type FpsDisplayMode = 'off' | 'fps';
 export type DevTutorialOverride = 'account' | 'bypass' | 'force';
 export type StreamerFeedMode = 'random' | 'bot_deathmatch';
-export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk' | 'ping';
+export type KeybindAction = keyof InputState | 'scoreboard' | 'teamPushToTalk' | 'proximityPushToTalk' | 'ping';
 export type Keybindings = Record<KeybindAction, string>;
 
 export const keybindActionKeys = [
@@ -28,14 +28,16 @@ export const keybindActionKeys = [
   'ultimate',
   'interact',
   'scoreboard',
-  'pushToTalk',
+  'teamPushToTalk',
+  'proximityPushToTalk',
   'ping',
 ] as const satisfies readonly KeybindAction[];
 
 export const defaultKeybindings: Keybindings = {
   ...DEFAULT_KEYBINDINGS,
   scoreboard: 'Tab',
-  pushToTalk: 'KeyV',
+  teamPushToTalk: 'KeyV',
+  proximityPushToTalk: 'KeyB',
   ping: 'Mouse2',
 };
 
@@ -201,14 +203,14 @@ function pickKeybindingCode(value: unknown, fallback: string): string {
 
 function sanitizeKeybindings(value: unknown, legacyPushToTalkKey?: unknown): Keybindings {
   const raw = typeof value === 'object' && value !== null
-    ? value as Partial<Record<KeybindAction, unknown>>
+    ? value as Partial<Record<KeybindAction | 'pushToTalk', unknown>>
     : {};
   const next = { ...defaultKeybindings };
   const usedCodes = new Set<string>();
 
   for (const action of keybindActionKeys) {
-    const rawCode = action === 'pushToTalk' && raw[action] === undefined
-      ? legacyPushToTalkKey
+    const rawCode = action === 'teamPushToTalk' && raw[action] === undefined
+      ? raw.pushToTalk ?? legacyPushToTalkKey
       : raw[action];
     const preferredCode = pickKeybindingCode(rawCode, defaultKeybindings[action]);
 
