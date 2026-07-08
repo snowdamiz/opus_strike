@@ -22,7 +22,7 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
 
   const ticks: unknown[] = [];
   tracker.update(1_500, {
-    isTargetAlive: () => true,
+    isTargetDamageable: () => true,
     hasSource: () => true,
     applyTick: (tick) => {
       ticks.push(tick);
@@ -54,7 +54,7 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
 
   tracker.ignite(targetId, sourceId, 1_000, null, null);
   tracker.update(1_499, {
-    isTargetAlive: () => true,
+    isTargetDamageable: () => true,
     hasSource: () => true,
     applyTick: (tick) => {
       ticks.push(tick);
@@ -64,7 +64,7 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
   assert.equal(ticks.length, 0);
 
   tracker.update(2_500, {
-    isTargetAlive: () => true,
+    isTargetDamageable: () => true,
     hasSource: () => true,
     applyTick: (tick) => {
       ticks.push(tick);
@@ -89,7 +89,7 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
 
   tracker.ignite(targetId, 'missing-source', 1_000, null, null);
   tracker.update(1_500, {
-    isTargetAlive: () => true,
+    isTargetDamageable: () => true,
     hasSource: () => false,
     applyTick: (tick) => {
       sourceIds.push(tick.sourceId);
@@ -107,7 +107,7 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
 
   tracker.ignite(targetId, sourceId, 1_000, null, null);
   tracker.update(2_500, {
-    isTargetAlive: () => alive,
+    isTargetDamageable: () => alive,
     hasSource: () => true,
     applyTick: () => {
       tickCount++;
@@ -117,6 +117,32 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
   });
 
   assert.equal(tickCount, 1);
+  assert.equal(tracker.getBurnUntil(targetId), null);
+}
+
+{
+  const tracker = new BlazeBurnEffectTracker();
+  const targetStates = new Map([[targetId, 'downed']]);
+  const ticks: unknown[] = [];
+
+  tracker.ignite(targetId, sourceId, 1_000, null, null);
+  tracker.update(1_500, {
+    isTargetDamageable: (id) => targetStates.get(id) === 'alive' || targetStates.get(id) === 'downed',
+    hasSource: () => true,
+    applyTick: (tick) => {
+      ticks.push(tick);
+      targetStates.set(targetId, 'dead');
+      return true;
+    },
+  });
+
+  assert.deepEqual(ticks, [{
+    targetId,
+    sourceId,
+    sourcePosition: null,
+    sourceDirection: null,
+    tickCount: 1,
+  }]);
   assert.equal(tracker.getBurnUntil(targetId), null);
 }
 

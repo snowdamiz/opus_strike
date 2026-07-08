@@ -113,4 +113,40 @@ const circle: MapSummoningCircle = {
   assert.equal(snapshot.souls[0].position.z, -4);
 }
 
+{
+  const runtime = new BattleRoyalSoulRuntime();
+  const now = 40_000;
+  const fallenAlly = player('fallen-ally', 'br_01', 'dead');
+  const allyCollector = player('ally-collector', 'br_01', 'alive', 0.8);
+  const fallenEnemy = player('fallen-enemy', 'br_02', 'dead', 4);
+  const players = new Map<string, Player>([
+    [fallenAlly.id, fallenAlly],
+    [allyCollector.id, allyCollector],
+    [fallenEnemy.id, fallenEnemy],
+  ]);
+
+  runtime.createSoul(fallenAlly, now);
+  runtime.createSoul(fallenEnemy, now + 1);
+  assert.equal(runtime.tryStartNearestCollect(allyCollector, now + 100), true);
+
+  const allyCollectSnapshot = runtime.buildSnapshot('br_01');
+  assert.deepEqual(allyCollectSnapshot.souls.map((soul) => soul.playerId), [fallenAlly.id]);
+  assert.deepEqual(allyCollectSnapshot.interactions.map((interaction) => interaction.playerId), [allyCollector.id]);
+
+  const enemySnapshot = runtime.buildSnapshot('br_02');
+  assert.deepEqual(enemySnapshot.souls.map((soul) => soul.playerId), [fallenEnemy.id]);
+  assert.equal(enemySnapshot.interactions.length, 0);
+
+  runtime.update(players, [circle], now + 100 + BATTLE_ROYAL_SOUL_COLLECT_DURATION_MS);
+  allyCollector.position.x = circle.position.x;
+  allyCollector.position.z = circle.position.z;
+  assert.equal(runtime.tryStartSummon(allyCollector, [circle], now + 4_000), true);
+
+  const allySummonSnapshot = runtime.buildSnapshot('br_01');
+  assert.deepEqual(allySummonSnapshot.souls.map((soul) => soul.playerId), [fallenAlly.id]);
+  assert.deepEqual(allySummonSnapshot.interactions.map((interaction) => interaction.kind), ['summon']);
+  assert.equal(runtime.buildSnapshot('br_02').interactions.length, 0);
+  assert.equal(runtime.buildSnapshot().souls.length, 2);
+}
+
 console.log('battle-royal-soul-runtime ok');

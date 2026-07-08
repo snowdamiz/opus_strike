@@ -14,6 +14,11 @@ export interface BattleRoyalTeamPlacement {
   eliminatedAt: Date | null;
 }
 
+export interface BattleRoyalPlacementUpdateResult {
+  newlyPlacedTeams: Team[];
+  reactivatedTeams: Team[];
+}
+
 export class BattleRoyalPlacementTracker {
   private readonly activeTeamIds = new Set<Team>();
   private readonly placements = new Map<Team, BattleRoyalTeamPlacement>();
@@ -35,9 +40,20 @@ export class BattleRoyalPlacementTracker {
     this.update(players, now);
   }
 
-  update(players: Iterable<BattleRoyalPlacementPlayer>, now = Date.now()): Team[] {
-    if (this.activeTeamIds.size === 0) return [];
+  update(players: Iterable<BattleRoyalPlacementPlayer>, now = Date.now()): BattleRoyalPlacementUpdateResult {
     const contestingTeams = getBattleRoyalContestingTeamSet(players);
+    const reactivatedTeams: Team[] = [];
+    for (const team of contestingTeams) {
+      this.activeTeamIds.add(team);
+      if (this.placements.delete(team)) {
+        reactivatedTeams.push(team);
+      }
+    }
+
+    if (this.activeTeamIds.size === 0) {
+      return { newlyPlacedTeams: [], reactivatedTeams };
+    }
+
     const newlyPlacedTeams: Team[] = [];
 
     for (const team of this.activeTeamIds) {
@@ -45,10 +61,12 @@ export class BattleRoyalPlacementTracker {
       newlyPlacedTeams.push(team);
     }
 
-    if (newlyPlacedTeams.length === 0) return [];
+    if (newlyPlacedTeams.length === 0) {
+      return { newlyPlacedTeams, reactivatedTeams };
+    }
 
     const eliminatedAt = new Date(now);
-    const placement = Math.max(1, this.getUnplacedTeamCount() - newlyPlacedTeams.length + 1);
+    const placement = Math.max(1, contestingTeams.size + 1);
 
     for (const team of newlyPlacedTeams) {
       this.placements.set(team, {
@@ -57,7 +75,7 @@ export class BattleRoyalPlacementTracker {
       });
     }
 
-    return newlyPlacedTeams;
+    return { newlyPlacedTeams, reactivatedTeams };
   }
 
   finalize(players: Iterable<BattleRoyalPlacementPlayer>, winningTeam: Team | null, now = Date.now()): void {
@@ -101,10 +119,6 @@ export class BattleRoyalPlacementTracker {
 
   hasTeamPlacement(team: Team): boolean {
     return this.placements.has(team);
-  }
-
-  private getUnplacedTeamCount(): number {
-    return Math.max(0, this.activeTeamIds.size - this.placements.size);
   }
 
 }

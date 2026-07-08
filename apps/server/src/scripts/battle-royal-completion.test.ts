@@ -239,14 +239,31 @@ function createRoomWithPlacement(): any {
 {
   const room = createRoomWithPlacement();
   room.state.players.get('enemy')!.state = 'dead';
+  room.battleRoyalTeamSummarySent.add('br_01');
+  room.sent = [];
+
+  room.updateBattleRoyalPlacement(3000);
+
+  assert.equal(room.sent.length, 1);
+  assert.equal(room.battleRoyalPlacement.getTeamPlacement('br_02')?.placement, 2);
+  assert.equal(room.sent[0].sessionId, 'enemy');
+  assert.equal(room.sent[0].payload.completionReason, 'team_eliminated');
+  assert.equal(room.sent[0].payload.completedTeam, 'br_02');
+  assert.equal(room.sent[0].payload.completedTeamPlacement, 2);
+}
+
+{
+  const room = createRoomWithPlacement();
+  room.state.players.get('enemy')!.state = 'dead';
   room.state.players.get('enemy2')!.state = 'dead';
+  room.battleRoyalTeamSummarySent.add('br_01');
   room.sent = [];
 
   room.updateBattleRoyalPlacement(3000);
 
   assert.equal(room.sent.length, 0);
-  assert.equal(room.battleRoyalPlacement.getTeamPlacement('br_02'), null);
-  assert.equal(room.battleRoyalPlacement.getTeamPlacement('br_03'), null);
+  assert.equal(room.battleRoyalPlacement.getTeamPlacement('br_02')?.placement, 1);
+  assert.equal(room.battleRoyalPlacement.getTeamPlacement('br_03')?.placement, 1);
 }
 
 console.log('battle royal completion tests passed');

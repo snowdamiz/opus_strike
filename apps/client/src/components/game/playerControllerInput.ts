@@ -172,6 +172,13 @@ export function deriveServerCombatInput(input: {
   };
 }
 
+export function deriveDownedServerCombatInput(frameInput: InputState): ServerCombatInput {
+  return {
+    ...EMPTY_SERVER_COMBAT_INPUT,
+    primaryFire: frameInput.primaryFire,
+  };
+}
+
 export function movementClassForTrace(input: {
   heroId: HeroId;
   movement: PlayerMovementState;

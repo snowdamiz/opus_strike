@@ -28,12 +28,13 @@ function participant(userId: string, team: Team): MatchParticipantSnapshot {
     { team: 'br_03', state: 'alive' },
   ], 1000);
 
-  const firstCompletedTeams = tracker.update([
+  const firstUpdate = tracker.update([
     { team: 'br_01', state: 'alive' },
     { team: 'br_02', state: 'downed' },
     { team: 'br_03', state: 'dead' },
   ], 2000);
-  assert.deepEqual(firstCompletedTeams, ['br_03']);
+  assert.deepEqual(firstUpdate.newlyPlacedTeams, ['br_03']);
+  assert.deepEqual(firstUpdate.reactivatedTeams, []);
   assert.equal(tracker.hasTeamPlacement('br_03'), true);
   assert.equal(tracker.getTeamPlacement('br_03')?.placement, 3);
 
@@ -45,12 +46,13 @@ function participant(userId: string, team: Team): MatchParticipantSnapshot {
   assert.equal(snapshots.find((snapshot) => snapshot.team === 'br_02')?.placement, null);
   assert.equal(snapshots.find((snapshot) => snapshot.team === 'br_03')?.placement, 3);
 
-  const secondCompletedTeams = tracker.update([
+  const secondUpdate = tracker.update([
     { team: 'br_01', state: 'alive' },
     { team: 'br_02', state: 'dead' },
     { team: 'br_03', state: 'dead' },
   ], 3000);
-  assert.deepEqual(secondCompletedTeams, ['br_02']);
+  assert.deepEqual(secondUpdate.newlyPlacedTeams, ['br_02']);
+  assert.deepEqual(secondUpdate.reactivatedTeams, []);
   tracker.finalize([
     { team: 'br_01', state: 'alive' },
     { team: 'br_02', state: 'dead' },
@@ -84,7 +86,8 @@ function participant(userId: string, team: Team): MatchParticipantSnapshot {
     { team: 'br_01', state: 'alive' },
     { team: 'br_02', state: 'alive' },
   ], 2000);
-  assert.deepEqual(partialSquadElimination, []);
+  assert.deepEqual(partialSquadElimination.newlyPlacedTeams, []);
+  assert.deepEqual(partialSquadElimination.reactivatedTeams, []);
   assert.equal(tracker.hasTeamPlacement('br_01'), false);
 
   const completedSquadElimination = tracker.update([
@@ -92,7 +95,8 @@ function participant(userId: string, team: Team): MatchParticipantSnapshot {
     { team: 'br_01', state: 'dead' },
     { team: 'br_02', state: 'alive' },
   ], 3000);
-  assert.deepEqual(completedSquadElimination, ['br_01']);
+  assert.deepEqual(completedSquadElimination.newlyPlacedTeams, ['br_01']);
+  assert.deepEqual(completedSquadElimination.reactivatedTeams, []);
   assert.equal(tracker.getTeamPlacement('br_01')?.placement, 2);
 }
 
@@ -110,12 +114,51 @@ function participant(userId: string, team: Team): MatchParticipantSnapshot {
     { team: 'br_03', state: 'alive' },
   ], 2000);
 
-  assert.deepEqual(simultaneousEliminations, ['br_01', 'br_02']);
+  assert.deepEqual(simultaneousEliminations.newlyPlacedTeams, ['br_01', 'br_02']);
+  assert.deepEqual(simultaneousEliminations.reactivatedTeams, []);
   assert.equal(tracker.getTeamPlacement('br_01')?.placement, 2);
   assert.equal(tracker.getTeamPlacement('br_02')?.placement, 2);
   assert.equal(tracker.getTeamPlacement('br_01')?.eliminatedAt?.getTime(), 2000);
   assert.equal(tracker.getTeamPlacement('br_02')?.eliminatedAt?.getTime(), 2000);
   assert.equal(tracker.getTeamPlacement('br_03'), null);
+}
+
+{
+  const tracker = new BattleRoyalPlacementTracker();
+  tracker.initialize([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'alive' },
+    { team: 'br_03', state: 'alive' },
+    { team: 'br_04', state: 'alive' },
+  ], 1000);
+
+  tracker.update([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'dead' },
+    { team: 'br_03', state: 'dead' },
+    { team: 'br_04', state: 'dead' },
+  ], 2000);
+
+  const reactivated = tracker.update([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'dead' },
+    { team: 'br_03', state: 'alive' },
+    { team: 'br_04', state: 'dead' },
+  ], 3000);
+
+  assert.deepEqual(reactivated.newlyPlacedTeams, []);
+  assert.deepEqual(reactivated.reactivatedTeams, ['br_03']);
+  assert.equal(tracker.getTeamPlacement('br_03'), null);
+
+  const correctedElimination = tracker.update([
+    { team: 'br_01', state: 'alive' },
+    { team: 'br_02', state: 'dead' },
+    { team: 'br_03', state: 'dead' },
+    { team: 'br_04', state: 'dead' },
+  ], 4000);
+
+  assert.deepEqual(correctedElimination.newlyPlacedTeams, ['br_03']);
+  assert.equal(tracker.getTeamPlacement('br_03')?.placement, 2);
 }
 
 console.log('battle royal placement tests passed');

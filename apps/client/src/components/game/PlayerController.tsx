@@ -203,6 +203,7 @@ import {
   EMPTY_EXCLUSIVE_HOLD_INPUT,
   EMPTY_SERVER_COMBAT_INPUT,
   addCommandScheduleReason,
+  deriveDownedServerCombatInput,
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
   getExclusiveHeroInput,
@@ -235,6 +236,7 @@ import {
 import { applyTutorialOfflineTrainingTimebreakKnockback } from '../../utils/tutorialOfflineCombatRuntime';
 import { getPreparedVoxelMap } from '../../utils/mapWarmup/mapPrepCache';
 export {
+  deriveDownedServerCombatInput,
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
   getExclusiveHeroInput,
@@ -1305,11 +1307,16 @@ export function runPredictionAndCommandPhase(input: {
     refs.pendingCrouchPressedRef.current = true;
   }
   refs.lastCrouchHeldRef.current = crouchHeld;
+  const suppressPrimaryForBombTargeting = (
+    heroId === 'blaze' &&
+    currentBombTargeting &&
+    localPlayer.state !== 'downed'
+  );
 
   const commandInput: InputState = {
     ...frameInput,
     crouch: crouchHeld,
-    primaryFire: heroId === 'blaze' && currentBombTargeting ? false : serverCombatInput.primaryFire,
+    primaryFire: suppressPrimaryForBombTargeting ? false : serverCombatInput.primaryFire,
     secondaryFire: serverCombatInput.secondaryFire,
     ability1: serverCombatInput.ability1,
     reload: reloadForServer,
@@ -3137,6 +3144,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       const downedFrameInput = suppressDownedMovementInput(frameInput, {
         frozen: Boolean(localPlayer.reviveByPlayerId),
       });
+      const downedServerCombatInput = deriveDownedServerCombatInput(downedFrameInput);
       const downedHasMovementInput = (
         downedFrameInput.moveForward ||
         downedFrameInput.moveBackward ||
@@ -3157,6 +3165,11 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         { renderWorldEffect: storeSnapshot.matchPerspective === 'third_person' }
       );
       resetViewmodelPoseState('downed', heroId, now);
+      if (storeSnapshot.bombTargeting) {
+        frameCtx.setBombTargeting(false, false);
+        blazeAbilities.bombTargetRef.current = null;
+        blazeAbilities.bombValidRef.current = false;
+      }
 
       const aimYaw = cameraControl.refs.yaw.current;
       const aimPitch = cameraControl.refs.pitch.current + cameraControl.refs.slidePitch.current;
@@ -3192,7 +3205,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         localPlayer,
         heroId,
         frameInput: downedFrameInput,
-        serverCombatInput: EMPTY_SERVER_COMBAT_INPUT,
+        serverCombatInput: downedServerCombatInput,
         requestedCommandScheduleReasons: [],
         abilityCtx: downedAbilityCtx,
         predictedState,

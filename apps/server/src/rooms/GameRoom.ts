@@ -3032,7 +3032,11 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private buildMatchSnapshot(): MatchSnapshotMessage {
+  private buildMatchSnapshot(recipient: Player | null = null): MatchSnapshotMessage {
+    const battleRoyalSoulTeam = recipient && !isObserverPlayer(recipient)
+      ? (recipient.team as Team)
+      : null;
+
     return this.matchSnapshots.buildSnapshot({
       tick: this.state.tick,
       serverTime: this.state.serverTime,
@@ -3057,7 +3061,7 @@ export class GameRoom extends Room<GameState> {
         ? buildBattleRoyalDropSnapshot(this.battleRoyalDrop, this.state.serverTime || Date.now())
         : null,
       battleRoyalSouls: isBattleRoyalMode(this.gameplayMode)
-        ? this.battleRoyalSouls.buildSnapshot()
+        ? this.battleRoyalSouls.buildSnapshot(battleRoyalSoulTeam)
         : null,
     });
   }
@@ -3199,7 +3203,7 @@ export class GameRoom extends Room<GameState> {
     now = Date.now()
   ): boolean {
     const decision = resolveBattleRoyalMatchEnd(this.state.players.values());
-    if (placement > 1 && !decision.shouldEnd) return false;
+    if (placement > 1) return false;
 
     loggers.room.warn('Battle Royal team eliminated summary suppressed', {
       roomId: this.getRoomIdForDiagnostics(),
@@ -4011,7 +4015,7 @@ export class GameRoom extends Room<GameState> {
 
   private sendCurrentSnapshots(client: Client): void {
     const recipient = this.state.players.get(client.sessionId) ?? null;
-    const matchSnapshot = this.buildMatchSnapshot();
+    const matchSnapshot = this.buildMatchSnapshot(recipient);
     this.sendTracked(client, 'matchSnapshot', matchSnapshot);
     this.sendTracked(client, 'powerupState', this.powerupPickups.buildStateMessage(
       this.state.serverTime || Date.now(),
@@ -4489,7 +4493,11 @@ export class GameRoom extends Room<GameState> {
 
     this.lastMatchSnapshotBroadcastAt = now;
     this.matchSnapshotSignature = signature;
-    this.broadcastTracked('matchSnapshot', snapshot);
+    this.recordObserverEvent('matchSnapshot', snapshot);
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      this.sendTracked(client, 'matchSnapshot', this.buildMatchSnapshot(recipient));
+    }
   }
 
   private broadcastStateStreams(options: { transforms?: boolean; vitals?: boolean; match?: boolean; forceTransforms?: boolean; forceVitals?: boolean; forceMatch?: boolean } = {}): void {
@@ -11629,9 +11637,27 @@ export class GameRoom extends Room<GameState> {
 
   private updateBattleRoyalPlacement(now = Date.now()): void {
     if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
+    const placementUpdate = this.battleRoyalPlacement.update(this.state.players.values(), now);
+    if (placementUpdate.reactivatedTeams.length > 0) {
+      for (const team of placementUpdate.reactivatedTeams) {
+        this.battleRoyalTeamSummarySent.delete(team);
+      }
+      loggers.room.warn('Battle Royal placement tracker reactivated contesting teams', {
+        roomId: this.getRoomIdForDiagnostics(),
+        lobbyId: this.lobbyId,
+        matchMode: this.matchMode,
+        reactivatedTeams: placementUpdate.reactivatedTeams,
+        newlyPlacedTeams: placementUpdate.newlyPlacedTeams,
+        activeTeamCount: this.battleRoyalPlacement.activeTeamCount || null,
+        placedTeams: this.battleRoyalPlacement.getPlacedTeams(),
+        contestingTeams: resolveBattleRoyalMatchEnd(this.state.players.values()).aliveTeams,
+        serverTime: now,
+      });
+    }
+
     const decision = resolveBattleRoyalMatchEnd(this.state.players.values());
     if (decision.shouldEnd) {
-      loggers.room.info('Battle Royal placement sweep skipped for match end', {
+      loggers.room.info('Battle Royal placement sweep reached match end', {
         roomId: this.getRoomIdForDiagnostics(),
         lobbyId: this.lobbyId,
         matchMode: this.matchMode,
@@ -11639,12 +11665,11 @@ export class GameRoom extends Room<GameState> {
         contestingTeams: decision.aliveTeams,
         activeTeamCount: this.battleRoyalPlacement.activeTeamCount || null,
         placedTeams: this.battleRoyalPlacement.getPlacedTeams(),
+        newlyPlacedTeams: placementUpdate.newlyPlacedTeams,
         serverTime: now,
       });
-      return;
     }
 
-    this.battleRoyalPlacement.update(this.state.players.values(), now);
     // Sweep every placed team rather than only newly placed ones, so a missed
     // summary (send failure, or a placement recorded through another path)
     // heals on the next tick instead of leaving an eliminated squad stuck
@@ -12126,11 +12151,14 @@ export class GameRoom extends Room<GameState> {
 
   private updateBlazeBurns(now: number): void {
     this.blazeBurns.update(now, {
-      isTargetAlive: (targetId) => this.state.players.get(targetId)?.state === 'alive',
+      isTargetDamageable: (targetId) => {
+        const target = this.state.players.get(targetId);
+        return Boolean(target && isPlayerAliveOrDowned(target));
+      },
       hasSource: (sourceId) => this.state.players.has(sourceId),
       applyTick: ({ targetId, sourceId, sourcePosition, sourceDirection, tickCount }) => {
         const target = this.state.players.get(targetId);
-        if (!target || target.state !== 'alive') return false;
+        if (!target || !isPlayerAliveOrDowned(target)) return false;
         const killed = this.applyDamage(
           target,
           BLAZE_FLAMETHROWER_BURN_DAMAGE * Math.max(1, tickCount),
@@ -12264,12 +12292,16 @@ export class GameRoom extends Room<GameState> {
 
       const damage = calculateFalloffDamage(BLAZE_FLAMETHROWER_DAMAGE, distance, BLAZE_FLAMETHROWER_RANGE, 0.35);
       const previousHealth = target.health;
+      const previousDownedHealth = target.downedHealth;
       this.applyDamage(target, damage, source.id, 'flamethrower', {
         abilityId: 'blaze_flamethrower',
         sourcePosition: origin,
         sourceDirection: forward,
       });
-      if (target.state === 'alive' && target.health < previousHealth) {
+      if (
+        isPlayerAliveOrDowned(target) &&
+        (target.health < previousHealth || target.downedHealth < previousDownedHealth)
+      ) {
         this.igniteBlazeBurn(target, source, now, origin, forward);
       }
     }

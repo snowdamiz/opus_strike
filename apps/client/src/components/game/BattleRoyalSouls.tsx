@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { BattleRoyalHeroSoulSnapshot, MapSummoningCircle } from '@voxel-strike/shared';
+import { isObserverPlayer, type BattleRoyalHeroSoulSnapshot, type MapSummoningCircle } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../utils/mapWarmup/mapPrepCache';
 import { HeroVoxelBody } from './HeroVoxelBody';
@@ -231,6 +231,9 @@ export function BattleRoyalSouls() {
   const mapProfileId = useGameStore((state) => state.mapProfileId);
   const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const battleRoyalSouls = useGameStore((state) => state.battleRoyalSouls);
+  const localPlayer = useGameStore((state) => state.localPlayer);
+  const localTeam = localPlayer?.team ?? null;
+  const canSeeAllSouls = isObserverPlayer(localPlayer);
   const isBattleRoyalActive = gameplayMode === 'battle_royal' && (
     gamePhase === 'countdown' ||
     gamePhase === 'deployment' ||
@@ -247,10 +250,10 @@ export function BattleRoyalSouls() {
 
   const visibleSouls = useMemo(
     () => (battleRoyalSouls?.souls ?? []).filter((soul) => (
-      soul.status === 'available' ||
-      soul.status === 'collecting'
+      (soul.status === 'available' || soul.status === 'collecting') &&
+      (canSeeAllSouls || Boolean(localTeam && soul.team === localTeam))
     )),
-    [battleRoyalSouls?.souls]
+    [battleRoyalSouls?.souls, canSeeAllSouls, localTeam]
   );
   const summoningCircles = manifest?.gameplay.summoningCircles ?? [];
 

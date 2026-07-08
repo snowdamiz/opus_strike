@@ -20,11 +20,13 @@ import {
   enqueueSelfMovementAuthority,
   movementStateFromPlayer,
   resetLocalMovementPrediction,
+  suppressDownedMovementInput,
 } from '../../movement/localPrediction';
 import { createPracticeAbilityStates } from '../../utils/practiceAbilityStates';
 import { useGameStore } from '../../store/gameStore';
 import { removePlayerVisualState, visualStore } from '../../store/visualStore';
 import {
+  deriveDownedServerCombatInput,
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
   getExclusiveHeroInput,
@@ -568,6 +570,45 @@ assert.equal(
   movementButtonsToInputState(phantomPressCommand.ctx.__sentPackets[0].commands[0].buttons).primaryFire,
   true
 );
+
+const downedShieldFrameInput = suppressDownedMovementInput(
+  input({
+    primaryFire: true,
+    secondaryFire: true,
+    reload: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+    moveForward: true,
+    jump: true,
+  }),
+  { frozen: true }
+);
+assert.equal(downedShieldFrameInput.primaryFire, true);
+assert.equal(downedShieldFrameInput.secondaryFire, false);
+assert.equal(downedShieldFrameInput.moveForward, false);
+assert.deepEqual(
+  deriveDownedServerCombatInput(downedShieldFrameInput),
+  combatInput({ primaryFire: true })
+);
+const downedBlaze = makePlayer('blaze');
+downedBlaze.state = 'downed';
+useGameStore.setState({ bombTargeting: true });
+const downedShieldCommand = runCommandPhase({
+  player: downedBlaze,
+  frameInput: downedShieldFrameInput,
+  serverCombatInput: deriveDownedServerCombatInput(downedShieldFrameInput),
+});
+useGameStore.setState({ bombTargeting: false });
+assert.deepEqual(downedShieldCommand.result.commandScheduleReasons, ['combat_edge']);
+assert.equal(downedShieldCommand.ctx.__sentPackets.length, 1);
+const downedShieldCommandInput = movementButtonsToInputState(
+  downedShieldCommand.ctx.__sentPackets[0].commands[0].buttons
+);
+assert.equal(downedShieldCommandInput.primaryFire, true);
+assert.equal(downedShieldCommandInput.secondaryFire, false);
+assert.equal(downedShieldCommandInput.ability1, false);
+assert.equal(downedShieldCommandInput.moveForward, false);
 
 const phantomHeldCommand = runCommandPhase({
   player: makePlayer('phantom'),

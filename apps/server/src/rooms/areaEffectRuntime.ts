@@ -1,6 +1,7 @@
 import {
   BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
+  isPlayerAliveOrDowned,
   type Team,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
@@ -112,7 +113,7 @@ export class BlazeGearstormTracker {
 
       const radiusSq = storm.radius * storm.radius;
       for (const target of options.getTargets(storm)) {
-        if (target.state !== 'alive') continue;
+        if (!isPlayerAliveOrDowned(target)) continue;
 
         const dx = target.position.x - storm.position.x;
         const dy = target.position.y - storm.position.y;
