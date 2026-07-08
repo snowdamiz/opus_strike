@@ -76,6 +76,7 @@ jobs:
 
       - name: Deploy server
         run: >
+          bash scripts/fly-deploy-with-retry.sh
           flyctl deploy . --config apps/server/fly.toml --app "$SERVER_APP" --remote-only
           --dockerfile apps/server/Dockerfile
           --release-command-timeout 10m
@@ -108,8 +109,10 @@ jobs:
 
       - name: Deploy client
         run: >
+          bash scripts/fly-deploy-with-retry.sh
           flyctl deploy . --config apps/client/fly.toml --app "$CLIENT_APP" --remote-only
           --dockerfile apps/client/Dockerfile
+          --wait-timeout 10m
           --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

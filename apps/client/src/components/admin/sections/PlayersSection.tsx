@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Loader2, Search, ShieldAlert, Users, X } from 'lucide-react';
+import { Check, Copy, Loader2, Search, ShieldAlert, Users, X } from 'lucide-react';
 import type { SectionProps } from '../section';
 import type {
   AccountActionType,
@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from '../ui/select';
 import { Separator } from '../ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { EmptyState, Field, KeyValue, SectionHeader } from '../common';
 import { cn } from '../lib/utils';
 import {
@@ -48,6 +49,7 @@ import {
   formatRelativeTime,
   truncateAddress,
 } from '../format';
+import { copyTextToClipboard } from '../../../utils/clipboard';
 
 /* ----------------------------- Helpers ------------------------------ */
 
@@ -494,8 +496,8 @@ function PlayersTab({ console }: { console: SectionProps['console'] }) {
               users?.users.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-medium text-white">{user.name}</TableCell>
-                  <TableCell className="font-mono text-xs text-white/55">
-                    {truncateAddress(user.walletAddress)}
+                  <TableCell>
+                    <PlayerWalletCell walletAddress={user.walletAddress} />
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-0.5">
@@ -569,6 +571,66 @@ function PlayersTab({ console }: { console: SectionProps['console'] }) {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function PlayerWalletCell({ walletAddress }: { walletAddress: string | null }) {
+  const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle');
+  const resetTimeoutRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => () => {
+    if (resetTimeoutRef.current !== null && typeof window !== 'undefined') {
+      window.clearTimeout(resetTimeoutRef.current);
+    }
+  }, []);
+
+  if (!walletAddress) {
+    return <span className="font-mono text-xs text-white/35">—</span>;
+  }
+
+  const fullWalletAddress = walletAddress;
+
+  async function handleCopyWallet() {
+    const copied = await copyTextToClipboard(fullWalletAddress);
+    setCopyState(copied ? 'copied' : 'failed');
+
+    if (typeof window === 'undefined') return;
+    if (resetTimeoutRef.current !== null) window.clearTimeout(resetTimeoutRef.current);
+    resetTimeoutRef.current = window.setTimeout(() => setCopyState('idle'), 1600);
+  }
+
+  const copied = copyState === 'copied';
+  const failed = copyState === 'failed';
+  const tooltip = copied ? 'Copied full wallet' : failed ? 'Copy failed' : 'Copy full wallet';
+
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span
+        className="min-w-0 truncate font-mono text-xs text-white/55"
+        title={fullWalletAddress}
+      >
+        {truncateAddress(fullWalletAddress)}
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            aria-label={tooltip}
+            className={cn(
+              'h-7 w-7 text-white/40 hover:text-white',
+              copied && 'text-ui-success hover:text-ui-success',
+              failed && 'text-ui-danger hover:text-ui-danger'
+            )}
+            onClick={() => void handleCopyWallet()}
+          >
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

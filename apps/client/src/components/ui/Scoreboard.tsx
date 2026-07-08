@@ -42,6 +42,10 @@ function teamEntryToPresentation(entry: TeamCatalogEntry): TeamPresentation {
   };
 }
 
+function canMutePlayerVoice(player: Player, localPlayer: Player | null): boolean {
+  return player.id !== localPlayer?.id && !player.isBot;
+}
+
 // Solar Icon
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
@@ -228,7 +232,7 @@ export function Scoreboard() {
                   key={player.id} 
                   player={player} 
                   isLocal={player.id === localPlayer?.id}
-                  canMuteVoice={player.team === localPlayer?.team && player.id !== localPlayer?.id && !player.isBot}
+                  canMuteVoice={canMutePlayerVoice(player, localPlayer)}
                   voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                   voiceMuted={mutedPlayerIds.has(player.id)}
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
@@ -258,7 +262,7 @@ export function Scoreboard() {
                   key={player.id} 
                   player={player}
                   isLocal={player.id === localPlayer?.id}
-                  canMuteVoice={player.team === localPlayer?.team && player.id !== localPlayer?.id && !player.isBot}
+                  canMuteVoice={canMutePlayerVoice(player, localPlayer)}
                   voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                   voiceMuted={mutedPlayerIds.has(player.id)}
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
@@ -392,7 +396,7 @@ function BattleRoyalScoreboard({
                         key={player.id}
                         player={player}
                         isLocal={player.id === localPlayer?.id}
-                        canMuteVoice={player.team === localPlayer?.team && player.id !== localPlayer?.id && !player.isBot}
+                        canMuteVoice={canMutePlayerVoice(player, localPlayer)}
                         voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                         voiceMuted={mutedPlayerIds.has(player.id)}
                         onToggleVoiceMute={() => togglePlayerMute(player.id)}

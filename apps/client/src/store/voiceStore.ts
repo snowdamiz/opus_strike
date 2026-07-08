@@ -1,5 +1,15 @@
 import { create } from 'zustand';
-import type { Team } from '@voxel-strike/shared';
+import type { Team, Vec3 } from '@voxel-strike/shared';
+
+export const VOICE_PROXIMITY_FULL_VOLUME_DISTANCE = 10;
+export const VOICE_PROXIMITY_MAX_DISTANCE = 36;
+
+interface VoiceSpatialPlayer {
+  id: string;
+  team: Team | null;
+  position: Vec3;
+  state?: string | null;
+}
 
 export type VoiceConnectionState =
   | 'disabled'
@@ -110,12 +120,60 @@ export function computeVoiceElementVolume(
   masterVolume: number,
   voiceVolume: number,
   deafened: boolean,
-  participantMuted: boolean
+  participantMuted: boolean,
+  proximityGain = 1
 ): number {
   if (deafened || participantMuted) return 0;
   const master = Math.max(0, Math.min(100, masterVolume)) / 100;
   const voice = Math.max(0, Math.min(100, voiceVolume)) / 100;
-  return master * voice;
+  const gain = Math.max(0, Math.min(1, proximityGain));
+  return master * voice * gain;
+}
+
+function isFinitePosition(position: Vec3 | null | undefined): position is Vec3 {
+  return Boolean(
+    position &&
+    Number.isFinite(position.x) &&
+    Number.isFinite(position.y) &&
+    Number.isFinite(position.z)
+  );
+}
+
+function canEmitProximityVoice(state: string | null | undefined): boolean {
+  return state === 'alive' || state === 'downed' || state === 'dropping' || state === 'spawning';
+}
+
+export function computeVoiceProximityGain({
+  localPlayer,
+  remotePlayer,
+  participantPlayerId,
+  participantTeam,
+}: {
+  localPlayer: VoiceSpatialPlayer | null;
+  remotePlayer: VoiceSpatialPlayer | null;
+  participantPlayerId: string | null;
+  participantTeam: Team | null;
+}): number {
+  if (!localPlayer) return 0;
+  if (participantPlayerId && participantPlayerId === localPlayer.id) return 1;
+
+  const remoteTeam = remotePlayer?.team ?? participantTeam;
+  if (remoteTeam && localPlayer.team && remoteTeam === localPlayer.team) return 1;
+  if (!remotePlayer || !canEmitProximityVoice(remotePlayer.state)) return 0;
+  if (!isFinitePosition(localPlayer.position) || !isFinitePosition(remotePlayer.position)) return 0;
+
+  const distance = Math.hypot(
+    remotePlayer.position.x - localPlayer.position.x,
+    remotePlayer.position.z - localPlayer.position.z
+  );
+  if (distance <= VOICE_PROXIMITY_FULL_VOLUME_DISTANCE) return 1;
+  if (distance >= VOICE_PROXIMITY_MAX_DISTANCE) return 0;
+
+  const fade = 1 - (
+    (distance - VOICE_PROXIMITY_FULL_VOLUME_DISTANCE) /
+    (VOICE_PROXIMITY_MAX_DISTANCE - VOICE_PROXIMITY_FULL_VOLUME_DISTANCE)
+  );
+  return fade * fade;
 }
 
 export function shouldHandlePushToTalkKey(

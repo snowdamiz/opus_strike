@@ -1367,7 +1367,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         requestId: 'not-connected',
         enabled: false,
         scope,
-        mode: 'team',
+        mode: 'team_proximity',
         reason: 'not connected to game room',
       });
     }

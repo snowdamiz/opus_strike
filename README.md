@@ -155,7 +155,7 @@ Fly provides `FLY_APP_NAME`, `FLY_MACHINE_ID`, and `FLY_REGION` at runtime. Matc
 
 ### Voice Chat
 
-Team voice uses LiveKit through backend-issued, short-lived room tokens. For local development, start the bundled LiveKit service and set the server environment:
+Match voice uses LiveKit through backend-issued, short-lived room tokens. Teammates share full-volume team voice for the whole match, while non-teammates are audible only through client-side proximity falloff. For local development, start the bundled LiveKit service and set the server environment:
 
 ```bash
 docker compose up postgres livekit
@@ -171,7 +171,7 @@ Optional production knobs:
 
 - `VOICE_TOKEN_TTL_SECONDS`: token lifetime in seconds, clamped between 60 and 3600. Default: `600`.
 - `VOICE_ENV`: room-name environment segment. Defaults to `NODE_ENV` or `development`.
-- `VOICE_MAX_PARTICIPANTS_PER_ROOM`: LiveKit team-room cap. Default: `8`.
+- `VOICE_MAX_PARTICIPANTS_PER_ROOM`: LiveKit match-room cap. Default: `32`.
 
 `GET /voice/status` reports whether voice is enabled and why it is disabled without exposing LiveKit secrets.
 

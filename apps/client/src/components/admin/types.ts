@@ -332,7 +332,7 @@ export interface RankOption extends RankInfo {}
 export interface AdminUserRecord {
   id: string;
   name: string;
-  walletAddress: string;
+  walletAddress: string | null;
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;

@@ -1,7 +1,7 @@
 import type { Team } from './player.js';
 
 export type VoiceScope = 'match';
-export type VoiceConnectionMode = 'team';
+export type VoiceConnectionMode = 'team_proximity';
 
 export interface VoiceParticipantMetadata {
   displayName: string;

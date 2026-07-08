@@ -76,6 +76,6 @@ export function resolveVoiceConfig(env: NodeJS.ProcessEnv = process.env): VoiceC
       MIN_TOKEN_TTL_SECONDS,
       MAX_TOKEN_TTL_SECONDS
     ),
-    maxParticipantsPerRoom: readPositiveInt(env, 'VOICE_MAX_PARTICIPANTS_PER_ROOM', 8, 1, 64),
+    maxParticipantsPerRoom: readPositiveInt(env, 'VOICE_MAX_PARTICIPANTS_PER_ROOM', 32, 1, 64),
   };
 }
