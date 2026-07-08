@@ -308,15 +308,32 @@ export class BattleRoyalSoulRuntime {
     return { completedSummons, changed };
   }
 
-  buildSnapshot(): BattleRoyalHeroSoulStateSnapshot {
+  buildSnapshot(team?: Team | null): BattleRoyalHeroSoulStateSnapshot {
     return {
       souls: Array.from(this.soulsById.values())
+        .filter((soul) => team == null || soul.team === team)
         .sort((a, b) => a.createdAt - b.createdAt || a.soulId.localeCompare(b.soulId))
         .map((soul) => ({ ...soul, position: { ...soul.position } })),
       interactions: Array.from(this.channelByPlayerId.values())
+        .filter((channel) => team == null || this.isInteractionVisibleToTeam(channel, team))
         .sort((a, b) => a.startedAt - b.startedAt || a.playerId.localeCompare(b.playerId))
         .map((channel) => this.toInteractionSnapshot(channel)),
     };
+  }
+
+  private isInteractionVisibleToTeam(
+    channel: BattleRoyalSoulInteractionChannel,
+    team: Team
+  ): boolean {
+    if (channel.soulId) {
+      return this.soulsById.get(channel.soulId)?.team === team;
+    }
+
+    return Array.from(this.soulsById.values()).some((soul) => (
+      soul.team === team &&
+      soul.summonByPlayerId === channel.playerId &&
+      soul.summonCircleId === channel.circleId
+    ));
   }
 
   private getNearestCollectableSoul(collector: Player): BattleRoyalHeroSoulState | null {

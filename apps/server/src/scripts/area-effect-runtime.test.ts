@@ -83,6 +83,7 @@ function createTarget(
   const targets = [
     createTarget('inside', { x: 3, y: 0, z: 0 }),
     createTarget('edge', { x: 0, y: 0, z: 5 }),
+    createTarget('downed', { x: 2, y: 0, z: 0 }, 'downed'),
     createTarget('outside', { x: 0, y: 0, z: 6 }),
     createTarget('dead', { x: 2, y: 0, z: 0 }, 'dead'),
   ];
@@ -99,6 +100,7 @@ function createTarget(
   assert.deepEqual(hits, [
     { targetId: 'inside', distance: 3, stormX: 0 },
     { targetId: 'edge', distance: 5, stormX: 0 },
+    { targetId: 'downed', distance: 2, stormX: 0 },
   ]);
   assert.equal(tracker.size, 1);
 
@@ -109,7 +111,7 @@ function createTarget(
       hits.push({ targetId: target.id, distance, stormX: storm.position.x });
     },
   });
-  assert.equal(hits.length, 2);
+  assert.equal(hits.length, 3);
 
   tracker.update(1_000 + BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS, {
     hasOwner: () => true,
@@ -118,9 +120,10 @@ function createTarget(
       hits.push({ targetId: target.id, distance, stormX: storm.position.x });
     },
   });
-  assert.deepEqual(hits.slice(2), [
+  assert.deepEqual(hits.slice(3), [
     { targetId: 'inside', distance: 3, stormX: 0 },
     { targetId: 'edge', distance: 5, stormX: 0 },
+    { targetId: 'downed', distance: 2, stormX: 0 },
   ]);
 }
 

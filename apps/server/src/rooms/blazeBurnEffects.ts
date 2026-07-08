@@ -70,13 +70,13 @@ export class BlazeBurnEffectTracker {
   update(
     now: number,
     options: {
-      isTargetAlive: (targetId: string) => boolean;
+      isTargetDamageable: (targetId: string) => boolean;
       hasSource: (sourceId: string) => boolean;
       applyTick: (tick: BlazeBurnTick) => boolean;
     }
   ): void {
     for (const [targetId, burn] of this.burns) {
-      if (!options.isTargetAlive(targetId) || burn.ticksRemaining <= 0) {
+      if (!options.isTargetDamageable(targetId) || burn.ticksRemaining <= 0) {
         this.burns.delete(targetId);
         continue;
       }
@@ -88,7 +88,7 @@ export class BlazeBurnEffectTracker {
         burn.nextTickAt += BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
       }
 
-      if (dueTicks > 0 && options.isTargetAlive(targetId)) {
+      if (dueTicks > 0 && options.isTargetDamageable(targetId)) {
         const killed = options.applyTick({
           targetId,
           sourceId: options.hasSource(burn.sourceId) ? burn.sourceId : null,
@@ -96,13 +96,13 @@ export class BlazeBurnEffectTracker {
           sourceDirection: burn.sourceDirection,
           tickCount: dueTicks,
         });
-        if (killed || !options.isTargetAlive(targetId)) {
+        if (killed || !options.isTargetDamageable(targetId)) {
           this.burns.delete(targetId);
           continue;
         }
       }
 
-      if (burn.ticksRemaining <= 0 || !options.isTargetAlive(targetId)) {
+      if (burn.ticksRemaining <= 0 || !options.isTargetDamageable(targetId)) {
         this.burns.delete(targetId);
       }
     }
