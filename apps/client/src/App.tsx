@@ -13,6 +13,7 @@ import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
 import { MobileAccessGate } from './components/ui/MobileAccessGate';
+import { InstallPwaPrompt } from './components/ui/InstallPwaPrompt';
 import { TutorialGuide } from './components/ui/TutorialGuide';
 import { disposeSharedAudioResources, useAudio, useMusic } from './hooks/useAudio';
 import { useGlobalButtonSounds } from './hooks/useUiAudio';
@@ -709,7 +710,12 @@ export function App() {
   // Show appropriate screen based on app phase
   // Authentication is now handled within MainLobby
   if (appPhase === 'menu') {
-    return renderWithMobileGate(<MainLobby />);
+    return renderWithMobileGate(
+      <>
+        <MainLobby />
+        <InstallPwaPrompt />
+      </>
+    );
   }
 
   if (appPhase === 'in_lobby') {
