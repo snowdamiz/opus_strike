@@ -72,6 +72,7 @@ const AUTH_RATE_LIMITS = {
   register: { limit: 10, windowMs: 60 * 1000 },
   profileUpdate: { limit: 10, windowMs: 60 * 1000 },
   tutorialComplete: { limit: 12, windowMs: 60 * 1000 },
+  appOpened: { limit: 12, windowMs: 60 * 1000 },
   oauthStart: { limit: 20, windowMs: 60 * 1000 },
   oauthCallback: { limit: 30, windowMs: 60 * 1000 },
   mobileWalletStart: { limit: 20, windowMs: 60 * 1000 },
@@ -1744,6 +1745,42 @@ router.post('/tutorial/complete', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[auth] Tutorial completion error:', error);
     res.status(500).json({ error: 'Failed to save tutorial completion' });
+  }
+});
+
+// Called by the client when the app boots in standalone (installed home-screen
+// App) display mode. Records the first such open so the web (Safari) session can
+// later nudge the user to switch back to the installed App — iOS gives Safari no
+// other way to know the App is installed (separate storage partition, no API).
+router.post('/app-opened', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:app-opened', AUTH_RATE_LIMITS.appOpened)) return;
+
+  try {
+    const payload = await getAuthenticatedPayload(req);
+    const user = payload ? await findUserForPayload(payload) : null;
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Idempotent: keep the first-open timestamp once set.
+    const openedAt = user.appOpenedAt ?? new Date();
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        appOpenedAt: openedAt,
+        lastLoginAt: new Date(),
+      },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    res.json({
+      success: true,
+      user: serializeUser(updatedUser),
+    });
+  } catch (error) {
+    console.error('[auth] App open marker error:', error);
+    res.status(500).json({ error: 'Failed to record app open' });
   }
 });
 

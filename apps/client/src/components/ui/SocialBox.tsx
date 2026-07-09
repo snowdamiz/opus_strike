@@ -802,7 +802,7 @@ export function SocialBox({
             <button
               type="button"
               onClick={closePanel}
-              className="social-close-button flex h-8 w-8 shrink-0 items-center justify-center text-white/45 transition hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70"
+              className="social-close-button flex h-11 w-11 shrink-0 items-center justify-center text-white/45 transition hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70"
               aria-label="Close social sidebar"
             >
               <XIcon className="h-4 w-4" />

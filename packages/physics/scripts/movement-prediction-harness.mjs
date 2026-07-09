@@ -20,6 +20,7 @@ import {
   MOVEMENT_BUTTON_RELOAD,
   MOVEMENT_BUTTON_SPRINT,
   MOVEMENT_COMMAND_BUFFER_SIZE,
+  MOVEMENT_MAX_RECONCILE_REPLAY_COMMANDS,
   MOVEMENT_PROTOCOL_VERSION,
   PLAYER_CROUCH_HEIGHT,
   PLAYER_HEIGHT,
@@ -659,8 +660,40 @@ function runCorrectionReplay() {
   assert.equal(metrics.corrected, true);
   assert.equal(metrics.hardCorrection, true);
   assert.equal(metrics.replayedCommands, 4);
+  assert.equal(metrics.replayBudgetExceeded, false);
   assert.equal(controller.getBufferedCommandCount(), 4);
   assert.equal(Number.isFinite(controller.getState().position.x), true);
+}
+
+function runCorrectionReplayBudgetFallback() {
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  const commandCount = MOVEMENT_MAX_RECONCILE_REPLAY_COMMANDS + 8;
+  for (let seq = 1; seq <= commandCount; seq++) {
+    controller.step(command(seq, MOVEMENT_BUTTON_MOVE_FORWARD), context());
+  }
+
+  const firstPredictedState = new MovementPredictionController();
+  firstPredictedState.initialize(createSimulationState(), 0, 0);
+  firstPredictedState.step(command(1, MOVEMENT_BUTTON_MOVE_FORWARD), context());
+  const atAck = firstPredictedState.getState();
+  const metrics = controller.reconcile({
+    serverTick: 1,
+    serverTime: 50,
+    ackSeq: 1,
+    movementEpoch: 0,
+    position: { x: atAck.position.x + 2, y: atAck.position.y, z: atAck.position.z },
+    velocity: atAck.velocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: atAck.movement,
+    correctionReason: 'normal',
+  }, context(), 60);
+
+  assert.equal(metrics.corrected, true);
+  assert.equal(metrics.replayBudgetExceeded, true);
+  assert.equal(metrics.replayedCommands, 0);
+  assert.equal(controller.getBufferedCommandCount(), 0);
 }
 
 function runSmallAuthorityDriftDoesNotReplay() {
@@ -1991,6 +2024,7 @@ runChronosAscendantCapsAtPlayableCeiling();
 runPlayableCeilingClampsSharedMovement();
 runProceduralLookupClampsToMapCeiling();
 runCorrectionReplay();
+runCorrectionReplayBudgetFallback();
 runSmallAuthorityDriftDoesNotReplay();
 runClientAuthoritativeAckDoesNotMovePresentation();
 runLargeFullAuthorityDriftReplays();

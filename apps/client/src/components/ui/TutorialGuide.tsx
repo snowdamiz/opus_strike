@@ -223,7 +223,7 @@ function TutorialCompletionOverlay({
       role="dialog"
       aria-modal="true"
       aria-labelledby="tutorial-completion-title"
-      className="pointer-events-auto fixed inset-0 z-[120] flex items-center justify-center bg-white/10 p-6 text-white backdrop-blur-md animate-fade-in"
+      className="pointer-events-auto fixed inset-0 z-[120] flex items-center justify-center bg-white/10 p-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] text-white backdrop-blur-md animate-fade-in"
     >
       <div
         className="w-[min(34rem,calc(100vw-2rem))] text-center animate-scale-in"
@@ -639,7 +639,7 @@ export function TutorialGuide() {
 
   return (
     <div
-      className="pointer-events-none absolute left-6 top-6 z-[80] w-[min(24rem,calc(100vw-3rem))] select-none text-white"
+      className="pointer-events-none absolute left-[max(1.5rem,env(safe-area-inset-left))] top-[max(1.5rem,env(safe-area-inset-top))] z-[80] w-[min(24rem,calc(100vw-3rem))] select-none text-white"
       style={FLOATING_TEXT_STYLE}
     >
       <div className="flex items-start gap-3" aria-live="polite">

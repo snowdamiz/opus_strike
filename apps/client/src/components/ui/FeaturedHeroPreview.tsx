@@ -3,32 +3,10 @@ import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { HeroId, HeroSkinId } from '@voxel-strike/shared';
 import { HeroPreviewCanvas, type HeroPreviewAnimationMode, type HeroPreviewRank } from './HeroPreviewCanvas';
 import { BLAZE_UI_COLORS } from '../../styles/colorTokens';
-
-type FeaturedHeroPreviewScale = 'default' | 'large';
-
-const FEATURED_IDLE_PREVIEW_CLASS_BY_SCALE: Record<FeaturedHeroPreviewScale, string> = {
-  default: 'relative -mt-[clamp(1.6rem,5vh,4rem)] h-[clamp(16rem,40vh,29rem)] w-[clamp(14.5rem,29vw,27rem)]',
-  large: 'relative -mt-[clamp(2rem,5.6vh,4.5rem)] h-[clamp(18rem,44vh,31.5rem)] w-[clamp(16rem,32vw,29.5rem)]',
-};
-
-function getFeaturedHeroPreviewClassName(
-  animationMode: HeroPreviewAnimationMode,
-  scale: FeaturedHeroPreviewScale
-): string {
-  if (animationMode === 'idle') {
-    return FEATURED_IDLE_PREVIEW_CLASS_BY_SCALE[scale];
-  }
-
-  if (animationMode === 'jump') {
-    return 'relative -mt-[clamp(4rem,11vh,8rem)] h-[clamp(17.5rem,45vh,32rem)] w-[clamp(12rem,26vw,24rem)]';
-  }
-
-  if (animationMode === 'slide') {
-    return 'relative h-[clamp(14.5rem,35vh,26rem)] w-[clamp(14.5rem,29vw,27rem)]';
-  }
-
-  return 'relative h-[clamp(13.5rem,34vh,24rem)] w-[clamp(12rem,26vw,24rem)]';
-}
+import {
+  getFeaturedHeroPreviewClassName,
+  type FeaturedHeroPreviewScale,
+} from './FeaturedHeroPreviewFallback';
 
 export function FeaturedHeroPreview({
   heroId,

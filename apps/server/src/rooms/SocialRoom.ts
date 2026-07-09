@@ -17,6 +17,7 @@ interface SocialJoinOptions {
 type SocialRefreshReason = 'initial' | 'event' | 'client' | 'invite_expired';
 
 const SOCIAL_REFRESH_DEBOUNCE_MS = 50;
+const SOCIAL_CLIENT_REFRESH_INTERVAL_MS = 1_000;
 const MAX_INVITE_EXPIRY_TIMEOUT_MS = 2_147_483_647;
 
 function nextInviteExpiryMs(social: SocialStatePayload): number | null {
@@ -39,6 +40,7 @@ export class SocialRoom extends Room {
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshInFlight = false;
   private refreshQueued = false;
+  private lastClientRefreshAtMs = 0;
   private disposed = false;
 
   async onAuth(client: Client, options: SocialJoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
@@ -55,6 +57,9 @@ export class SocialRoom extends Room {
   onCreate() {
     this.onMessage('refreshSocial', (client) => {
       if (!this.isAuthorizedClient(client)) return;
+      const now = Date.now();
+      if (now - this.lastClientRefreshAtMs < SOCIAL_CLIENT_REFRESH_INTERVAL_MS) return;
+      this.lastClientRefreshAtMs = now;
       this.queueSocialState('client');
     });
   }

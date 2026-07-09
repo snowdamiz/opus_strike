@@ -5,6 +5,7 @@ import type {
   PlayerRewardStatus,
   Prisma,
 } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import type { MatchMode, RankedSeasonMode, Team } from '@voxel-strike/shared';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import prisma from '../db';
@@ -16,6 +17,7 @@ import { loggers } from '../utils/logger';
 import { readSingletonAfterUniqueRace } from '../utils/prismaSingleton';
 import { assertPublicKey, getSettlementKeypair } from '../wagers/config';
 import { wagerService } from '../wagers/service';
+import { runWithRedisOwnerLock, type RedisOwnerLockClient } from '../wagers/workerLock';
 import {
   getPlayerRewardRuntimeConfig,
   type PlayerRewardRuntimeConfig,
@@ -97,6 +99,11 @@ export interface PlayerRewardAutoPayoutResult {
   rewardCount: number;
   totalLamports: string;
 }
+
+const PLAYER_REWARD_BACKGROUND_INTERVAL_MS = 60_000;
+const PLAYER_REWARD_BACKGROUND_LOCK_TTL_MS = 180_000;
+const PLAYER_REWARD_BACKGROUND_LOCK_HEARTBEAT_MS = 30_000;
+const PLAYER_REWARD_BACKGROUND_LOCK_KEY = 'player-rewards:background:payouts:lock';
 
 export interface AdminRankedBrCombatRewardPayoutRow {
   id: string;
@@ -1436,6 +1443,7 @@ export class PlayerRewardService {
     const empty = { payoutCount: 0, rewardCount: 0, totalLamports: '0' };
     const payoutEligibleRewardKinds = getPayoutEligibleRewardKinds(config);
     if (payoutEligibleRewardKinds.length === 0 || !this.hasSettlementSigner()) return empty;
+    const maxGroups = Math.max(1, options.limit ?? config.payoutBatchSize);
 
     let candidateUserIds: string[] | null = options.userIds?.length
       ? Array.from(new Set(options.userIds))
@@ -1456,11 +1464,26 @@ export class PlayerRewardService {
       if (candidateUserIds.length === 0) return empty;
     }
 
+    if (!candidateUserIds) {
+      const candidateGroups = await prisma.playerReward.groupBy({
+        by: ['userId'],
+        where: {
+          status: 'pending',
+          kind: { in: payoutEligibleRewardKinds },
+        },
+        _min: { createdAt: true },
+        orderBy: { _min: { createdAt: 'asc' } },
+        take: maxGroups,
+      });
+      candidateUserIds = candidateGroups.map((group) => group.userId);
+      if (candidateUserIds.length === 0) return empty;
+    }
+
     const rewards = await prisma.playerReward.findMany({
       where: {
         status: 'pending',
         kind: { in: payoutEligibleRewardKinds },
-        ...(candidateUserIds?.length ? { userId: { in: candidateUserIds } } : {}),
+        userId: { in: candidateUserIds },
       },
       orderBy: { createdAt: 'asc' },
       select: {
@@ -1496,7 +1519,6 @@ export class PlayerRewardService {
     let payoutCount = 0;
     let rewardCount = 0;
     let totalLamports = 0n;
-    const maxGroups = Math.max(1, options.limit ?? config.payoutBatchSize);
     const sortedGroups = groups
       .sort((a, b) => a.firstCreatedAt.getTime() - b.firstCreatedAt.getTime())
       .slice(0, maxGroups);
@@ -1695,21 +1717,35 @@ export class PlayerRewardService {
     }
   }
 
-  startBackgroundJobs(): void {
+  startBackgroundJobs(redis: RedisOwnerLockClient | null = null): void {
     if (this.backgroundStarted) return;
     this.backgroundStarted = true;
 
+    const payAndLog = async () => {
+      const result = await this.payPendingRewards();
+      if (result.payoutCount > 0) {
+        loggers.room.info('Player reward payouts confirmed', result);
+      }
+    };
+
     const runPayouts = () => {
-      this.payPendingRewards().then((result) => {
-        if (result.payoutCount > 0) {
-          loggers.room.info('Player reward payouts confirmed', result);
-        }
-      }).catch((error) => {
+      const run = redis
+        ? runWithRedisOwnerLock(redis, {
+            key: PLAYER_REWARD_BACKGROUND_LOCK_KEY,
+            ttlMs: PLAYER_REWARD_BACKGROUND_LOCK_TTL_MS,
+            heartbeatMs: PLAYER_REWARD_BACKGROUND_LOCK_HEARTBEAT_MS,
+            ownerToken: `${process.pid}:${randomUUID()}`,
+          }, payAndLog).then(() => undefined)
+        : payAndLog();
+
+      void run.catch((error) => {
         loggers.room.error('Player reward payout retry failed', error);
       });
     };
 
-    this.backgroundTimers.push(setInterval(runPayouts, 60 * 1000));
+    const timer = setInterval(runPayouts, PLAYER_REWARD_BACKGROUND_INTERVAL_MS);
+    timer.unref?.();
+    this.backgroundTimers.push(timer);
     runPayouts();
   }
 

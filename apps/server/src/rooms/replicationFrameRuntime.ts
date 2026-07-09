@@ -42,6 +42,7 @@ export interface ReplicationFrameContext {
   visibilityPlayers: Map<string, VisibilityInterestPlayer>;
   packedTransforms: Map<string, PackedPlayerTransform>;
   packedTransformSignatures: Map<string, PackedPlayerTransform>;
+  fullRateTransformPlayerIds: Set<string>;
   recipientInterests: Map<string, Map<string, RecipientInterestDecision>>;
   fullVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
   visibleEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
@@ -58,6 +59,7 @@ export interface ReplicationFrameRuntimeOptions {
   hasLineOfSight: (from: Vec3, to: Vec3) => boolean;
   getRecentCombatRevealUntil: (recipientId: string, targetId: string) => number;
   buildPackedTransform: (id: string, player: Player) => PackedPlayerTransform;
+  isFullRateTransform?: (id: string, player: Player, now: number) => boolean;
 }
 
 export interface PlayerStateStreamBroadcastPlanInput {
@@ -174,6 +176,7 @@ export class ReplicationFrameRuntime {
       visibilityPlayers: new Map(),
       packedTransforms: new Map(),
       packedTransformSignatures: new Map(),
+      fullRateTransformPlayerIds: new Set(),
       recipientInterests: new Map(),
       fullVitalsByPlayer: new Map(),
       visibleEnemyVitalsByPlayer: new Map(),
@@ -190,6 +193,7 @@ export class ReplicationFrameRuntime {
     frameContext.visibilityPlayers.clear();
     frameContext.packedTransforms.clear();
     frameContext.packedTransformSignatures.clear();
+    frameContext.fullRateTransformPlayerIds.clear();
     frameContext.fullVitalsByPlayer.clear();
     frameContext.visibleEnemyVitalsByPlayer.clear();
     frameContext.publicEnemyVitalsByPlayer.clear();
@@ -205,6 +209,9 @@ export class ReplicationFrameRuntime {
       const transform = this.options.buildPackedTransform(id, player);
       frameContext.packedTransforms.set(id, transform);
       frameContext.packedTransformSignatures.set(id, getPackedTransformSignature(transform));
+      if (this.options.isFullRateTransform?.(id, player, now)) {
+        frameContext.fullRateTransformPlayerIds.add(id);
+      }
     });
 
     for (const recipientId of frameContext.recipientInterests.keys()) {

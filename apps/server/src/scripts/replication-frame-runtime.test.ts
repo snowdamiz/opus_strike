@@ -43,6 +43,7 @@ function createRuntime(options: {
   collisionRevision?: number;
   hasLineOfSight?: (from: Vec3, to: Vec3) => boolean;
   getRecentCombatRevealUntil?: (recipientId: string, targetId: string) => number;
+  isFullRateTransform?: (id: string, player: Player, now: number) => boolean;
 } = {}): ReplicationFrameRuntime {
   return new ReplicationFrameRuntime({
     visibilityInterest: new VisibilityInterestManager(),
@@ -50,6 +51,7 @@ function createRuntime(options: {
     hasLineOfSight: options.hasLineOfSight ?? (() => true),
     getRecentCombatRevealUntil: options.getRecentCombatRevealUntil ?? (() => 0),
     buildPackedTransform: (id) => transform(id),
+    isFullRateTransform: options.isFullRateTransform,
   });
 }
 
@@ -139,7 +141,14 @@ function createRuntime(options: {
 }
 
 {
-  const runtime = createRuntime({ collisionRevision: 7 });
+  const fullRateCalls: string[] = [];
+  const runtime = createRuntime({
+    collisionRevision: 7,
+    isFullRateTransform: (id, _player, now) => {
+      fullRateCalls.push(`${id}:${now}`);
+      return id === 'red';
+    },
+  });
   const red = player({ id: 'red' });
   const blue = player({ id: 'blue', team: 'blue', state: 'spawning' });
   const downed = player({ id: 'downed', team: 'blue', state: 'downed' });
@@ -160,6 +169,8 @@ function createRuntime(options: {
   assert.deepEqual(frame.packedTransforms.get('downed'), transform('downed'));
   assert.equal(frame.packedTransforms.has('spectator'), false);
   assert.equal(frame.packedTransformSignatures.get('red'), frame.packedTransforms.get('red'));
+  assert.deepEqual([...frame.fullRateTransformPlayerIds], ['red']);
+  assert.deepEqual(fullRateCalls.sort(), ['blue:1000', 'downed:1000', 'red:1000']);
 
   frame.recipientInterests.set('missing', new Map());
   frame.fullVitalsByPlayer.set('red', {} as PlayerVitalsSnapshot);
@@ -173,6 +184,7 @@ function createRuntime(options: {
   assert.equal(nextFrame.fullVitalsByPlayer.size, 0);
   assert.equal(nextFrame.visibleEnemyVitalsByPlayer.size, 0);
   assert.equal(nextFrame.publicEnemyVitalsByPlayer.size, 0);
+  assert.deepEqual([...nextFrame.fullRateTransformPlayerIds], ['red']);
 }
 
 {

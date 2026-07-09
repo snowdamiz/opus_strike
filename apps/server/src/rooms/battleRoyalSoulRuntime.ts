@@ -80,6 +80,11 @@ export class BattleRoyalSoulRuntime {
   private readonly soulsById = new Map<string, BattleRoyalHeroSoulState>();
   private readonly soulIdByPlayerId = new Map<string, string>();
   private readonly channelByPlayerId = new Map<string, BattleRoyalSoulInteractionChannel>();
+  private snapshotRevision = 0;
+  private readonly snapshotCache = new Map<string, {
+    revision: number;
+    snapshot: BattleRoyalHeroSoulStateSnapshot;
+  }>();
 
   hasActiveInteraction(playerId: string): boolean {
     return this.channelByPlayerId.has(playerId);
@@ -121,6 +126,7 @@ export class BattleRoyalSoulRuntime {
     };
     this.soulsById.set(soul.soulId, soul);
     this.soulIdByPlayerId.set(player.id, soul.soulId);
+    this.markSnapshotChanged();
     return soul;
   }
 
@@ -143,6 +149,7 @@ export class BattleRoyalSoulRuntime {
       completesAt: soul.collectCompletesAt,
     });
     this.stopHorizontalVelocity(collector);
+    this.markSnapshotChanged();
     return true;
   }
 
@@ -172,6 +179,7 @@ export class BattleRoyalSoulRuntime {
       completesAt,
     });
     this.stopHorizontalVelocity(summoner);
+    this.markSnapshotChanged();
     return true;
   }
 
@@ -188,6 +196,7 @@ export class BattleRoyalSoulRuntime {
         soul.collectStartedAt = null;
         soul.collectCompletesAt = null;
       }
+      this.markSnapshotChanged();
       return true;
     }
 
@@ -202,6 +211,7 @@ export class BattleRoyalSoulRuntime {
       }
     }
 
+    this.markSnapshotChanged();
     return true;
   }
 
@@ -223,6 +233,7 @@ export class BattleRoyalSoulRuntime {
       soul.createdAt = now;
       changed = true;
     }
+    if (changed) this.markSnapshotChanged();
     return changed;
   }
 
@@ -243,9 +254,11 @@ export class BattleRoyalSoulRuntime {
   }
 
   clearAll(): void {
+    if (this.soulsById.size === 0 && this.channelByPlayerId.size === 0) return;
     this.soulsById.clear();
     this.soulIdByPlayerId.clear();
     this.channelByPlayerId.clear();
+    this.markSnapshotChanged();
   }
 
   update(
@@ -305,11 +318,16 @@ export class BattleRoyalSoulRuntime {
       changed = true;
     }
 
+    if (changed) this.markSnapshotChanged();
     return { completedSummons, changed };
   }
 
   buildSnapshot(team?: Team | null): BattleRoyalHeroSoulStateSnapshot {
-    return {
+    const cacheKey = team ?? '*';
+    const cached = this.snapshotCache.get(cacheKey);
+    if (cached?.revision === this.snapshotRevision) return cached.snapshot;
+
+    const snapshot = {
       souls: Array.from(this.soulsById.values())
         .filter((soul) => team == null || soul.team === team)
         .sort((a, b) => a.createdAt - b.createdAt || a.soulId.localeCompare(b.soulId))
@@ -319,6 +337,8 @@ export class BattleRoyalSoulRuntime {
         .sort((a, b) => a.startedAt - b.startedAt || a.playerId.localeCompare(b.playerId))
         .map((channel) => this.toInteractionSnapshot(channel)),
     };
+    this.snapshotCache.set(cacheKey, { revision: this.snapshotRevision, snapshot });
+    return snapshot;
   }
 
   private isInteractionVisibleToTeam(
@@ -422,6 +442,11 @@ export class BattleRoyalSoulRuntime {
     if (soul.summonByPlayerId) this.channelByPlayerId.delete(soul.summonByPlayerId);
     this.soulIdByPlayerId.delete(soul.playerId);
     this.soulsById.delete(soulId);
+    this.markSnapshotChanged();
+  }
+
+  private markSnapshotChanged(): void {
+    this.snapshotRevision++;
   }
 
   private stopHorizontalVelocity(player: Player): void {

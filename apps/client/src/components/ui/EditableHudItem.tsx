@@ -48,13 +48,35 @@ function releasePointerCapture(element: Element, pointerId: number): void {
   }
 }
 
-function readViewportSize(): { width: number; height: number } {
-  if (typeof window === 'undefined') return { width: 1, height: 1 };
+function readSafeAreaInsets(): { top: number; right: number; bottom: number; left: number } {
+  if (typeof document === 'undefined') return { top: 0, right: 0, bottom: 0, left: 0 };
+  const styles = getComputedStyle(document.documentElement);
+  const read = (property: string) => {
+    const value = Number.parseFloat(styles.getPropertyValue(property));
+    return Number.isFinite(value) ? value : 0;
+  };
   return {
-    width: Math.max(1, window.innerWidth),
-    height: Math.max(1, window.innerHeight),
+    top: read('--safe-area-top'),
+    right: read('--safe-area-right'),
+    bottom: read('--safe-area-bottom'),
+    left: read('--safe-area-left'),
   };
 }
+
+// Rects are percentages of the safe-area rect (viewport minus notch/home-indicator
+// insets), so drag deltas must be scaled against the same basis the CSS uses.
+function readViewportSize(): { width: number; height: number } {
+  if (typeof window === 'undefined') return { width: 1, height: 1 };
+  const insets = readSafeAreaInsets();
+  return {
+    width: Math.max(1, window.innerWidth - insets.left - insets.right),
+    height: Math.max(1, window.innerHeight - insets.top - insets.bottom),
+  };
+}
+
+const SAFE_WIDTH = 'calc(100vw - var(--safe-area-left, 0px) - var(--safe-area-right, 0px))';
+const SAFE_HEIGHT = 'calc(100dvh - var(--safe-area-top, 0px) - var(--safe-area-bottom, 0px))';
+const MIN_TOUCH_TARGET = '2.75rem';
 
 function getResizedRect(
   id: MobileHudLayoutElementId,
@@ -111,21 +133,30 @@ export function EditableHudItem({
   );
   const boundedContentScale = Math.max(0.2, Math.min(2.25, contentScale));
 
-  const mobileLayoutStyle = useMemo(() => ({
-    ...mobileStyle,
-    left: `${rect.x}vw`,
-    top: `${rect.y}vh`,
-    width: `${rect.width}vw`,
-    height: `${rect.height}vh`,
-    transform: 'none',
-    '--mobile-hud-layout-x': `${rect.x}vw`,
-    '--mobile-hud-layout-y': `${rect.y}vh`,
-    '--mobile-hud-layout-width': `${rect.width}vw`,
-    '--mobile-hud-layout-height': `${rect.height}vh`,
-    '--mobile-hud-layout-scale': boundedContentScale,
-    '--mobile-hud-layout-content-width': `${100 / boundedContentScale}%`,
-    '--mobile-hud-layout-content-height': `${100 / boundedContentScale}%`,
-  } as CSSProperties), [boundedContentScale, mobileStyle, rect.height, rect.width, rect.x, rect.y]);
+  const mobileLayoutStyle = useMemo(() => {
+    const layoutX = `calc(var(--safe-area-left, 0px) + ${SAFE_WIDTH} * ${rect.x / 100})`;
+    const layoutY = `calc(var(--safe-area-top, 0px) + ${SAFE_HEIGHT} * ${rect.y / 100})`;
+    const rawWidth = `calc(${SAFE_WIDTH} * ${rect.width / 100})`;
+    const rawHeight = `calc(${SAFE_HEIGHT} * ${rect.height / 100})`;
+    const layoutWidth = interactive ? `max(${rawWidth}, ${MIN_TOUCH_TARGET})` : rawWidth;
+    const layoutHeight = interactive ? `max(${rawHeight}, ${MIN_TOUCH_TARGET})` : rawHeight;
+
+    return {
+      ...mobileStyle,
+      left: layoutX,
+      top: layoutY,
+      width: layoutWidth,
+      height: layoutHeight,
+      transform: 'none',
+      '--mobile-hud-layout-x': layoutX,
+      '--mobile-hud-layout-y': layoutY,
+      '--mobile-hud-layout-width': layoutWidth,
+      '--mobile-hud-layout-height': layoutHeight,
+      '--mobile-hud-layout-scale': boundedContentScale,
+      '--mobile-hud-layout-content-width': `${100 / boundedContentScale}%`,
+      '--mobile-hud-layout-content-height': `${100 / boundedContentScale}%`,
+    } as CSSProperties;
+  }, [boundedContentScale, interactive, mobileStyle, rect.height, rect.width, rect.x, rect.y]);
 
   const endDrag = useCallback((element?: Element, pointerId?: number) => {
     const dragState = dragStateRef.current;

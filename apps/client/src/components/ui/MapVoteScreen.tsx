@@ -275,11 +275,13 @@ function MapPreviewImage({
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [imageVisible, setImageVisible] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const didReportReadyRef = useRef(false);
 
   useEffect(() => {
     setImage(null);
     setImageVisible(false);
+    setPreviewFailed(false);
     didReportReadyRef.current = false;
   }, [option.id, option.mapArtifactId, option.mapProfileId, option.mapSize, option.mapThemeId, option.pregeneratedMapId, option.seed]);
 
@@ -307,6 +309,11 @@ function MapPreviewImage({
     reportReady();
   }, [reportReady]);
 
+  const handleFailed = useCallback(() => {
+    setPreviewFailed(true);
+    reportReady();
+  }, [reportReady]);
+
   const hasVisibleImage = Boolean(image && imageVisible);
 
   return (
@@ -320,13 +327,13 @@ function MapPreviewImage({
           draggable={false}
         />
       )}
-      {!image && active && (
+      {!image && active && !previewFailed && (
         <div className="pointer-events-none absolute inset-0 opacity-0">
-          <MapPreviewCanvas option={option} onCapture={handleCapture} onFailed={reportReady} />
+          <MapPreviewCanvas option={option} onCapture={handleCapture} onFailed={handleFailed} />
         </div>
       )}
       <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${hasVisibleImage ? 'opacity-0' : 'opacity-100'}`}>
-        <GeneratingMapPanel />
+        {previewFailed && !image ? <PreviewUnavailablePanel /> : <GeneratingMapPanel />}
       </div>
       <div className={`pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
     </div>
@@ -341,6 +348,24 @@ function GeneratingMapPanel() {
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/15 border-t-orange-500" />
         <p className="font-display text-sm uppercase tracking-wide text-white/70">
           Generating Map
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Static stand-in when preview capture fails: the card stays votable, so show
+// a calm placeholder instead of a spinner that never resolves.
+function PreviewUnavailablePanel() {
+  return (
+    <div className="absolute inset-0 bg-strike-panel/80">
+      <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] via-transparent to-black/[0.2]" />
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+        <svg className="h-7 w-7 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+        </svg>
+        <p className="font-display text-sm uppercase tracking-wide text-white/55">
+          Preview Unavailable
         </p>
       </div>
     </div>

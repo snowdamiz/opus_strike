@@ -31,6 +31,7 @@ export interface UserResponse {
   name: string;
   lastLoginAt: string | null;
   tutorialCompletedAt: string | null;
+  appOpenedAt: string | null;
   stats: {
     totalGames: number;
     totalWins: number;

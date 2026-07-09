@@ -127,9 +127,13 @@ const circle: MapSummoningCircle = {
 
   runtime.createSoul(fallenAlly, now);
   runtime.createSoul(fallenEnemy, now + 1);
+  const cachedObserverSnapshot = runtime.buildSnapshot();
+  assert.equal(runtime.buildSnapshot(), cachedObserverSnapshot);
   assert.equal(runtime.tryStartNearestCollect(allyCollector, now + 100), true);
+  assert.notEqual(runtime.buildSnapshot(), cachedObserverSnapshot);
 
   const allyCollectSnapshot = runtime.buildSnapshot('br_01');
+  assert.equal(runtime.buildSnapshot('br_01'), allyCollectSnapshot);
   assert.deepEqual(allyCollectSnapshot.souls.map((soul) => soul.playerId), [fallenAlly.id]);
   assert.deepEqual(allyCollectSnapshot.interactions.map((interaction) => interaction.playerId), [allyCollector.id]);
 

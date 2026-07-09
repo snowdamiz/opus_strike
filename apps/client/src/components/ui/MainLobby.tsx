@@ -1,4 +1,5 @@
 import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { FeaturedHeroPreviewFallback } from './FeaturedHeroPreviewFallback';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Info } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
@@ -310,16 +311,42 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
 };
 const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by season.';
 
+function formatContractAddress(address: string): string {
+  if (address.length <= 14) return address;
+  return `${address.slice(0, 6)}…${address.slice(-6)}`;
+}
+
 function ContractAddressBadge({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+  const copyResetRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current);
+  }, []);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current);
+      copyResetRef.current = window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Clipboard unavailable (permissions/insecure context); the full
+      // address stays reachable through the title attribute.
+    }
+  };
+
   return (
-    <div
+    <button
+      type="button"
       className="main-lobby-ca-badge"
-      aria-label={`Contract address ${address}`}
+      aria-label={copied ? 'Contract address copied' : `Copy contract address ${address}`}
       title={address}
+      onClick={() => void handleCopy()}
     >
-      <span className="main-lobby-ca-label">CA</span>
-      <span className="main-lobby-ca-address">{address}</span>
-    </div>
+      <span className="main-lobby-ca-label">{copied ? 'COPIED' : 'CA'}</span>
+      <span className="main-lobby-ca-address">{formatContractAddress(address)}</span>
+    </button>
   );
 }
 
@@ -1347,9 +1374,12 @@ export function MainLobby() {
               {MAIN_TABS.map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => {
+                  onClick={(event) => {
                     playButtonClick();
                     setActiveTab(tab);
+                    // The tab row scrolls horizontally on phones; keep the
+                    // active tab visible instead of letting it sit off-screen.
+                    event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
                   }}
                   className={`relative px-3 py-3 font-display text-base tracking-wide whitespace-nowrap lg:px-5 xl:px-6 xl:text-lg ${
                     activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
@@ -1412,7 +1442,7 @@ export function MainLobby() {
 
       <DailyMissionTracker
         enabled={isAuthenticated && !isNewUser}
-        className="absolute left-4 top-[5.35rem] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
+        className="absolute left-4 top-[calc(var(--menu-nav-h)+0.6rem)] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
       />
 
       {/* Main Content Area */}
@@ -1734,7 +1764,7 @@ function SkinsTab({
           </div>
 
           <div className="skins-stage-preview">
-            <Suspense fallback={null}>
+            <Suspense fallback={<FeaturedHeroPreviewFallback className="skins-featured-preview" />}>
               <FeaturedHeroPreview
                 heroId={featuredHero}
                 skinId={previewSkin?.id ?? selectedSkinId}
@@ -2158,7 +2188,7 @@ function GuestHeroCarousel({
       </button>
 
       <article className="guest-hero-slot" aria-live="polite">
-        <Suspense fallback={null}>
+        <Suspense fallback={<FeaturedHeroPreviewFallback className="guest-hero-preview" />}>
           <FeaturedHeroPreview
             heroId={selectedHero}
             initialYaw={Math.PI - 0.12}
@@ -2272,7 +2302,7 @@ function PartyLineup({
               data-ready={member.leader || member.ready ? 'true' : 'false'}
               data-local={isLocalMember ? 'true' : 'false'}
             >
-              <Suspense fallback={null}>
+              <Suspense fallback={<FeaturedHeroPreviewFallback />}>
                 <FeaturedHeroPreview
                   heroId={member.heroId}
                   skinId={member.skinId}

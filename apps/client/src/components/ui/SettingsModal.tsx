@@ -138,6 +138,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   } = useWallet();
   const [settings, setSettings] = useState<ClientSettings>(savedSettings);
   const [hasChanges, setHasChanges] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isLinkingWallet, setIsLinkingWallet] = useState(false);
@@ -192,6 +193,21 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     applySettings(settings);
     applyAudioSettings(settings);
     setHasChanges(false);
+  };
+
+  // Scrim taps and Escape are easy to hit accidentally (especially on touch);
+  // don't let them silently discard edited settings.
+  const requestClose = () => {
+    if (hasChanges) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    onClose();
+  };
+
+  const handleDiscardAndClose = () => {
+    setShowDiscardConfirm(false);
+    onClose();
   };
 
   const handleReset = () => {
@@ -556,8 +572,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         </svg>
       )}
       size="xl"
-      onClose={onClose}
-      panelClassName="settings-dialog-panel h-[min(70vh,40rem)]"
+      onClose={requestClose}
+      panelClassName="settings-dialog-panel h-[min(70dvh,40rem)]"
       bodyClassName="settings-dialog-body flex-1 flex overflow-hidden min-h-0"
       footerClassName="settings-dialog-footer flex items-center justify-between gap-3 px-[clamp(1.125rem,1.45vw,1.5rem)] py-[clamp(0.75rem,1vw,1rem)] border-t border-white/5 bg-strike-elevated/50"
       footer={(
@@ -570,7 +586,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </button>
           <div className="flex items-center gap-3">
             <button
-              onClick={onClose}
+              onClick={requestClose}
               className="px-[1.125rem] py-2 rounded-lg bg-white/5 text-xs text-white/70 font-display hover:bg-white/10 hover:text-white "
             >
               CANCEL
@@ -1232,6 +1248,39 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             )}
           </div>
+
+      {showDiscardConfirm && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-black/70" onClick={() => setShowDiscardConfirm(false)} />
+          <div
+            role="alertdialog"
+            aria-label="Discard unsaved changes"
+            className="relative w-full max-w-xs rounded-xl border border-white/10 bg-strike-elevated p-5 shadow-2xl animate-scale-in"
+          >
+            <h3 className="font-display text-base text-white">Discard changes?</h3>
+            <p className="mt-1.5 font-body text-xs leading-relaxed text-white/55">
+              You have unsaved settings. Closing now will throw them away.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setShowDiscardConfirm(false)}
+                className="min-h-9 rounded-lg bg-white/5 px-3.5 py-2 font-display text-xs text-white/70 hover:bg-white/10 hover:text-white"
+              >
+                KEEP EDITING
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardAndClose}
+                className="min-h-9 rounded-lg border border-red-400/40 bg-red-500/15 px-3.5 py-2 font-display text-xs text-red-200 hover:bg-red-500/25 hover:text-white"
+              >
+                DISCARD
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </GameDialog>
   );
 }
@@ -1368,6 +1417,7 @@ function SelectInput({ value, onChange, options }: {
   options: { value: string; label: string }[];
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [opensUpward, setOpensUpward] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
 
@@ -1384,6 +1434,23 @@ function SelectInput({ value, onChange, options }: {
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [isOpen]);
 
+  const toggleOpen = () => {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    // Flip the menu upward when the trigger sits near the viewport bottom,
+    // otherwise the absolutely-positioned list clips inside the dialog scroll.
+    const trigger = containerRef.current;
+    if (trigger) {
+      const rect = trigger.getBoundingClientRect();
+      const estimatedMenuHeight = Math.min(options.length * 40 + 8, 260);
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      setOpensUpward(rect.bottom + estimatedMenuHeight > viewportHeight - 12);
+    }
+    setIsOpen(true);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'Escape') {
       setIsOpen(false);
@@ -1392,7 +1459,7 @@ function SelectInput({ value, onChange, options }: {
 
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      setIsOpen((open) => !open);
+      toggleOpen();
       return;
     }
 
@@ -1409,7 +1476,7 @@ function SelectInput({ value, onChange, options }: {
     <div ref={containerRef} className="settings-select relative min-w-36">
       <button
         type="button"
-        onClick={() => setIsOpen((open) => !open)}
+        onClick={toggleOpen}
         onKeyDown={handleKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
@@ -1429,7 +1496,7 @@ function SelectInput({ value, onChange, options }: {
       {isOpen && (
         <div
           role="listbox"
-          className="settings-select-menu absolute right-0 top-12 z-50 w-full overflow-hidden rounded-lg border border-white/15 bg-strike-elevated/95 shadow-2xl backdrop-blur-md"
+          className={`settings-select-menu absolute right-0 ${opensUpward ? 'bottom-12' : 'top-12'} z-50 max-h-60 w-full overflow-y-auto overscroll-contain rounded-lg border border-white/15 bg-strike-elevated/95 shadow-2xl backdrop-blur-md`}
         >
           {options.map((option) => {
             const isSelected = option.value === value;

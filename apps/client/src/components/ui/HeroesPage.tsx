@@ -1,4 +1,5 @@
 import { lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
+import { FeaturedHeroPreviewFallback } from './FeaturedHeroPreviewFallback';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
@@ -96,7 +97,7 @@ export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
 
       <div className="min-w-0 flex flex-col items-center justify-center relative">
         <div className="relative flex flex-col items-center menu-compact-scale">
-          <Suspense fallback={null}>
+          <Suspense fallback={<FeaturedHeroPreviewFallback />}>
             <FeaturedHeroPreview
               heroId={selectedHero}
               initialYaw={Math.PI - 0.18}

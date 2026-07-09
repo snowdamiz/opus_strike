@@ -119,11 +119,21 @@ function MovementStick({ disabled }: { disabled: boolean }) {
     const rawX = clientX - (rect.left + radius);
     const rawY = clientY - (rect.top + radius);
     const distance = Math.hypot(rawX, rawY);
-    const scale = distance > maxDistance ? maxDistance / distance : 1;
+
+    // Dead zone: a resting thumb near center must not drift the player.
+    const deadZone = maxDistance * 0.12;
+    if (distance <= deadZone) {
+      setMovementVector(0, 0);
+      return;
+    }
+
+    // Ramp magnitude from 0 at the dead-zone edge to 1 at max deflection.
+    const clampedDistance = Math.min(distance, maxDistance);
+    const magnitude = (clampedDistance - deadZone) / (maxDistance - deadZone);
 
     setMovementVector(
-      (rawX * scale) / maxDistance,
-      (rawY * scale) / maxDistance
+      (rawX / distance) * magnitude,
+      (rawY / distance) * magnitude
     );
   }, [setMovementVector]);
 

@@ -10,6 +10,7 @@ import type {
 import {
   MOVEMENT_COMMAND_BUFFER_SIZE,
   MOVEMENT_HARD_CORRECTION_METERS,
+  MOVEMENT_MAX_RECONCILE_REPLAY_COMMANDS,
   MOVEMENT_MEDIUM_CORRECTION_METERS,
   MOVEMENT_POSITION_EPSILON_METERS,
   MOVEMENT_SUBSTEP_SECONDS,
@@ -45,6 +46,7 @@ export interface PredictionCorrectionMetrics {
   positionError: number;
   velocityError: number;
   replayedCommands: number;
+  replayBudgetExceeded: boolean;
   hardCorrection: boolean;
   mediumCorrection: boolean;
   corrected: boolean;
@@ -128,6 +130,7 @@ function emptyCorrectionMetrics(ackSeq: number): PredictionCorrectionMetrics {
     positionError: 0,
     velocityError: 0,
     replayedCommands: 0,
+    replayBudgetExceeded: false,
     hardCorrection: false,
     mediumCorrection: false,
     corrected: false,
@@ -251,7 +254,11 @@ export class MovementPredictionController {
     const result = this.simulateFromState(this.state, command, context);
     this.state = result;
     this.storeCommandRecord(command, result);
-    return cloneMovementSimulationState(result);
+    // simulateFromState returns a new state and the next step replaces (rather
+    // than mutates) it. Returning that owned snapshot avoids another nested
+    // clone on every 60 Hz prediction substep while preserving prior-step
+    // snapshots held by the frame pipeline.
+    return result;
   }
 
   reconcile(
@@ -299,6 +306,7 @@ export class MovementPredictionController {
         positionError: epochPositionError,
         velocityError: epochVelocityError,
         replayedCommands: 0,
+        replayBudgetExceeded: false,
         hardCorrection: epochBarrier || epochPositionError >= MOVEMENT_HARD_CORRECTION_METERS,
         mediumCorrection: epochPositionError >= MOVEMENT_MEDIUM_CORRECTION_METERS && epochPositionError < MOVEMENT_HARD_CORRECTION_METERS,
         corrected: true,
@@ -330,6 +338,7 @@ export class MovementPredictionController {
         positionError,
         velocityError,
         replayedCommands: 0,
+        replayBudgetExceeded: false,
         hardCorrection: false,
         mediumCorrection: false,
         corrected: false,
@@ -338,18 +347,28 @@ export class MovementPredictionController {
       };
     }
 
+    const replayBudgetExceeded = this.commandOrder.length > MOVEMENT_MAX_RECONCILE_REPLAY_COMMANDS;
     let replayState = authoritativeState;
     let replayedCommands = 0;
-    for (const seq of this.commandOrder) {
-      const record = this.commandRecords.get(seq);
-      if (!record) continue;
-      // simulateFromState returns a fresh independent state which becomes the running
-      // replay state; clone it into the stored record because that snapshot is read by a
-      // later reconcile, while replayState keeps flowing into the next substep and is
-      // finally adopted as this.state (which gets mutated in place afterwards).
-      replayState = this.simulateFromState(replayState, record.command, context);
-      record.predictedState = cloneMovementSimulationState(replayState);
-      replayedCommands++;
+    if (replayBudgetExceeded) {
+      // A backlog this large is already outside the server's useful movement
+      // window. Rebasing is cheaper and more stable than blocking a render frame
+      // on hundreds of collision simulations that will immediately be corrected
+      // again as newer acknowledgements arrive.
+      this.commandRecords.clear();
+      this.commandOrder.length = 0;
+    } else {
+      for (const seq of this.commandOrder) {
+        const record = this.commandRecords.get(seq);
+        if (!record) continue;
+        // simulateFromState returns a fresh independent state which becomes the running
+        // replay state; clone it into the stored record because that snapshot is read by a
+        // later reconcile, while replayState keeps flowing into the next substep and is
+        // finally adopted as this.state (which gets mutated in place afterwards).
+        replayState = this.simulateFromState(replayState, record.command, context);
+        record.predictedState = cloneMovementSimulationState(replayState);
+        replayedCommands++;
+      }
     }
 
     this.state = replayState;
@@ -364,6 +383,7 @@ export class MovementPredictionController {
       positionError,
       velocityError,
       replayedCommands,
+      replayBudgetExceeded,
       hardCorrection,
       mediumCorrection: false,
       corrected: true,
@@ -415,6 +435,7 @@ export class MovementPredictionController {
       positionError,
       velocityError,
       replayedCommands: 0,
+      replayBudgetExceeded: false,
       hardCorrection: false,
       mediumCorrection: false,
       corrected: false,

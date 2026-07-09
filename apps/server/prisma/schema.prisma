@@ -189,6 +189,11 @@ model User {
   name                   String                  @unique
   lastLoginAt            DateTime?
   tutorialCompletedAt    DateTime?
+  // Set the first time this account is opened from the installed home-screen
+  // App (standalone display mode). Lets the web (Safari) surface a "switch to
+  // the App" nudge, which iOS otherwise can't detect due to the PWA/Safari
+  // storage split.
+  appOpenedAt            DateTime?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   authAccounts           AuthAccount[]
@@ -304,6 +309,7 @@ model LobbyInvite {
   @@index([fromUserId, createdAt])
   @@index([lobbyId, status])
   @@index([expiresAt])
+  @@index([status, expiresAt])
 }
 
 model PartyInvite {
@@ -324,6 +330,7 @@ model PartyInvite {
   @@index([fromUserId, createdAt])
   @@index([partyId, status])
   @@index([expiresAt])
+  @@index([status, expiresAt])
 }
 
 model SkinShopSettings {
@@ -922,6 +929,7 @@ model PlayerReward {
   @@index([matchId])
   @@index([payoutId])
   @@index([status, createdAt])
+  @@index([status, kind, createdAt, userId])
 }
 
 model DailyMissionDefinition {

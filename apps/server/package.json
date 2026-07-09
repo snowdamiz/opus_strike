@@ -56,6 +56,7 @@
     "test:room-npcs": "tsx src/scripts/room-npc-registry.test.ts",
     "test:room-population": "tsx src/scripts/room-population.test.ts",
     "test:room-phase-runtime": "tsx src/scripts/room-phase-runtime.test.ts",
+    "test:room-tick-schedule": "tsx src/scripts/room-tick-schedule.test.ts",
     "test:room-player-events": "tsx src/scripts/room-player-event-redaction.test.ts",
     "test:room-rank-snapshot": "tsx src/scripts/room-rank-snapshot.test.ts",
     "test:room-clients": "tsx src/scripts/room-client-registry.test.ts",

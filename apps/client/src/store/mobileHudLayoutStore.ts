@@ -116,22 +116,22 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
   },
   'mobile-ability1': {
     label: 'Ability 1',
-    defaultRect: { x: 74.4, y: 49.6, width: 5.8, height: 12.5 },
+    defaultRect: { x: 73.4, y: 54, width: 5.8, height: 12.5 },
     ...squareButton,
   },
   'mobile-ability2': {
     label: 'Ability 2',
-    defaultRect: { x: 81.2, y: 49.6, width: 5.8, height: 12.5 },
+    defaultRect: { x: 80.6, y: 54, width: 5.8, height: 12.5 },
     ...squareButton,
   },
   'mobile-ultimate': {
     label: 'Ultimate',
-    defaultRect: { x: 88, y: 49.6, width: 5.8, height: 12.5 },
+    defaultRect: { x: 87.8, y: 54, width: 5.8, height: 12.5 },
     ...squareButton,
   },
   'mobile-jump': {
     label: 'Jump',
-    defaultRect: { x: 74.2, y: 70.8, width: 6.4, height: 13.8 },
+    defaultRect: { x: 74.2, y: 68.2, width: 6.4, height: 13.8 },
     ...squareButton,
   },
   'mobile-crouch': {
@@ -146,7 +146,7 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
   },
   'mobile-primary-fire': {
     label: 'Fire',
-    defaultRect: { x: 89.3, y: 76.4, width: 8.7, height: 18.8 },
+    defaultRect: { x: 88.2, y: 74.6, width: 8.7, height: 18.8 },
     minWidth: 5.5,
     minHeight: 11,
     maxWidth: 22,
@@ -172,7 +172,7 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
   },
   'hud-kill-feed': {
     label: 'Kill feed',
-    defaultRect: { x: 75, y: 13.6, width: 23, height: 25 },
+    defaultRect: { x: 75, y: 25.4, width: 23, height: 11 },
     minWidth: 14,
     minHeight: 10,
     maxWidth: 40,
@@ -237,7 +237,7 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
   },
   'hud-primary-ammo': {
     label: 'Ammo',
-    defaultRect: { x: 80, y: 18, width: 18, height: 17 },
+    defaultRect: { x: 80, y: 13.6, width: 18, height: 10.5 },
     minWidth: 12,
     minHeight: 10,
     maxWidth: 38,
@@ -261,7 +261,7 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
   },
   'hud-voice': {
     label: 'Voice',
-    defaultRect: { x: 1.4, y: 38, width: 22, height: 22 },
+    defaultRect: { x: 21, y: 44, width: 18, height: 12 },
     minWidth: 14,
     minHeight: 10,
     maxWidth: 40,

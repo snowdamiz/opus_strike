@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { visualStore } from '../../store/visualStore';
+import { gameplayFrameScheduler } from '../game/systems/gameplayFrameScheduler';
 
 const SLIDE_LINE_COUNT = 8;
 const SLIDE_LINE_INDICES = Array.from({ length: SLIDE_LINE_COUNT }, (_, index) => index);
@@ -33,7 +34,6 @@ function applySlideIntensity(
 
   element.style.visibility = 'visible';
   element.style.opacity = String(0.22 + intensity * 0.46);
-  element.style.setProperty('--slide-blur', `${3 + intensity * 9}px`);
   element.style.setProperty('--slide-edge-opacity', String(0.38 + intensity * 0.5));
   element.style.setProperty('--slide-haze-opacity', String(0.025 + intensity * 0.055));
   element.style.setProperty('--slide-haze-side-opacity', String((0.025 + intensity * 0.055) * 0.72));
@@ -48,29 +48,29 @@ export function SlideEffects() {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let animationFrame = 0;
     let lastIntensity = -1;
     let lastDirection = Number.NaN;
 
-    const update = () => {
-      const visualState = visualStore.getState();
-      const intensity = visualState.slideIntensity;
-      const direction = getSlideDirection(
-        intensity,
-        visualState.localSlideVelocity,
-        visualState.localViewYaw
-      );
+    return gameplayFrameScheduler.register({
+      system: 'slideEffects',
+      label: 'frame.ui.slideEffects',
+      priority: 100,
+      callback: () => {
+        const visualState = visualStore.getState();
+        const intensity = visualState.slideIntensity;
+        const direction = getSlideDirection(
+          intensity,
+          visualState.localSlideVelocity,
+          visualState.localViewYaw
+        );
 
-      if (intensity !== lastIntensity || Math.abs(direction - lastDirection) > 0.02) {
-        lastIntensity = intensity;
-        lastDirection = direction;
-        applySlideIntensity(overlayRef.current, intensity, direction);
-      }
-      animationFrame = requestAnimationFrame(update);
-    };
-
-    update();
-    return () => cancelAnimationFrame(animationFrame);
+        if (intensity !== lastIntensity || Math.abs(direction - lastDirection) > 0.02) {
+          lastIntensity = intensity;
+          lastDirection = direction;
+          applySlideIntensity(overlayRef.current, intensity, direction);
+        }
+      },
+    });
   }, []);
 
   return (

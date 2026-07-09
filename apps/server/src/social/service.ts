@@ -204,6 +204,28 @@ export async function expireOldPartyInvites(now = new Date()): Promise<void> {
   });
 }
 
+const SOCIAL_INVITE_EXPIRY_SWEEP_INTERVAL_MS = 5_000;
+let lastSocialInviteExpirySweepAtMs = 0;
+let socialInviteExpirySweep: Promise<void> | null = null;
+
+async function expireOldSocialInvitesIfDue(now = new Date()): Promise<void> {
+  if (socialInviteExpirySweep) return socialInviteExpirySweep;
+  const nowMs = now.getTime();
+  if (nowMs - lastSocialInviteExpirySweepAtMs < SOCIAL_INVITE_EXPIRY_SWEEP_INTERVAL_MS) return;
+
+  lastSocialInviteExpirySweepAtMs = nowMs;
+  socialInviteExpirySweep = Promise.all([
+    expireOldLobbyInvites(now),
+    expireOldPartyInvites(now),
+  ]).then(() => undefined);
+
+  try {
+    await socialInviteExpirySweep;
+  } finally {
+    socialInviteExpirySweep = null;
+  }
+}
+
 export async function getRelationshipsForCandidates(
   currentUserId: string,
   candidateUserIds: string[]
@@ -243,12 +265,8 @@ export async function getRelationshipsForCandidates(
 }
 
 export async function loadSocialStateForUser(userId: string): Promise<SocialStatePayload> {
-  await Promise.all([
-    expireOldLobbyInvites(),
-    expireOldPartyInvites(),
-  ]);
-
   const now = new Date();
+  await expireOldSocialInvitesIfDue(now);
   const [friendships, incomingRequests, outgoingRequests, lobbyInvites, partyInvites, discordPlayers] = await Promise.all([
     prisma.friendship.findMany({
       where: {
