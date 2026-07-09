@@ -9803,6 +9803,61 @@ input[type="color"]::-webkit-color-swatch {
   max-width: 100%;
 }
 
+.settings-install-pwa-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.8rem;
+  margin: 0.15rem 0 0.35rem;
+  border: 1px solid rgb(96 244 255 / 0.18);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(180deg, rgb(96 244 255 / 0.1), rgb(255 255 255 / 0.045)),
+    rgb(255 255 255 / 0.035);
+  padding: 0.85rem 0.95rem;
+}
+
+.settings-install-pwa-card-icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 1px solid rgb(96 244 255 / 0.22);
+  border-radius: 0.6rem;
+  background: rgb(96 244 255 / 0.1);
+  color: rgb(96 244 255 / 0.9);
+}
+
+.settings-install-pwa-card-icon .pwa-install-share-glyph {
+  width: 1rem;
+  height: 1.25rem;
+}
+
+.settings-install-pwa-card-copy {
+  min-width: 0;
+}
+
+.settings-install-pwa-card-title {
+  color: rgb(255 255 255 / 0.92);
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 0.98rem;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.settings-install-pwa-card-text {
+  margin-top: 0.22rem;
+  color: rgb(255 255 255 / 0.62);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.settings-install-pwa-card-text strong {
+  color: rgb(255 255 255 / 0.9);
+}
+
 .lobby-bottom-bar {
   padding-inline:
     max(0px, env(safe-area-inset-left))
@@ -12706,6 +12761,177 @@ input[type="color"]::-webkit-color-swatch {
   }
 }
 
+@media (max-width: 700px), (max-height: 560px) {
+  .settings-dialog-panel {
+    width: min(46rem, calc(100vw - max(1rem, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+    height: calc(100dvh - max(1rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+    max-height: calc(100dvh - max(1rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+  }
+
+  .settings-dialog-body {
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  .settings-tab-list {
+    display: flex;
+    width: 100% !important;
+    height: auto !important;
+    flex: 0 0 auto !important;
+    flex-direction: row !important;
+    gap: 0.35rem !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    overscroll-behavior-x: contain;
+    border-right: 0 !important;
+    border-bottom: 1px solid rgb(255 255 255 / 0.06) !important;
+    padding: 0.5rem !important;
+    scrollbar-width: none;
+  }
+
+  .settings-tab-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-tab-button {
+    width: auto !important;
+    min-width: max-content !important;
+    flex: 0 0 auto;
+    justify-content: center !important;
+    gap: 0.4rem !important;
+    padding: 0.54rem 0.66rem !important;
+    font-size: 0.62rem !important;
+    line-height: 1 !important;
+    white-space: nowrap;
+  }
+
+  .settings-tab-button svg {
+    width: 0.88rem !important;
+    height: 0.88rem !important;
+  }
+
+  .settings-dialog-content {
+    flex: 1 1 auto;
+    padding: 0.68rem !important;
+    padding-bottom: 0.85rem !important;
+    overflow-y: auto;
+  }
+
+  .settings-dialog-content > div > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.42rem !important;
+  }
+
+  .settings-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.54rem !important;
+    padding-block: 0.68rem !important;
+  }
+
+  .settings-row-copy {
+    width: 100%;
+  }
+
+  .settings-row-copy h4 {
+    font-size: 0.78rem !important;
+  }
+
+  .settings-row-copy p {
+    font-size: 0.65rem !important;
+    line-height: 1.2;
+  }
+
+  .settings-row-control {
+    width: 100% !important;
+    max-width: 100% !important;
+    justify-content: flex-start !important;
+  }
+
+  .settings-select,
+  .settings-slider,
+  .settings-account-value,
+  .settings-player-name-editor {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .settings-row-control > .settings-toggle {
+    width: 2.36rem !important;
+    flex: 0 0 auto;
+  }
+
+  .settings-install-pwa-button {
+    width: 100%;
+  }
+
+  .settings-install-pwa-card {
+    gap: 0.65rem;
+    margin-block: 0.05rem 0.2rem;
+    padding: 0.7rem;
+  }
+
+  .settings-keybind-row {
+    align-items: stretch !important;
+    flex-direction: column !important;
+  }
+
+  .settings-keybind-row button {
+    width: 100% !important;
+  }
+
+  .settings-wallet-options {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .settings-dialog-footer {
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.45rem !important;
+    padding: 0.5rem !important;
+  }
+
+  .settings-dialog-footer > button:first-child {
+    margin-right: auto;
+  }
+
+  .settings-dialog-footer > div {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    gap: 0.45rem !important;
+  }
+
+  .settings-dialog-footer button {
+    min-height: 2rem !important;
+    padding: 0.45rem 0.62rem !important;
+    font-size: 0.58rem !important;
+    line-height: 1 !important;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 380px) {
+  .settings-dialog-footer {
+    flex-direction: column;
+  }
+
+  .settings-dialog-footer > div {
+    flex-direction: column;
+  }
+
+  .settings-dialog-footer > button:first-child,
+  .settings-dialog-footer > div,
+  .settings-dialog-footer button {
+    width: 100%;
+  }
+
+  .settings-dialog-footer > button:first-child {
+    margin-right: 0;
+  }
+}
+
 /* iOS PWA install prompt */
 
 .pwa-install-toast {
@@ -12714,10 +12940,12 @@ input[type="color"]::-webkit-color-swatch {
   left: 50%;
   transform: translateX(-50%);
   z-index: 80;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: min(26rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.72rem;
+  width: min(26rem, calc(100vw - max(1.5rem, env(safe-area-inset-left)) - max(1.5rem, env(safe-area-inset-right))));
   padding: 0.75rem 0.85rem;
   border: 1px solid rgb(255 255 255 / 0.11);
   border-radius: 0.75rem;
@@ -12751,13 +12979,14 @@ input[type="color"]::-webkit-color-swatch {
 
 .pwa-install-copy {
   min-width: 0;
-  flex: 1;
+  overflow-wrap: anywhere;
 }
 
 .pwa-install-title {
   font-size: 0.85rem;
   font-weight: 700;
   letter-spacing: 0.04em;
+  line-height: 1.05;
   text-transform: uppercase;
   color: rgb(255 255 255 / 0.92);
 }
@@ -12765,7 +12994,7 @@ input[type="color"]::-webkit-color-swatch {
 .pwa-install-text {
   margin-top: 0.15rem;
   font-size: 0.78rem;
-  line-height: 1.4;
+  line-height: 1.34;
   color: rgb(255 255 255 / 0.6);
 }
 
@@ -12785,6 +13014,7 @@ input[type="color"]::-webkit-color-swatch {
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: start;
   flex-shrink: 0;
   width: 1.9rem;
   height: 1.9rem;
@@ -12798,4 +13028,42 @@ input[type="color"]::-webkit-color-swatch {
 .pwa-install-dismiss:hover {
   background: rgb(255 255 255 / 0.1);
   color: rgb(255 255 255 / 0.85);
+}
+
+@media (max-width: 390px) {
+  .pwa-install-toast {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.55rem);
+    gap: 0.55rem;
+    width: calc(100vw - max(0.75rem, env(safe-area-inset-left)) - max(0.75rem, env(safe-area-inset-right)));
+    padding: 0.62rem;
+    border-radius: 0.62rem;
+  }
+
+  .pwa-install-icon {
+    width: 2.05rem;
+    height: 2.05rem;
+    border-radius: 0.48rem;
+  }
+
+  .pwa-install-title {
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+  }
+
+  .pwa-install-text {
+    margin-top: 0.1rem;
+    font-size: 0.68rem;
+    line-height: 1.28;
+  }
+
+  .pwa-install-share-glyph {
+    width: 0.72rem;
+    height: 0.9rem;
+  }
+
+  .pwa-install-dismiss {
+    width: 1.65rem;
+    height: 1.65rem;
+    border-radius: 0.42rem;
+  }
 }
