@@ -3621,7 +3621,9 @@ a {
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 860px),
+  (pointer: coarse) and (orientation: landscape) and (max-height: 520px),
+  (hover: none) and (orientation: landscape) and (max-height: 520px) {
   .skins-screen {
     padding-top: 0.25rem;
     overflow-y: auto;
@@ -3630,6 +3632,10 @@ a {
   .skins-workbench {
     display: grid;
     height: auto;
+    /* Without this the flex parent squeezes the workbench to the viewport
+       height, collapsing the roster rail to 0px so hero tabs cannot be
+       tapped; size to content and let .skins-screen scroll instead. */
+    flex: 0 0 auto;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "roster"
@@ -4522,7 +4528,9 @@ a {
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 860px),
+  (pointer: coarse) and (orientation: landscape) and (max-height: 520px),
+  (hover: none) and (orientation: landscape) and (max-height: 520px) {
   .loadout-screen {
     padding-top: 0.25rem;
     overflow-y: auto;
@@ -4531,6 +4539,10 @@ a {
   .loadout-workbench {
     display: grid;
     height: auto;
+    /* Without this the flex parent squeezes the workbench to the viewport
+       height, collapsing the roster rail to 0px so hero tabs cannot be
+       tapped; size to content and let .loadout-screen scroll instead. */
+    flex: 0 0 auto;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "roster"
@@ -8801,6 +8813,10 @@ a {
 
   .heroes-page-layout {
     grid-template-columns: minmax(0, 1fr);
+    /* Rows must size to content: with the layout's definite height the
+       squishable roster/abilities rows otherwise collapse to 0px and the
+       hero cards end up unreachable under the preview canvas. */
+    grid-auto-rows: min-content;
     align-content: start;
   }
 
@@ -11437,8 +11453,8 @@ input[type="color"]::-webkit-color-swatch {
 
   .game-dialog-icon,
   .game-dialog-close {
-    width: clamp(1.62rem, 6dvh, 1.98rem) !important;
-    height: clamp(1.62rem, 6dvh, 1.98rem) !important;
+    width: clamp(1.9rem, 6.8dvh, 2.2rem) !important;
+    height: clamp(1.9rem, 6.8dvh, 2.2rem) !important;
     border-radius: 0.42rem !important;
   }
 
@@ -12429,8 +12445,8 @@ input[type="color"]::-webkit-color-swatch {
 
   .game-dialog-icon,
   .game-dialog-close {
-    width: clamp(1.42rem, 6dvh, 1.7rem) !important;
-    height: clamp(1.42rem, 6dvh, 1.7rem) !important;
+    width: clamp(1.75rem, 6.8dvh, 2rem) !important;
+    height: clamp(1.75rem, 6.8dvh, 2rem) !important;
   }
 
   .pause-menu-dialog {
@@ -12985,18 +13001,21 @@ input[type="color"]::-webkit-color-swatch {
 
 /* iOS PWA install prompt */
 
+/* Anchored top-right below the nav: the toast only ever renders on iOS
+   touch devices, where bottom-center sits on top of the lobby's primary
+   CTAs (login/play/view-all) in phone landscape and top-left belongs to
+   the daily-mission tracker. */
 .pwa-install-toast {
   position: fixed;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
-  left: 50%;
-  transform: translateX(-50%);
+  top: calc(var(--menu-nav-h, 4.25rem) + var(--global-notification-offset, 0rem) + 0.55rem);
+  right: max(0.9rem, env(safe-area-inset-right));
   z-index: 80;
   box-sizing: border-box;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
-  gap: 0.72rem;
-  width: min(26rem, calc(100vw - max(1.5rem, env(safe-area-inset-left)) - max(1.5rem, env(safe-area-inset-right))));
+  gap: 0.8rem;
+  width: min(24rem, calc(100vw - max(1.8rem, env(safe-area-inset-left)) - max(1.8rem, env(safe-area-inset-right))));
   padding: 0.75rem 0.85rem;
   border: 1px solid rgb(255 255 255 / 0.11);
   border-radius: 0.75rem;
@@ -13012,11 +13031,11 @@ input[type="color"]::-webkit-color-swatch {
 @keyframes pwa-install-toast-in {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(1.25rem);
+    transform: translateY(-0.85rem);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
   }
 }
 
@@ -13067,8 +13086,8 @@ input[type="color"]::-webkit-color-swatch {
   justify-content: center;
   align-self: start;
   flex-shrink: 0;
-  width: 1.9rem;
-  height: 1.9rem;
+  width: 2.35rem;
+  height: 2.35rem;
   border: 1px solid rgb(255 255 255 / 0.1);
   border-radius: 0.5rem;
   background: rgb(255 255 255 / 0.055);
@@ -13083,8 +13102,7 @@ input[type="color"]::-webkit-color-swatch {
 
 @media (max-width: 390px) {
   .pwa-install-toast {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.55rem);
-    gap: 0.55rem;
+    gap: 0.6rem;
     width: calc(100vw - max(0.75rem, env(safe-area-inset-left)) - max(0.75rem, env(safe-area-inset-right)));
     padding: 0.62rem;
     border-radius: 0.62rem;
@@ -13113,8 +13131,8 @@ input[type="color"]::-webkit-color-swatch {
   }
 
   .pwa-install-dismiss {
-    width: 1.65rem;
-    height: 1.65rem;
+    width: 2.1rem;
+    height: 2.1rem;
     border-radius: 0.42rem;
   }
 }
@@ -13224,12 +13242,17 @@ input[type="color"]::-webkit-color-swatch {
   }
 
   /* Social row buttons sit 0.5rem apart; expand hit areas only up to the
-     midpoint so neighbors don't overlap. */
-  .social-icon-button {
+     midpoint so neighbors don't overlap. Top-nav controls shrink below
+     44px on short landscape viewports and get the same treatment. */
+  .social-icon-button,
+  .top-nav-icon-button,
+  .main-lobby-x-link {
     position: relative;
   }
 
-  .social-icon-button::after {
+  .social-icon-button::after,
+  .top-nav-icon-button::after,
+  .main-lobby-x-link::after {
     content: '';
     position: absolute;
     inset: -0.25rem;

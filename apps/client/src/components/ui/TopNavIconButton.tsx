@@ -19,7 +19,7 @@ export function TopNavIconButton({
     <button
       type="button"
       onClick={onClick}
-      className="relative flex h-10 w-10 shrink-0 items-center justify-center text-white/60 transition-colors duration-150 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+      className="top-nav-icon-button relative flex h-10 w-10 shrink-0 items-center justify-center text-white/60 transition-colors duration-150 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
       aria-label={label}
       title={title ?? label}
     >
