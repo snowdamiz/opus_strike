@@ -275,7 +275,11 @@ export class MatchFinalizationRuntime {
       if (input.winningTeam !== 'red' && input.winningTeam !== 'blue') return;
 
       const winners = input.participants
-        .filter((participant) => participant.team === input.winningTeam && participant.leftAt === null)
+        .filter((participant) => (
+          participant.team === input.winningTeam
+          && participant.leftAt === null
+          && participant.rankedRewardEligible !== false
+        ))
         .map((participant) => ({
           userId: participant.userId,
           playerSessionId: participant.playerSessionId,

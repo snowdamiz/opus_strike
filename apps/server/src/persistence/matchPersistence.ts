@@ -37,6 +37,7 @@ export interface MatchParticipantSnapshot extends MatchParticipantStats {
   placement?: number | null;
   activeTeamCount?: number | null;
   teamEliminatedAt?: Date | null;
+  rankedRewardEligible?: boolean;
 }
 
 export interface MatchKillEventSnapshot {
@@ -183,6 +184,11 @@ export function normalizeMatchParticipants(
     existing.placement = participant.placement ?? existing.placement;
     existing.activeTeamCount = participant.activeTeamCount ?? existing.activeTeamCount;
     existing.teamEliminatedAt = participant.teamEliminatedAt ?? existing.teamEliminatedAt;
+    if (existing.rankedRewardEligible === true || participant.rankedRewardEligible === true) {
+      existing.rankedRewardEligible = true;
+    } else if (existing.rankedRewardEligible === false || participant.rankedRewardEligible === false) {
+      existing.rankedRewardEligible = false;
+    }
     if (participant.joinedAt < existing.joinedAt) {
       existing.joinedAt = participant.joinedAt;
     }

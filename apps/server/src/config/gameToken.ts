@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the game's SPL token.
  *
- * Every feature that references the game token (ranked entry gate, skin shop,
+ * Every feature that references the game token (ranked rewards, skin shop,
  * etc.) reads its mint address, ticker, and cluster from here. Features must
  * NOT store or expose their own separate token configuration.
  *

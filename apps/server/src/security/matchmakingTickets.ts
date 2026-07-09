@@ -49,6 +49,7 @@ export interface MatchmakingTicketClaims {
   rankedTokenRequiredBaseUnits?: string;
   rankedTokenBalanceBaseUnits?: string;
   rankedTokenCheckedAt?: number;
+  rankedRewardEligible?: boolean;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -72,6 +73,7 @@ export interface CreateMatchmakingTicketInput {
   rankedTokenRequiredBaseUnits?: string;
   rankedTokenBalanceBaseUnits?: string;
   rankedTokenCheckedAt?: number;
+  rankedRewardEligible?: boolean;
   ttlMs?: number;
 }
 
@@ -125,6 +127,7 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     rankedTokenRequiredBaseUnits: input.mode === 'ranked' ? input.rankedTokenRequiredBaseUnits : undefined,
     rankedTokenBalanceBaseUnits: input.mode === 'ranked' ? input.rankedTokenBalanceBaseUnits : undefined,
     rankedTokenCheckedAt: input.mode === 'ranked' ? input.rankedTokenCheckedAt : undefined,
+    rankedRewardEligible: input.mode === 'ranked' ? input.rankedRewardEligible === true : undefined,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -184,6 +187,10 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     claims.rankedTokenCheckedAt !== undefined
     && !Number.isFinite(claims.rankedTokenCheckedAt)
   ) return null;
+  if (
+    claims.rankedRewardEligible !== undefined
+    && typeof claims.rankedRewardEligible !== 'boolean'
+  ) return null;
 
   return {
     ...claims,
@@ -203,5 +210,6 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     rankedTokenRequiredBaseUnits: mode === 'ranked' ? claims.rankedTokenRequiredBaseUnits : undefined,
     rankedTokenBalanceBaseUnits: mode === 'ranked' ? claims.rankedTokenBalanceBaseUnits : undefined,
     rankedTokenCheckedAt: mode === 'ranked' ? claims.rankedTokenCheckedAt : undefined,
+    rankedRewardEligible: mode === 'ranked' ? claims.rankedRewardEligible === true : undefined,
   };
 }

@@ -16,7 +16,7 @@ import type { MatchMode } from '@voxel-strike/shared';
 import prisma from '../db';
 import { assertTutorialCompleted } from '../auth/tutorialCompletion';
 import {
-  assertRankedTokenHoldingEligibility,
+  getRankedTokenHoldingStatus,
 } from '../matchmaking/rankedTokenHold';
 import {
   averageMatchmakingContext,
@@ -153,7 +153,7 @@ export async function launchPartyToMatchmaking(
   const tickets = new Map<string, ReturnType<typeof issueQuickPlayTicket> | ReturnType<typeof issueRankedTicket>>();
   if (mode === 'ranked') {
     for (const context of contexts) {
-      const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
+      const tokenHold = await getRankedTokenHoldingStatus(context.walletAddress);
       const member = humanMembers.find((candidate) => candidate.userId === context.userId);
       tickets.set(context.userId, issueRankedTicket(
         context,

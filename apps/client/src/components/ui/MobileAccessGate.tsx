@@ -40,11 +40,6 @@ export function MobileAccessGate({ access }: MobileAccessGateProps) {
               <Fullscreen aria-hidden="true" />
               <span>{access.isRequestingFullscreen ? 'Opening...' : 'Go Fullscreen'}</span>
             </button>
-            {!access.isRequestFullscreenSupported && (
-              <p className="mobile-access-gate-help">
-                This browser cannot start fullscreen from the page. Use a browser with fullscreen support to continue.
-              </p>
-            )}
           </div>
         )}
 

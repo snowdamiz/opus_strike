@@ -10,6 +10,7 @@ export interface ReconnectParticipant {
   role?: PlayerRole;
   assignedTeam?: Team;
   selectedHero?: HeroId;
+  rankedRewardEligible?: boolean;
 }
 
 export class RoomParticipantRegistry {
@@ -49,6 +50,10 @@ export class RoomParticipantRegistry {
     return this.entryTickets.has(sessionId);
   }
 
+  isRankedRewardEligible(sessionId: string): boolean {
+    return this.entryTickets.get(sessionId)?.rankedRewardEligible === true;
+  }
+
   getAuthContexts(): IterableIterator<RoomAuthContext> {
     return this.authContexts.values();
   }
@@ -62,6 +67,7 @@ export class RoomParticipantRegistry {
       role: ticket.role,
       assignedTeam: ticket.assignedTeam,
       selectedHero: ticket.selectedHero,
+      rankedRewardEligible: ticket.rankedRewardEligible,
     });
   }
 
@@ -90,6 +96,7 @@ export class RoomParticipantRegistry {
       ...(participant.role ? { role: participant.role } : {}),
       ...(participant.assignedTeam ? { assignedTeam: participant.assignedTeam } : {}),
       ...(participant.selectedHero ? { selectedHero: participant.selectedHero } : {}),
+      ...(participant.rankedRewardEligible === true ? { rankedRewardEligible: true } : {}),
       issuedAt: input.issuedAt,
       expiresAt: input.issuedAt + input.ttlMs,
       nonce: `reconnect:${participant.userId}:${input.issuedAt}`,

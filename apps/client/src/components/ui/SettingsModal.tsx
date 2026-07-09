@@ -1128,8 +1128,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Restricted Modes" description={hasWalletAccount ? 'Wallet linked; token hold checked on queue' : 'Wallet required for ranked'}>
-                  <AccountValue value={hasWalletAccount ? 'WALLET LINKED' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
+                <SettingRow label="Ranked Access" description={hasAccount ? 'Discord account is enough for ranked' : 'Sign in to play ranked'}>
+                  <AccountValue value={hasAccount ? 'DISCORD READY' : 'SIGNED OUT'} />
                 </SettingRow>
 
                 <SettingRow label="Discord" description={discordAccount ? 'Connected login provider' : 'Link Discord to this profile'}>
@@ -1151,7 +1151,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   )}
                 </SettingRow>
 
-                <SettingRow label="Wallet" description={hasWalletAccount ? 'Connected wallet provider' : 'Required for ranked'}>
+                <SettingRow label="Wallet" description={hasWalletAccount ? 'Connected wallet provider' : 'Optional for rewards and purchases'}>
                   {hasWalletAccount ? (
                     <AccountValue value={formatAccountAddress(displayWalletAddress)} />
                   ) : (

@@ -212,6 +212,43 @@ const runtime = new MatchSummaryRuntime({
   durableUsers.set('red', 'user-red');
   durableUsers.set('blue', 'user-blue');
 
+  const event = runtime.buildGameEndEvent({
+    matchMode: 'ranked',
+    gameplayMode: 'capture_the_flag',
+    matchPerspective: 'first_person',
+    winningTeam: 'red',
+    finalScore: { red: 3, blue: 1 },
+    matchId: 'match-golden-filtered',
+    startedAt: 1000,
+    endedAt: 7000,
+    players: playersMap([
+      player({ id: 'red', team: 'red', kills: 2 }),
+      player({ id: 'blue', team: 'blue', kills: 1 }),
+    ]),
+    integrityGate: gate(),
+    mapThemeId: GOLDEN_VOXEL_MAP_THEME_ID,
+    goldenBiomeRewardLamports: '200000000',
+    rankedPreview: {
+      participants: [
+        participant({ userId: 'user-red', playerSessionId: 'red', team: 'red', rankedRewardEligible: false }),
+        participant({ userId: 'user-blue', playerSessionId: 'blue', team: 'blue', rankedRewardEligible: true }),
+      ],
+      rankedUserStates: [],
+      rankedEligible: true,
+      rankedHoldRequired: false,
+      gameplayMode: 'capture_the_flag',
+    },
+  });
+
+  assert.deepEqual(event.goldenBiomeReward?.eligiblePlayerIds, []);
+}
+
+{
+  durableUsers.clear();
+  npcIds.clear();
+  durableUsers.set('red', 'user-red');
+  durableUsers.set('blue', 'user-blue');
+
   const rankedUserStates = buildRankedUserStatesFromAuthContexts([
     authContext({ userId: 'user-red', competitiveRating: 900, rankedGames: 12 }),
     authContext({ userId: 'user-blue', competitiveRating: 900, rankedGames: 12 }),

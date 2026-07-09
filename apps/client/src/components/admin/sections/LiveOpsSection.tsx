@@ -365,13 +365,13 @@ export function LiveOpsSection({ console }: SectionProps) {
           </CardContent>
         </Card>
 
-        {/* Ranked Entry Gate */}
+        {/* Ranked Reward Gate */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-accent-primary" />
-                Ranked Entry Gate
+                Ranked Reward Gate
               </span>
               <Badge variant={rpcConfigured ? 'success' : 'warning'}>
                 {rpcConfigured ? 'RPC Ready' : 'RPC Not Configured'}
@@ -379,7 +379,7 @@ export function LiveOpsSection({ console }: SectionProps) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Field label="Mode" hint="Require a token balance to queue for ranked.">
+            <Field label="Mode" hint="Require a token balance to earn ranked SOL rewards.">
               <Select
                 value={gateMode}
                 onValueChange={(v) => setGateMode(v as RankedEntryGateMode)}
@@ -388,7 +388,7 @@ export function LiveOpsSection({ console }: SectionProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="locked">Locked</SelectItem>
+                  <SelectItem value="locked">Rewards Disabled</SelectItem>
                   <SelectItem value="token_required">Token Required</SelectItem>
                 </SelectContent>
               </Select>
@@ -397,7 +397,7 @@ export function LiveOpsSection({ console }: SectionProps) {
             {gateMode === 'token_required' ? (
               <Field
                 label={`Required amount (${gameTokenTicker})`}
-                hint={`Players must hold this many ${gameTokenTicker}.`}
+                hint={`Players must hold this many ${gameTokenTicker} to earn ranked SOL rewards.`}
               >
                 <Input
                   type="number"
@@ -426,7 +426,7 @@ export function LiveOpsSection({ console }: SectionProps) {
                 disabled={gateSaving || !gateValid}
               >
                 {gateSaving ? <Loader2 className="animate-spin" /> : null}
-                Save Gate
+                Save Rewards
               </Button>
             </div>
           </CardContent>

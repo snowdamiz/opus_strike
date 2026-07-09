@@ -276,7 +276,7 @@ export function useAdminConsole(): UseAdminConsole {
 
   const saveRankedEntryGate = useCallback(
     (body: RankedEntryGateUpdate) =>
-      runMutation('Ranked entry gate', (csrf) => adminPost('/ranked-entry-gate', body, csrf)),
+      runMutation('Ranked reward gate', (csrf) => adminPost('/ranked-entry-gate', body, csrf)),
     [runMutation]
   );
 

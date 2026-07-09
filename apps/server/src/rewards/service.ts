@@ -283,6 +283,10 @@ function isCleanRankedRewardMatch(input: CreateMatchPlayerRewardsInput): boolean
     && !input.integrityGate.reviewRequired;
 }
 
+function isRankedRewardEligibleParticipant(participant: MatchParticipantSnapshot): boolean {
+  return participant.rankedRewardEligible !== false;
+}
+
 function getPayoutEligibleRewardKinds(config: PlayerRewardRuntimeConfig): PlayerRewardKind[] {
   const rewardKinds: PlayerRewardKind[] = [];
   if (config.enabled) rewardKinds.push(...TOKEN_DRIP_PAYOUT_REWARD_KINDS);
@@ -381,7 +385,7 @@ export function buildMatchPlayerRewardGrants(input: MatchRewardBuildInput): Play
 
   const day = getUtcDayRange(input.endedAt);
   const participants = normalizeMatchParticipants(input.participants, input.winningTeam)
-    .filter((participant) => participant.leftAt === null);
+    .filter((participant) => participant.leftAt === null && isRankedRewardEligibleParticipant(participant));
   const grants: PlayerRewardGrant[] = [];
 
   for (const participant of participants) {
@@ -458,9 +462,11 @@ export function buildRankedBrCombatPlayerRewardGrants(input: {
   roomId: string;
   lobbyId: string | null;
   grants: RankedBrCombatGrant[];
+  rewardEligibleUserIds?: ReadonlySet<string>;
 }): PlayerRewardGrant[] {
   return input.grants.flatMap((grant) => {
     if (grant.amountLamports <= 0n) return [];
+    if (input.rewardEligibleUserIds && !input.rewardEligibleUserIds.has(grant.userId)) return [];
     return [{
       userId: grant.userId,
       matchId: input.matchId,
@@ -1017,12 +1023,18 @@ export class PlayerRewardService {
 
   async createMatchRewards(input: CreateMatchPlayerRewardsInput): Promise<PlayerRewardCreationResult> {
     const config = await this.getConfig();
+    const rewardEligibleUserIds = new Set(
+      input.participants
+        .filter(isRankedRewardEligibleParticipant)
+        .map((participant) => participant.userId)
+    );
     const rankedBrRequestedGrants = isCleanRankedRewardMatch(input) && input.gameplayMode === 'battle_royal'
       ? buildRankedBrCombatPlayerRewardGrants({
         matchId: input.matchId,
         roomId: input.roomId,
         lobbyId: input.lobbyId,
         grants: input.rankedBrCombatGrants ?? [],
+        rewardEligibleUserIds,
       })
       : [];
 

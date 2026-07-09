@@ -277,6 +277,7 @@ export function issueRankedTicket(
     rankedTokenRequiredBaseUnits: tokenHold.requiredTokenBaseUnits,
     rankedTokenBalanceBaseUnits: tokenHold.balanceTokenBaseUnits,
     rankedTokenCheckedAt: Date.parse(tokenHold.checkedAt),
+    rankedRewardEligible: tokenHold.rewardEligible,
   });
 
   return {

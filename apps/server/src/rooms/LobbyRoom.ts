@@ -1638,6 +1638,7 @@ export class LobbyRoom extends Room<LobbyState> {
         matchPerspective: this.matchPerspective,
         playerAssignments,
         authContexts: this.playerAuthContexts,
+        matchmakingTickets: this.playerMatchmakingTickets,
       });
       const ticketsByPlayerId = new Map<string, {
         entryTicket: string;

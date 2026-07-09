@@ -1339,6 +1339,7 @@ export class GameRoom extends Room<GameState> {
       rankedEligible: this.rankedEligibilityCandidate,
     }),
     getDurableUserId: (playerId) => this.getDurableUserId(playerId),
+    isRankedRewardEligible: (playerId) => this.isRankedRewardEligiblePlayer(playerId),
     isNpc: (playerId) => this.npcs.has(playerId),
   });
   private rankedEligibilityCandidate = false;
@@ -4681,6 +4682,10 @@ export class GameRoom extends Room<GameState> {
     return this.participantRegistry.getDurableUserId(playerId);
   }
 
+  private isRankedRewardEligiblePlayer(playerId: string): boolean {
+    return this.participantRegistry.isRankedRewardEligible(playerId);
+  }
+
   private serializeRankedBrRewardOutcome(outcome: RankedBrRewardEventOutcome): Record<string, unknown> {
     return {
       outcomeReason: outcome.reason,
@@ -4762,9 +4767,16 @@ export class GameRoom extends Room<GameState> {
     const userIds = new Set<string>();
     this.state.players.forEach((player) => {
       if (player.isBot || this.npcs.has(player.id) || isObserverPlayer(player)) return;
+      if (!this.isRankedRewardEligiblePlayer(player.id)) return;
       const userId = this.getDurableUserId(player.id);
       if (userId) userIds.add(userId);
     });
+    if (userIds.size === 0) {
+      this.logRankedBrRewardSkip('no_reward_eligible_players', {
+        matchId: ledger.matchId,
+      });
+      return;
+    }
     void playerRewardService.createRankedBrRewardAccumulator({
       matchId: ledger.matchId,
       roomId: ledger.roomId,
@@ -4906,6 +4918,14 @@ export class GameRoom extends Room<GameState> {
     const sourceUserId = this.getDurableUserId(input.source.id);
     if (!sourceUserId) {
       this.logRankedBrRewardSkip('missing_source_user', { ...targetDetails, ...sourceDetails });
+      return null;
+    }
+    if (!this.isRankedRewardEligiblePlayer(input.source.id)) {
+      this.logRankedBrRewardSkip('ranked_reward_ineligible', {
+        ...targetDetails,
+        ...sourceDetails,
+        sourceUserId,
+      });
       return null;
     }
     const accumulator = this.rankedBrRewardAccumulator;

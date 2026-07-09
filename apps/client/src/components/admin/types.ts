@@ -38,7 +38,7 @@ export type LamportString = string;
 
 /**
  * The single SPL game token, configured server-side via deployment env. Every
- * feature (ranked gate, skin shop, …) references this one token — features no
+ * feature (ranked rewards, skin shop, …) references this one token — features no
  * longer carry their own token configuration. Read-only in the console.
  */
 export interface GameTokenConfig {
