@@ -8,7 +8,16 @@ import {
   decryptMobileWalletConnectResponse,
   decryptMobileWalletSignMessageResponse,
 } from '../auth/mobileWalletDeepLink';
-import type { MobileWalletDeepLinkState } from '../auth/mobileWalletDeepLinkStore';
+import {
+  consumeMobileWalletHandoffResult,
+  forceLocalMobileWalletDeepLinkStoreForTests,
+  readMobileWalletDeepLinkState,
+  resetMobileWalletDeepLinkStoreForTests,
+  storeMobileWalletDeepLinkState,
+  storeMobileWalletHandoffResult,
+  MOBILE_WALLET_HANDOFF_TTL_MS,
+  type MobileWalletDeepLinkState,
+} from '../auth/mobileWalletDeepLinkStore';
 
 function encryptWalletResponse(input: {
   dappPublicKey: string;
@@ -142,5 +151,90 @@ function runMobileWalletDeepLinkTests(): void {
   assert.equal(solflareConnectUrl.origin + solflareConnectUrl.pathname, 'https://solflare.com/ul/v1/connect');
 }
 
+async function runMobileWalletHandoffTests(): Promise<void> {
+  forceLocalMobileWalletDeepLinkStoreForTests();
+
+  try {
+    // handoff flag defaults off and survives the store round-trip when set
+    const plainState = createMobileWalletDeepLinkState({
+      providerId: 'phantom',
+      returnTo: '/',
+      authToken: null,
+    });
+    assert.equal(plainState.handoff, undefined);
+
+    const handoffState = createMobileWalletDeepLinkState({
+      providerId: 'phantom',
+      returnTo: '/lobby',
+      authToken: null,
+      handoff: true,
+    });
+    assert.equal(handoffState.handoff, true);
+
+    await storeMobileWalletDeepLinkState(handoffState);
+    const readState = await readMobileWalletDeepLinkState(handoffState.id);
+    assert.ok(readState, 'handoff state should be readable');
+    assert.equal(readState.handoff, true);
+    assert.equal(readState.returnTo, '/lobby');
+
+    // success result: single-use consume
+    const stored = await storeMobileWalletHandoffResult({
+      stateId: handoffState.id,
+      status: 'success',
+      sessionToken: 'session-jwt',
+      sessionKind: 'auth',
+      payload: { authenticated: true, isNewUser: false, provider: 'wallet' },
+      createdAt: Date.now(),
+    });
+    assert.equal(stored, true);
+
+    const consumed = await consumeMobileWalletHandoffResult(handoffState.id);
+    assert.ok(consumed, 'handoff result should be consumable once');
+    assert.equal(consumed.status, 'success');
+    assert.equal(consumed.sessionToken, 'session-jwt');
+    assert.equal(consumed.sessionKind, 'auth');
+    assert.deepEqual(consumed.payload, { authenticated: true, isNewUser: false, provider: 'wallet' });
+
+    const consumedAgain = await consumeMobileWalletHandoffResult(handoffState.id);
+    assert.equal(consumedAgain, null, 'handoff result must be single-use');
+
+    // error result round-trip
+    await storeMobileWalletHandoffResult({
+      stateId: 'error-state',
+      status: 'error',
+      errorCode: 'wallet_denied',
+      createdAt: Date.now(),
+    });
+    const errorResult = await consumeMobileWalletHandoffResult('error-state');
+    assert.ok(errorResult);
+    assert.equal(errorResult.status, 'error');
+    assert.equal(errorResult.errorCode, 'wallet_denied');
+
+    // expiry: a result stored in the past is not claimable
+    const staleStoredAt = Date.now() - MOBILE_WALLET_HANDOFF_TTL_MS - 1;
+    await storeMobileWalletHandoffResult({
+      stateId: 'stale-state',
+      status: 'success',
+      sessionToken: 'stale-jwt',
+      sessionKind: 'pending',
+      createdAt: staleStoredAt,
+    }, staleStoredAt);
+    const staleResult = await consumeMobileWalletHandoffResult('stale-state');
+    assert.equal(staleResult, null, 'expired handoff result must not be claimable');
+
+    // unknown state id
+    assert.equal(await consumeMobileWalletHandoffResult('missing-state'), null);
+  } finally {
+    resetMobileWalletDeepLinkStoreForTests();
+  }
+}
+
 runMobileWalletDeepLinkTests();
-console.log('mobile-wallet-deeplink tests passed');
+runMobileWalletHandoffTests()
+  .then(() => {
+    console.log('mobile-wallet-deeplink tests passed');
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

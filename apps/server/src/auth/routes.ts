@@ -50,10 +50,13 @@ import {
   readMobileWalletError,
 } from './mobileWalletDeepLink';
 import {
+  consumeMobileWalletHandoffResult,
   deleteMobileWalletDeepLinkState,
   readMobileWalletDeepLinkState,
   storeMobileWalletDeepLinkState,
+  storeMobileWalletHandoffResult,
   type MobileWalletDeepLinkState,
+  type MobileWalletHandoffSessionKind,
 } from './mobileWalletDeepLinkStore';
 
 const router: RouterType = Router();
@@ -73,6 +76,7 @@ const AUTH_RATE_LIMITS = {
   oauthCallback: { limit: 30, windowMs: 60 * 1000 },
   mobileWalletStart: { limit: 20, windowMs: 60 * 1000 },
   mobileWalletCallback: { limit: 30, windowMs: 60 * 1000 },
+  mobileWalletHandoff: { limit: 60, windowMs: 60 * 1000 },
 } as const;
 
 const LEADERBOARD_DEFAULT_LIMIT = 25;
@@ -168,9 +172,15 @@ interface WalletAuthResponsePayload {
 }
 
 type MobileWalletJsonResponse =
-  | { action: 'redirect'; url: string }
+  | { action: 'redirect'; url: string; stateId?: string }
   | { action: 'complete'; returnTo: string }
   | { action: 'error'; returnTo: string };
+
+interface WalletAuthCompletion {
+  payload: WalletAuthResponsePayload;
+  sessionToken: string;
+  sessionKind: MobileWalletHandoffSessionKind;
+}
 
 const leaderboardUserSelect = {
   id: true,
@@ -411,6 +421,110 @@ function sendMobileWalletAuthError(
     provider: 'wallet',
     error,
   });
+}
+
+const MOBILE_WALLET_HANDOFF_ERROR_MESSAGES: Record<string, string> = {
+  wallet_denied: 'The wallet request was canceled.',
+  wallet_conflict: 'That wallet is already linked to another profile.',
+  wallet_expired: 'The wallet connection expired.',
+  wallet_invalid_signature: 'The wallet signature could not be verified.',
+  wallet_unavailable: 'Wallet sign-in is temporarily unavailable.',
+  wallet_failed: 'Wallet sign-in failed.',
+};
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildClientReturnUrl(returnTo: string, params: Record<string, string>): string {
+  const returnPath = appendAuthStatus(returnTo, params);
+  const clientOrigin = getClientOrigin();
+  return clientOrigin ? new URL(returnPath, clientOrigin).toString() : returnPath;
+}
+
+function renderMobileWalletHandoffPage(
+  res: Response,
+  input: { success: boolean; errorCode?: string; continueUrl: string }
+): void {
+  const title = input.success ? 'Wallet connected' : 'Wallet sign-in didn’t finish';
+  const icon = input.success ? '&#10003;' : '&#10007;';
+  const detail = input.success
+    ? 'Switch back to the Slop Heroes app to finish signing in. You can close this tab.'
+    : `${MOBILE_WALLET_HANDOFF_ERROR_MESSAGES[input.errorCode ?? ''] ?? MOBILE_WALLET_HANDOFF_ERROR_MESSAGES.wallet_failed} Return to the Slop Heroes app and try again.`;
+
+  res
+    .status(input.success ? 200 : 400)
+    .type('html')
+    .send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${escapeHtml(title)} · Slop Heroes</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0b0e14; color: #e6e9f0; font-family: system-ui, -apple-system, sans-serif; text-align: center; }
+  main { padding: 32px 24px; max-width: 420px; }
+  .icon { width: 64px; height: 64px; margin: 0 auto 20px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-size: 30px;
+    background: ${input.success ? 'rgba(74, 222, 128, 0.12)' : 'rgba(248, 113, 113, 0.12)'};
+    color: ${input.success ? '#4ade80' : '#f87171'}; }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  p { margin: 0 0 24px; line-height: 1.5; color: #9aa3b2; }
+  a { color: #7dd3fc; text-decoration: none; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="icon">${icon}</div>
+  <h1>${escapeHtml(title)}</h1>
+  <p>${escapeHtml(detail)}</p>
+  <a href="${escapeHtml(input.continueUrl)}">Or continue in this browser instead</a>
+</main>
+</body>
+</html>`);
+}
+
+async function failMobileWalletCallback(
+  req: Request,
+  res: Response,
+  state: MobileWalletDeepLinkState,
+  errorCode: string
+): Promise<void> {
+  if (state.handoff) {
+    await storeMobileWalletHandoffResult({
+      stateId: state.id,
+      status: 'error',
+      errorCode,
+      createdAt: Date.now(),
+    });
+    await deleteMobileWalletDeepLinkState(state.id);
+
+    if (wantsMobileWalletJsonResponse(req)) {
+      sendMobileWalletAuthError(req, res, state.returnTo, errorCode);
+      return;
+    }
+
+    renderMobileWalletHandoffPage(res, {
+      success: false,
+      errorCode,
+      continueUrl: buildClientReturnUrl(state.returnTo, {
+        auth: 'error',
+        provider: 'wallet',
+        error: errorCode,
+      }),
+    });
+    return;
+  }
+
+  await deleteMobileWalletDeepLinkState(state.id);
+  sendMobileWalletAuthError(req, res, state.returnTo, errorCode);
 }
 
 function getSafeOAuthReturnTo(record: OAuthStateRecord | null): string {
@@ -912,7 +1026,7 @@ async function completeVerifiedWalletAuth(
   res: Response,
   walletAddress: string,
   authenticatedPayload: AuthTokenPayload | null = null
-): Promise<WalletAuthResponsePayload> {
+): Promise<WalletAuthCompletion> {
   const linkedAccount = await prisma.authAccount.findUnique({
     where: {
       provider_providerAccountId: {
@@ -940,19 +1054,24 @@ async function completeVerifiedWalletAuth(
     }
 
     const user = await linkWalletAccountToUser(authenticatedUser.id, walletAddress);
-    setAuthCookie(res, createAuthToken({
+    const sessionToken = createAuthToken({
       userId: user.id,
       provider,
       walletAddress: user.walletAddress,
       expiresIn: JWT_EXPIRY,
-    }));
+    });
+    setAuthCookie(res, sessionToken);
 
     return {
-      authenticated: true,
-      isNewUser: false,
-      provider,
-      linked: true,
-      user: serializeUser(user),
+      payload: {
+        authenticated: true,
+        isNewUser: false,
+        provider,
+        linked: true,
+        user: serializeUser(user),
+      },
+      sessionToken,
+      sessionKind: 'auth',
     };
   }
 
@@ -962,19 +1081,24 @@ async function completeVerifiedWalletAuth(
       data: { lastLoginAt: new Date() },
       include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
     });
-    setAuthCookie(res, createAuthToken({
+    const sessionToken = createAuthToken({
       userId: user.id,
       provider: 'wallet',
       walletAddress: user.walletAddress,
       expiresIn: JWT_EXPIRY,
-    }));
+    });
+    setAuthCookie(res, sessionToken);
 
     return {
-      authenticated: true,
-      isNewUser: false,
-      provider: 'wallet',
-      linked: false,
-      user: serializeUser(user),
+      payload: {
+        authenticated: true,
+        isNewUser: false,
+        provider: 'wallet',
+        linked: false,
+        user: serializeUser(user),
+      },
+      sessionToken,
+      sessionKind: 'auth',
     };
   }
 
@@ -986,18 +1110,23 @@ async function completeVerifiedWalletAuth(
     emailHash: null,
     walletAddress,
   };
-  setPendingAuthCookie(res, createPendingAuthToken(pendingRegistration));
+  const sessionToken = createPendingAuthToken(pendingRegistration);
+  setPendingAuthCookie(res, sessionToken);
 
   return {
-    authenticated: true,
-    isNewUser: true,
-    provider: 'wallet',
-    pendingRegistration: {
-      provider: pendingRegistration.provider,
-      displayName: pendingRegistration.displayName ?? null,
-      avatarUrl: pendingRegistration.avatarUrl ?? null,
-      walletAddress,
+    payload: {
+      authenticated: true,
+      isNewUser: true,
+      provider: 'wallet',
+      pendingRegistration: {
+        provider: pendingRegistration.provider,
+        displayName: pendingRegistration.displayName ?? null,
+        avatarUrl: pendingRegistration.avatarUrl ?? null,
+        walletAddress,
+      },
     },
+    sessionToken,
+    sessionKind: 'pending',
   };
 }
 
@@ -1116,6 +1245,43 @@ async function getMobileWalletAuthenticatedPayload(
   return savedPayload ?? getAuthenticatedPayload(req);
 }
 
+// Session handoff for installed PWAs: the wallet's redirect chain runs in the system
+// browser (a different storage partition on iOS), so the PWA reclaims the session here
+// with the state id it saved before deeplinking out. Single-use, short TTL.
+router.get('/mobile-wallet/handoff', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:mobile-wallet:handoff', AUTH_RATE_LIMITS.mobileWalletHandoff)) return;
+
+  const stateId = getQueryStringValue(req.query.state);
+  if (!stateId) {
+    res.status(400).json({ error: 'Missing state' });
+    return;
+  }
+
+  const result = await consumeMobileWalletHandoffResult(stateId);
+  if (result) {
+    if (result.status === 'success' && result.sessionToken) {
+      if (result.sessionKind === 'pending') {
+        setPendingAuthCookie(res, result.sessionToken);
+      } else {
+        setAuthCookie(res, result.sessionToken);
+      }
+      res.json({ status: 'complete', result: result.payload ?? null });
+      return;
+    }
+
+    res.json({ status: 'error', error: result.errorCode || 'wallet_failed' });
+    return;
+  }
+
+  const state = await readMobileWalletDeepLinkState(stateId);
+  if (state?.handoff) {
+    res.json({ status: 'pending' });
+    return;
+  }
+
+  res.json({ status: 'expired' });
+});
+
 router.get('/mobile-wallet/:providerId/start', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'auth:mobile-wallet:start', AUTH_RATE_LIMITS.mobileWalletStart)) return;
 
@@ -1133,6 +1299,7 @@ router.get('/mobile-wallet/:providerId/start', async (req: Request, res: Respons
     returnTo,
     authToken: getRequestAuthToken(req),
     callbackOrigin,
+    handoff: req.query.handoff === '1',
   });
 
   const stored = await storeMobileWalletDeepLinkState(state);
@@ -1148,7 +1315,12 @@ router.get('/mobile-wallet/:providerId/start', async (req: Request, res: Respons
     cluster: getMobileWalletCluster(),
   });
 
-  sendMobileWalletJsonOrRedirect(req, res, { action: 'redirect', url: connectUrl }, connectUrl);
+  sendMobileWalletJsonOrRedirect(
+    req,
+    res,
+    { action: 'redirect', url: connectUrl, ...(state.handoff ? { stateId: state.id } : {}) },
+    connectUrl
+  );
 });
 
 router.get('/mobile-wallet/:providerId/connect', async (req: Request, res: Response) => {
@@ -1167,8 +1339,7 @@ router.get('/mobile-wallet/:providerId/connect', async (req: Request, res: Respo
   const params = getRequestSearchParams(req);
   const walletError = readMobileWalletError(params);
   if (walletError) {
-    await deleteMobileWalletDeepLinkState(state.id);
-    sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_denied');
+    await failMobileWalletCallback(req, res, state, 'wallet_denied');
     return;
   }
 
@@ -1183,8 +1354,7 @@ router.get('/mobile-wallet/:providerId/connect', async (req: Request, res: Respo
     const message = createSignMessage(authNonce);
     const storedNonce = await storeWalletAuthNonce(walletAddress, authNonce);
     if (!storedNonce) {
-      await deleteMobileWalletDeepLinkState(state.id);
-      sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_unavailable');
+      await failMobileWalletCallback(req, res, state, 'wallet_unavailable');
       return;
     }
 
@@ -1198,8 +1368,7 @@ router.get('/mobile-wallet/:providerId/connect', async (req: Request, res: Respo
     };
     const storedState = await storeMobileWalletDeepLinkState(signState);
     if (!storedState) {
-      await deleteMobileWalletDeepLinkState(state.id);
-      sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_unavailable');
+      await failMobileWalletCallback(req, res, state, 'wallet_unavailable');
       return;
     }
 
@@ -1217,9 +1386,8 @@ router.get('/mobile-wallet/:providerId/connect', async (req: Request, res: Respo
 
     sendMobileWalletJsonOrRedirect(req, res, { action: 'redirect', url: signUrl }, signUrl);
   } catch (error) {
-    await deleteMobileWalletDeepLinkState(state.id);
     console.error('[auth] Mobile wallet connect callback error:', error);
-    sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_failed');
+    await failMobileWalletCallback(req, res, state, 'wallet_failed');
   }
 });
 
@@ -1239,8 +1407,7 @@ router.get('/mobile-wallet/:providerId/sign', async (req: Request, res: Response
   const params = getRequestSearchParams(req);
   const walletError = readMobileWalletError(params);
   if (walletError) {
-    await deleteMobileWalletDeepLinkState(state.id);
-    sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_denied');
+    await failMobileWalletCallback(req, res, state, 'wallet_denied');
     return;
   }
 
@@ -1256,27 +1423,47 @@ router.get('/mobile-wallet/:providerId/sign', async (req: Request, res: Response
 
     const hasValidNonce = await consumeWalletAuthNonce(state.walletAddress, state.authNonce);
     if (!hasValidNonce) {
-      await deleteMobileWalletDeepLinkState(state.id);
-      sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_expired');
+      await failMobileWalletCallback(req, res, state, 'wallet_expired');
       return;
     }
 
     const message = createSignMessage(state.authNonce);
     if (!verifySignature(message, signResponse.signature, state.walletAddress)) {
-      await deleteMobileWalletDeepLinkState(state.id);
-      sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_invalid_signature');
+      await failMobileWalletCallback(req, res, state, 'wallet_invalid_signature');
       return;
     }
 
-    const result = await completeVerifiedWalletAuth(
+    const completion = await completeVerifiedWalletAuth(
       req,
       res,
       state.walletAddress,
       await getMobileWalletAuthenticatedPayload(req, state)
     );
 
-    await deleteMobileWalletDeepLinkState(state.id);
-    const completeReturnTo = appendAuthStatus(state.returnTo, walletAuthSuccessParams(result));
+    const completeReturnTo = appendAuthStatus(state.returnTo, walletAuthSuccessParams(completion.payload));
+
+    if (state.handoff) {
+      const storedResult = await storeMobileWalletHandoffResult({
+        stateId: state.id,
+        status: 'success',
+        sessionToken: completion.sessionToken,
+        sessionKind: completion.sessionKind,
+        payload: completion.payload,
+        createdAt: Date.now(),
+      });
+      await deleteMobileWalletDeepLinkState(state.id);
+
+      if (storedResult && !wantsMobileWalletJsonResponse(req)) {
+        renderMobileWalletHandoffPage(res, {
+          success: true,
+          continueUrl: buildClientReturnUrl(state.returnTo, walletAuthSuccessParams(completion.payload)),
+        });
+        return;
+      }
+    } else {
+      await deleteMobileWalletDeepLinkState(state.id);
+    }
+
     const clientOrigin = getClientOrigin();
     sendMobileWalletJsonOrRedirect(
       req,
@@ -1285,15 +1472,13 @@ router.get('/mobile-wallet/:providerId/sign', async (req: Request, res: Response
       clientOrigin ? new URL(completeReturnTo, clientOrigin).toString() : completeReturnTo
     );
   } catch (error) {
-    await deleteMobileWalletDeepLinkState(state.id);
-
     if (error instanceof ProviderConflictError || isPrismaUniqueError(error)) {
-      sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_conflict');
+      await failMobileWalletCallback(req, res, state, 'wallet_conflict');
       return;
     }
 
     console.error('[auth] Mobile wallet sign callback error:', error);
-    sendMobileWalletAuthError(req, res, state.returnTo, 'wallet_failed');
+    await failMobileWalletCallback(req, res, state, 'wallet_failed');
   }
 });
 
@@ -1342,7 +1527,7 @@ router.post('/verify', async (req: Request, res: Response) => {
       return;
     }
 
-    res.json(await completeVerifiedWalletAuth(req, res, walletAddress));
+    res.json((await completeVerifiedWalletAuth(req, res, walletAddress)).payload);
   } catch (error) {
     if (error instanceof ProviderConflictError) {
       res.status(409).json({ error: error.message });

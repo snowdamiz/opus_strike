@@ -3,13 +3,17 @@ import type { Transaction } from '@solana/web3.js';
 import type { RankSummary } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
+import { isStandaloneDisplayMode } from '../utils/pwa';
 
 type AuthProviderName = 'discord' | 'wallet';
 type MobileWalletDeepLinkProviderId = 'phantom' | 'solflare';
 type MobileWalletAuthBridgeResponse =
-  | { action: 'redirect'; url: string }
+  | { action: 'redirect'; url: string; stateId?: string }
   | { action: 'complete'; returnTo: string }
   | { action: 'error'; returnTo: string };
+const MOBILE_WALLET_HANDOFF_STORAGE_KEY = 'slop-heroes:mobile-wallet-handoff';
+const MOBILE_WALLET_HANDOFF_MAX_AGE_MS = 10 * 60 * 1000;
+const MOBILE_WALLET_HANDOFF_POLL_INTERVAL_MS = 3000;
 const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
 const NO_WALLET_DETECTED_MESSAGE = 'No Solana wallet was detected. Open this app in Phantom, Solflare, Brave Wallet, Backpack, or another compatible wallet browser.';
 const MOBILE_DEEP_LINK_WALLET_PROVIDERS: Array<{
@@ -349,6 +353,60 @@ function canUseMobileWalletDeepLinks(): boolean {
   );
 }
 
+interface MobileWalletHandoffRecord {
+  stateId: string;
+  providerId: MobileWalletDeepLinkProviderId;
+  createdAt: number;
+}
+
+function readMobileWalletHandoffRecord(): MobileWalletHandoffRecord | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(MOBILE_WALLET_HANDOFF_STORAGE_KEY);
+    if (!raw) return null;
+
+    const record = JSON.parse(raw) as Partial<MobileWalletHandoffRecord>;
+    if (
+      typeof record?.stateId !== 'string' ||
+      typeof record.createdAt !== 'number' ||
+      (record.providerId !== 'phantom' && record.providerId !== 'solflare')
+    ) {
+      clearMobileWalletHandoffRecord();
+      return null;
+    }
+
+    if (Date.now() - record.createdAt > MOBILE_WALLET_HANDOFF_MAX_AGE_MS) {
+      clearMobileWalletHandoffRecord();
+      return null;
+    }
+
+    return { stateId: record.stateId, providerId: record.providerId, createdAt: record.createdAt };
+  } catch {
+    return null;
+  }
+}
+
+function storeMobileWalletHandoffRecord(record: MobileWalletHandoffRecord): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(MOBILE_WALLET_HANDOFF_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+    // Session handoff degrades to the redirect flow when storage is unavailable.
+  }
+}
+
+function clearMobileWalletHandoffRecord(): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.removeItem(MOBILE_WALLET_HANDOFF_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 async function requestMobileWalletAuthStep(url: URL): Promise<MobileWalletAuthBridgeResponse> {
   url.searchParams.set('response', 'json');
 
@@ -373,12 +431,23 @@ async function requestMobileWalletAuthStep(url: URL): Promise<MobileWalletAuthBr
 async function startMobileWalletAuth(providerId: MobileWalletDeepLinkProviderId): Promise<void> {
   if (typeof window === 'undefined') return;
 
+  const useHandoff = isStandaloneDisplayMode();
   const url = new URL(`${getHttpUrl()}/auth/mobile-wallet/${providerId}/start`);
   url.searchParams.set('returnTo', getCleanReturnTo());
   url.searchParams.set('callbackOrigin', window.location.origin);
+  if (useHandoff) {
+    url.searchParams.set('handoff', '1');
+  }
   const result = await requestMobileWalletAuthStep(url);
 
   if (result.action === 'redirect') {
+    if (useHandoff && result.stateId) {
+      storeMobileWalletHandoffRecord({
+        stateId: result.stateId,
+        providerId,
+        createdAt: Date.now(),
+      });
+    }
     window.location.assign(result.url);
     return;
   }
@@ -510,6 +579,12 @@ type WalletVerificationResult = {
   walletAddress?: string;
   pendingRegistration?: PendingRegistrationData;
 };
+
+type MobileWalletHandoffClaimResponse =
+  | { status: 'pending' }
+  | { status: 'expired' }
+  | { status: 'error'; error?: string }
+  | { status: 'complete'; result: WalletVerificationResult | null };
 
 async function requestWalletAuthNonce(address: string): Promise<{ nonce: string; message: string }> {
   return apiRequest<{ nonce: string; message: string }>(
@@ -650,6 +725,96 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     restoreSession();
   }, [applyPendingRegistration, applyUserSession, applyWalletVerificationResult, setActiveWalletProvider]);
+
+  // Installed-PWA session handoff: after a mobile wallet deeplink flow finishes in the
+  // system browser, reclaim the session from the server once the user switches back.
+  const handoffClaimInFlightRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const clearTimer = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const pollHandoff = async () => {
+      if (cancelled || handoffClaimInFlightRef.current) return;
+      if (document.visibilityState !== 'visible') return;
+
+      const record = readMobileWalletHandoffRecord();
+      if (!record) return;
+
+      handoffClaimInFlightRef.current = true;
+      try {
+        const claim = await apiRequest<MobileWalletHandoffClaimResponse>(
+          `/auth/mobile-wallet/handoff?state=${encodeURIComponent(record.stateId)}`
+        );
+        if (cancelled) return;
+
+        if (claim.status === 'pending') {
+          clearTimer();
+          timer = window.setTimeout(pollHandoff, MOBILE_WALLET_HANDOFF_POLL_INTERVAL_MS);
+          return;
+        }
+
+        clearMobileWalletHandoffRecord();
+
+        if (claim.status === 'complete' && claim.result) {
+          const address = claim.result.user?.walletAddress
+            ?? claim.result.pendingRegistration?.walletAddress
+            ?? claim.result.walletAddress
+            ?? '';
+          try {
+            applyWalletVerificationResult(
+              claim.result,
+              address,
+              claim.result.linked ? 'Wallet connected.' : 'Signed in with wallet.'
+            );
+          } catch (err: any) {
+            loggers.auth.error('mobile wallet handoff apply error:', err);
+            setError(getOAuthErrorMessage('wallet', null));
+          }
+          return;
+        }
+
+        if (claim.status === 'error') {
+          setError(getOAuthErrorMessage('wallet', claim.error ?? null));
+          return;
+        }
+
+        setError(getOAuthErrorMessage('wallet', 'wallet_expired'));
+      } catch (err: any) {
+        loggers.auth.debug('mobile wallet handoff claim retry:', err?.message);
+        if (!cancelled) {
+          clearTimer();
+          timer = window.setTimeout(pollHandoff, MOBILE_WALLET_HANDOFF_POLL_INTERVAL_MS);
+        }
+      } finally {
+        handoffClaimInFlightRef.current = false;
+      }
+    };
+
+    const handleReturnToApp = () => {
+      if (document.visibilityState === 'visible') {
+        pollHandoff();
+      }
+    };
+
+    pollHandoff();
+    document.addEventListener('visibilitychange', handleReturnToApp);
+    window.addEventListener('focus', handleReturnToApp);
+
+    return () => {
+      cancelled = true;
+      clearTimer();
+      document.removeEventListener('visibilitychange', handleReturnToApp);
+      window.removeEventListener('focus', handleReturnToApp);
+    };
+  }, [applyWalletVerificationResult]);
 
   useEffect(() => {
     const refreshWalletProviders = () => {

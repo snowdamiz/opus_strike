@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { addMediaQueryListener, useMobileDevice } from './useDeviceCapabilities';
+import { isStandaloneDisplayMode } from '../utils/pwa';
 
 export type MobileGameAccessBlockReason = 'portrait' | 'fullscreen';
 
@@ -155,9 +156,12 @@ function isFullscreenActive(): boolean {
 
   const webkitDocument = document as WebkitDocument;
 
+  // Installed PWAs already run without browser chrome; asking for the
+  // Fullscreen API on top of that is redundant friction.
   return Boolean(
     document.fullscreenElement ||
-    webkitDocument.webkitFullscreenElement
+    webkitDocument.webkitFullscreenElement ||
+    isStandaloneDisplayMode()
   );
 }
 

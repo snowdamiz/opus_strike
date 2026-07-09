@@ -15,19 +15,35 @@ export interface MobileWalletDeepLinkState {
   createdAt: number;
   authToken: string | null;
   callbackOrigin?: string;
+  handoff?: boolean;
   walletEncryptionPublicKey?: string;
   walletAddress?: string;
   walletSession?: string;
   authNonce?: string;
 }
 
+export type MobileWalletHandoffSessionKind = 'auth' | 'pending';
+
+export interface MobileWalletHandoffResult {
+  stateId: string;
+  status: 'success' | 'error';
+  createdAt: number;
+  sessionToken?: string;
+  sessionKind?: MobileWalletHandoffSessionKind;
+  payload?: unknown;
+  errorCode?: string;
+}
+
 export const MOBILE_WALLET_DEEP_LINK_TTL_MS = 10 * 60 * 1000;
+export const MOBILE_WALLET_HANDOFF_TTL_MS = 5 * 60 * 1000;
 
 const MAX_LOCAL_MOBILE_WALLET_STATES = 20_000;
 const LOCAL_MOBILE_WALLET_STATE_CLEANUP_INTERVAL_MS = 30_000;
 const MOBILE_WALLET_STATE_KEY_PREFIX = 'auth:mobile_wallet_deeplink';
+const MOBILE_WALLET_HANDOFF_KEY_PREFIX = 'auth:mobile_wallet_handoff';
 
 const localMobileWalletStates = new Map<string, { state: MobileWalletDeepLinkState; expiresAt: number }>();
+const localMobileWalletHandoffResults = new Map<string, { result: MobileWalletHandoffResult; expiresAt: number }>();
 let lastLocalCleanupAt = 0;
 let redisClientOverrideForTests: Redis | null | undefined;
 
@@ -48,6 +64,12 @@ function cleanupLocalMobileWalletStates(now: number): void {
   for (const [id, entry] of localMobileWalletStates.entries()) {
     if (entry.expiresAt <= now) {
       localMobileWalletStates.delete(id);
+    }
+  }
+
+  for (const [id, entry] of localMobileWalletHandoffResults.entries()) {
+    if (entry.expiresAt <= now) {
+      localMobileWalletHandoffResults.delete(id);
     }
   }
 
@@ -98,6 +120,7 @@ function parseMobileWalletState(raw: string | null): MobileWalletDeepLinkState |
       createdAt: state.createdAt,
       authToken: typeof state.authToken === 'string' ? state.authToken : null,
       callbackOrigin: typeof state.callbackOrigin === 'string' ? state.callbackOrigin : undefined,
+      handoff: state.handoff === true ? true : undefined,
       walletEncryptionPublicKey: typeof state.walletEncryptionPublicKey === 'string'
         ? state.walletEncryptionPublicKey
         : undefined,
@@ -189,6 +212,104 @@ export async function deleteMobileWalletDeepLinkState(id: string): Promise<void>
   localMobileWalletStates.delete(id);
 }
 
+function mobileWalletHandoffKey(stateId: string): string {
+  return `${MOBILE_WALLET_HANDOFF_KEY_PREFIX}:${stateId}`;
+}
+
+function parseMobileWalletHandoffResult(raw: string | null): MobileWalletHandoffResult | null {
+  if (!raw) return null;
+
+  try {
+    const result = JSON.parse(raw) as Partial<MobileWalletHandoffResult>;
+    if (
+      !result ||
+      typeof result.stateId !== 'string' ||
+      (result.status !== 'success' && result.status !== 'error') ||
+      typeof result.createdAt !== 'number'
+    ) {
+      return null;
+    }
+
+    return {
+      stateId: result.stateId,
+      status: result.status,
+      createdAt: result.createdAt,
+      sessionToken: typeof result.sessionToken === 'string' ? result.sessionToken : undefined,
+      sessionKind: result.sessionKind === 'auth' || result.sessionKind === 'pending'
+        ? result.sessionKind
+        : undefined,
+      payload: result.payload,
+      errorCode: typeof result.errorCode === 'string' ? result.errorCode : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function storeMobileWalletHandoffResult(
+  result: MobileWalletHandoffResult,
+  now = Date.now()
+): Promise<boolean> {
+  const redis = getMobileWalletStateRedisClient();
+
+  if (redis) {
+    try {
+      await ensureRedisReady(redis);
+      await redis.set(
+        mobileWalletHandoffKey(result.stateId),
+        JSON.stringify(result),
+        'PX',
+        MOBILE_WALLET_HANDOFF_TTL_MS
+      );
+      return true;
+    } catch (error) {
+      loggers.auth.error('Mobile wallet handoff result store failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  cleanupLocalMobileWalletStates(now);
+  localMobileWalletHandoffResults.set(result.stateId, {
+    result,
+    expiresAt: now + MOBILE_WALLET_HANDOFF_TTL_MS,
+  });
+  while (localMobileWalletHandoffResults.size > MAX_LOCAL_MOBILE_WALLET_STATES) {
+    const oldestId = localMobileWalletHandoffResults.keys().next().value as string | undefined;
+    if (!oldestId) break;
+    localMobileWalletHandoffResults.delete(oldestId);
+  }
+  return true;
+}
+
+export async function consumeMobileWalletHandoffResult(
+  stateId: string,
+  now = Date.now()
+): Promise<MobileWalletHandoffResult | null> {
+  const redis = getMobileWalletStateRedisClient();
+
+  if (redis) {
+    try {
+      await ensureRedisReady(redis);
+      const key = mobileWalletHandoffKey(stateId);
+      const [getResult] = (await redis.multi().get(key).del(key).exec()) ?? [];
+      const raw = getResult && !getResult[0] ? getResult[1] as string | null : null;
+      return parseMobileWalletHandoffResult(raw);
+    } catch (error) {
+      loggers.auth.error('Mobile wallet handoff result read failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  const entry = localMobileWalletHandoffResults.get(stateId);
+  localMobileWalletHandoffResults.delete(stateId);
+  if (!entry || entry.expiresAt <= now) return null;
+  return entry.result;
+}
+
 export function forceLocalMobileWalletDeepLinkStoreForTests(): void {
   redisClientOverrideForTests = null;
 }
@@ -196,6 +317,7 @@ export function forceLocalMobileWalletDeepLinkStoreForTests(): void {
 export function resetMobileWalletDeepLinkStoreForTests(): void {
   redisClientOverrideForTests = undefined;
   localMobileWalletStates.clear();
+  localMobileWalletHandoffResults.clear();
   lastLocalCleanupAt = 0;
 }
 

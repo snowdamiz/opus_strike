@@ -12705,3 +12705,97 @@ input[type="color"]::-webkit-color-swatch {
     padding-block: 0.32rem !important;
   }
 }
+
+/* iOS PWA install prompt */
+
+.pwa-install-toast {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(26rem, calc(100vw - 2rem));
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgb(255 255 255 / 0.11);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(180deg, rgb(18 20 24 / 0.98), rgb(8 10 14 / 0.98)),
+    rgb(var(--color-strike-surface));
+  box-shadow:
+    0 1.25rem 3rem rgb(0 0 0 / 0.58),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
+  animation: pwa-install-toast-in 0.4s cubic-bezier(0.21, 0.9, 0.35, 1.1);
+}
+
+@keyframes pwa-install-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(1.25rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.pwa-install-icon {
+  width: 2.6rem;
+  height: 2.6rem;
+  flex-shrink: 0;
+  border-radius: 0.6rem;
+  border: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.pwa-install-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.pwa-install-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.92);
+}
+
+.pwa-install-text {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: rgb(255 255 255 / 0.6);
+}
+
+.pwa-install-text strong {
+  color: rgb(255 255 255 / 0.85);
+}
+
+.pwa-install-share-glyph {
+  display: inline-block;
+  width: 0.8rem;
+  height: 1rem;
+  vertical-align: -0.15em;
+  color: rgb(96 244 255 / 0.9);
+}
+
+.pwa-install-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.5rem;
+  background: rgb(255 255 255 / 0.055);
+  color: rgb(255 255 255 / 0.6);
+  cursor: pointer;
+}
+
+.pwa-install-dismiss:hover {
+  background: rgb(255 255 255 / 0.1);
+  color: rgb(255 255 255 / 0.85);
+}

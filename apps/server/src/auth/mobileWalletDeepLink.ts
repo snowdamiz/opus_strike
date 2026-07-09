@@ -50,6 +50,7 @@ export function createMobileWalletDeepLinkState(input: {
   returnTo: unknown;
   authToken: string | null;
   callbackOrigin?: string;
+  handoff?: boolean;
   now?: number;
 }): MobileWalletDeepLinkState {
   const keyPair = nacl.box.keyPair();
@@ -64,6 +65,7 @@ export function createMobileWalletDeepLinkState(input: {
     createdAt: input.now ?? Date.now(),
     authToken: input.authToken,
     callbackOrigin: input.callbackOrigin,
+    handoff: input.handoff ? true : undefined,
   };
 }
 
