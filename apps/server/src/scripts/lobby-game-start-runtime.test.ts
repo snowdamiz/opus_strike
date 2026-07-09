@@ -190,6 +190,32 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
 
 {
   const assignments = createLobbyGameStartAssignments({
+    players: [
+      player({ id: 'red-a', name: 'Red A', team: 'red', heroId: 'phantom' }),
+      player({ id: 'blue-a', name: 'Blue A', team: 'blue', heroId: 'blaze' }),
+    ],
+  });
+  const ticketInputs = buildGameEntryTicketInputs({
+    lobbyId: 'lobby-ranked',
+    gameRoomId: 'game-ranked',
+    matchPerspective: 'first_person',
+    playerAssignments: assignments.playerAssignments,
+    authContexts: new Map([
+      ['red-a', { userId: 'user-red', displayName: 'Red' }],
+      ['blue-a', { userId: 'user-blue', displayName: 'Blue' }],
+    ]),
+    matchmakingTickets: new Map([
+      ['red-a', { mode: 'ranked', rankedRewardEligible: true } as any],
+      ['blue-a', { mode: 'ranked', rankedRewardEligible: false } as any],
+    ]),
+  });
+
+  assert.equal(ticketInputs.get('red-a')?.rankedRewardEligible, true);
+  assert.equal(ticketInputs.get('blue-a')?.rankedRewardEligible, undefined);
+}
+
+{
+  const assignments = createLobbyGameStartAssignments({
     players: [player({ id: 'red-a', name: 'Red A', team: 'red' })],
   });
 

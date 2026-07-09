@@ -4,6 +4,7 @@ import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import {
   buildPendingPlayerRewardPayoutGroups,
   buildMatchPlayerRewardGrants,
+  buildRankedBrCombatPlayerRewardGrants,
   buildSeasonTopTenRewardGrants,
   isPendingPlayerRewardPayoutEligible,
   limitPlayerRewardGrantsToBudget,
@@ -148,6 +149,25 @@ const config: PlayerRewardRuntimeConfig = {
 
 {
   const grants = buildMatchPlayerRewardGrants({
+    matchId: 'match-ineligible',
+    roomId: 'room-ineligible',
+    lobbyId: 'lobby-ineligible',
+    matchMode: 'ranked',
+    startedAt: new Date('2026-06-10T10:00:00.000Z'),
+    endedAt: new Date('2026-06-10T10:10:00.000Z'),
+    winningTeam: 'red',
+    participants: [participant({ rankedRewardEligible: false })],
+    rankedEligible: true,
+    integrityGate: gate(),
+    config,
+    dailyRewardCountsByUserId: new Map(),
+  });
+
+  assert.equal(grants.length, 0);
+}
+
+{
+  const grants = buildMatchPlayerRewardGrants({
     matchId: 'match-b',
     roomId: 'room-b',
     lobbyId: null,
@@ -182,6 +202,63 @@ const config: PlayerRewardRuntimeConfig = {
   });
 
   assert.equal(grants.length, 0);
+}
+
+{
+  const grants = buildRankedBrCombatPlayerRewardGrants({
+    matchId: 'match-br',
+    roomId: 'room-br',
+    lobbyId: 'lobby-br',
+    rewardEligibleUserIds: new Set(['eligible-user']),
+    grants: [
+      {
+        userId: 'eligible-user',
+        playerSessionId: 'session-eligible',
+        amountLamports: 100n,
+        metadata: {
+          formulaVersion: 'ranked_br_sol_v1' as const,
+          gameplayMode: 'battle_royal' as const,
+          settingsVersion: 1,
+          settingsVersions: [1],
+          damageLamportsPerHp: '250',
+          killLamports: '100000',
+          botTargetRewardBps: 7000,
+          humanRewardableDamageHp: 1,
+          botRewardableDamageHp: 0,
+          humanKills: 0,
+          botKills: 0,
+          damageRewardLamports: '100',
+          killRewardLamports: '0',
+          cappedLamports: '0',
+          skippedLamportsByReason: {},
+        },
+      },
+      {
+        userId: 'ineligible-user',
+        playerSessionId: 'session-ineligible',
+        amountLamports: 100n,
+        metadata: {
+          formulaVersion: 'ranked_br_sol_v1' as const,
+          gameplayMode: 'battle_royal' as const,
+          settingsVersion: 1,
+          settingsVersions: [1],
+          damageLamportsPerHp: '250',
+          killLamports: '100000',
+          botTargetRewardBps: 7000,
+          humanRewardableDamageHp: 1,
+          botRewardableDamageHp: 0,
+          humanKills: 0,
+          botKills: 0,
+          damageRewardLamports: '100',
+          killRewardLamports: '0',
+          cappedLamports: '0',
+          skippedLamportsByReason: {},
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(grants.map((grant) => grant.userId), ['eligible-user']);
 }
 
 {

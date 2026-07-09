@@ -61,21 +61,6 @@ function tokenAccount(mint: string, amount: string, decimals: number) {
   };
 }
 
-async function expectStatusError(
-  operation: () => Promise<unknown>,
-  message: RegExp,
-  statusCode: number
-): Promise<void> {
-  await assert.rejects(async () => {
-    try {
-      await operation();
-    } catch (error) {
-      assert.equal((error as { statusCode?: number }).statusCode, statusCode);
-      throw error;
-    }
-  }, message);
-}
-
 function restoreEnv(previous: Record<string, string | undefined>): void {
   for (const [key, value] of Object.entries(previous)) {
     if (value === undefined) delete process.env[key];
@@ -146,9 +131,12 @@ async function main(): Promise<void> {
 
   try {
     const locked = await rankedTokenHold.getRankedTokenHoldingStatus(null);
+    assert.equal(locked.rankedPlayEligible, true);
     assert.equal(locked.eligible, false);
+    assert.equal(locked.rewardEligible, false);
     assert.equal(locked.mode, 'locked');
-    assert.match(locked.lockedReason ?? '', /Ranked is locked/);
+    assert.equal(locked.rewardIneligibleReason, 'reward_gate_disabled');
+    assert.match(locked.lockedReason ?? '', /SOL rewards are disabled/);
     assert.equal(locked.cluster, 'localnet');
     assert.equal(accountFetches, 0);
 
@@ -187,27 +175,26 @@ async function main(): Promise<void> {
     assert.equal(enabled.tokenSymbol, 'TEST');
     assert.equal(enabled.requiredTokenAmount, '100');
 
-    await expectStatusError(
-      () => rankedTokenHold.getRankedTokenHoldingStatus(null),
-      /linked Solana wallet/,
-      400
-    );
-    await expectStatusError(
-      () => rankedTokenHold.getRankedTokenHoldingStatus(wallet.toBase58()),
-      /SOLANA_RPC_URL/,
-      503
-    );
+    const noWallet = await rankedTokenHold.getRankedTokenHoldingStatus(null);
+    assert.equal(noWallet.rankedPlayEligible, true);
+    assert.equal(noWallet.rewardEligible, false);
+    assert.equal(noWallet.rewardIneligibleReason, 'wallet_not_linked');
+
+    const noRpc = await rankedTokenHold.getRankedTokenHoldingStatus(wallet.toBase58());
+    assert.equal(noRpc.rankedPlayEligible, true);
+    assert.equal(noRpc.rewardEligible, false);
+    assert.equal(noRpc.rewardIneligibleReason, 'rpc_unconfigured');
 
     process.env.SOLANA_RPC_URL = 'http://127.0.0.1:8899';
-    await expectStatusError(
-      () => rankedTokenHold.getRankedTokenHoldingStatus('not-a-wallet'),
-      /valid Solana public key/,
-      400
-    );
+    const invalidWallet = await rankedTokenHold.getRankedTokenHoldingStatus('not-a-wallet');
+    assert.equal(invalidWallet.rankedPlayEligible, true);
+    assert.equal(invalidWallet.rewardEligible, false);
+    assert.equal(invalidWallet.rewardIneligibleReason, 'invalid_wallet');
     assert.equal(accountFetches, 0);
 
     const eligible = await rankedTokenHold.getRankedTokenHoldingStatus(wallet.toBase58());
     assert.equal(eligible.eligible, true);
+    assert.equal(eligible.rewardEligible, true);
     assert.equal(eligible.tokenDecimals, 2);
     assert.equal(eligible.requiredTokenAmount, '100');
     assert.equal(eligible.requiredTokenBaseUnits, '10000');
@@ -226,6 +213,9 @@ async function main(): Promise<void> {
     }, 'admin-b');
     const ineligible = await rankedTokenHold.getRankedTokenHoldingStatus(wallet.toBase58());
     assert.equal(ineligible.eligible, false);
+    assert.equal(ineligible.rewardEligible, false);
+    assert.equal(ineligible.rankedPlayEligible, true);
+    assert.equal(ineligible.rewardIneligibleReason, 'insufficient_balance');
     assert.equal(ineligible.requiredTokenBaseUnits, '10100');
     assert.equal(ineligible.balanceTokenBaseUnits, '9999');
     assert.equal(accountFetches, 2, 'admin gate changes must clear the status cache');

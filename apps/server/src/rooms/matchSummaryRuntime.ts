@@ -142,13 +142,22 @@ export class MatchSummaryRuntime {
     }
 
     if (input.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID && input.matchMode === 'ranked') {
+      const rewardEligibleUserIds = input.rankedPreview
+        ? new Set(input.rankedPreview.participants
+          .filter((participant) => participant.rankedRewardEligible !== false)
+          .map((participant) => participant.userId))
+        : null;
       event.goldenBiomeReward = {
         rewardLamports: input.goldenBiomeRewardLamports,
         rewardToken: 'SOL',
         winningTeam: input.winningTeam,
         eligiblePlayerIds: input.winningTeam
           ? event.players
-            .filter((player) => !player.isBot && player.team === input.winningTeam)
+            .filter((player) => (
+              !player.isBot
+              && player.team === input.winningTeam
+              && (!rewardEligibleUserIds || (player.userId ? rewardEligibleUserIds.has(player.userId) : false))
+            ))
             .map((player) => player.playerId)
           : [],
         status: input.winningTeam ? 'pending' : 'not_applicable',

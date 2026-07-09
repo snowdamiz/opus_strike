@@ -175,22 +175,18 @@ Optional production knobs:
 
 `GET /voice/status` reports whether voice is enabled and why it is disabled without exposing LiveKit secrets.
 
-### Ranked Token Hold
+### Ranked Reward Token Eligibility
 
-Ranked matchmaking verifies that the linked wallet holds the configured token value before issuing a ranked ticket. Native SOL uses the wallet lamport balance; SPL-token addresses use token accounts for that mint.
+Ranked matchmaking only requires an authenticated Discord account. Players can queue, complete ranked matches, and gain rating without a linked wallet or game-token balance. Linked wallets are checked only to decide whether a ranked player can earn Solana rewards.
 
 Server environment:
 
-- `RANKED_TOKEN_HOLD_ENABLED`: enable the gate. Default: `true`.
-- `RANKED_TOKEN_HOLD_TOKEN_ADDRESS`: ranked access token address. Default: `So11111111111111111111111111111111111111112` (native SOL).
-- `RANKED_TOKEN_HOLD_TOKEN_SYMBOL`: ticker shown in ranked UI. Default: `SOL` for native SOL, otherwise `TOKEN`.
-- `RANKED_TOKEN_HOLD_USD_CENTS`: required USD value in cents. Default: `2000` (`$20`).
-- `RANKED_TOKEN_HOLD_RPC_URL`: RPC URL for ranked hold checks. Falls back to `SOLANA_RPC_URL`.
+- `GAME_TOKEN_MINT`: SPL token mint required for ranked SOL reward eligibility.
+- `GAME_TOKEN_SYMBOL`: ticker shown in ranked reward UI.
+- `RANKED_TOKEN_HOLD_RPC_URL`: RPC URL for ranked reward eligibility checks. Falls back to `SOLANA_RPC_URL`.
 - `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.
-- `RANKED_TOKEN_HOLD_PRICE_SOURCE`: `coingecko` or `env`. Default: `coingecko`.
-- `RANKED_TOKEN_HOLD_TOKEN_USD_PRICE` or `RANKED_TOKEN_HOLD_TOKEN_USD_MICRO_USD`: required when `RANKED_TOKEN_HOLD_PRICE_SOURCE=env`.
-- `RANKED_TOKEN_HOLD_PRICE_STALE_MS`: price cache window. Default: `60000`.
 - `RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS`: balance RPC timeout. Default: `5000`.
+- `RANKED_TOKEN_HOLD_STATUS_CACHE_MS`: ranked reward eligibility cache window. Default: `30000`.
 
 ### Game Token And Paid Skins
 
@@ -198,7 +194,7 @@ Paid skins use the global game SPL token for payment. The server verifies the to
 
 Server environment:
 
-- `GAME_TOKEN_MINT`: global SPL token mint used by ranked gates, skin payments, and future token-gated systems.
+- `GAME_TOKEN_MINT`: global SPL token mint used by ranked reward eligibility, skin payments, and future token-gated systems.
 - `GAME_TOKEN_SYMBOL`: ticker shown in the UI.
 - `SOLANA_RPC_URL`: RPC used for token payments and wallet checks.
 - `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.

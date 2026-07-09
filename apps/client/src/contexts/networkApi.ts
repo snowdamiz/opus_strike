@@ -37,8 +37,17 @@ export interface QuickPlayTicketResponse {
 }
 
 export interface RankedTokenHoldStatus {
+  rankedPlayEligible: true;
   eligible: boolean;
+  rewardEligible: boolean;
   mode: 'locked' | 'token_required';
+  rewardIneligibleReason?: 'reward_gate_disabled'
+    | 'wallet_not_linked'
+    | 'invalid_wallet'
+    | 'reward_gate_unconfigured'
+    | 'rpc_unconfigured'
+    | 'rpc_unavailable'
+    | 'insufficient_balance';
   lockedReason?: string;
   tokenMintAddress: string | null;
   tokenAddress: string;
@@ -449,7 +458,7 @@ export async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldSta
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, 'Failed to check ranked token holding'));
+    throw new Error(await readErrorMessage(response, 'Failed to check ranked reward eligibility'));
   }
 
   const payload = await response.json() as { tokenHold: RankedTokenHoldStatus };

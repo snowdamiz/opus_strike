@@ -579,7 +579,6 @@ body,
 }
 
 .mobile-access-gate-message,
-.mobile-access-gate-help,
 .mobile-access-gate-error {
   margin-inline: auto;
   max-width: 23rem;
@@ -630,11 +629,6 @@ body,
   height: 1.12rem;
 }
 
-.mobile-access-gate-help {
-  color: rgb(255 255 255 / 0.55);
-  font-size: 0.78rem;
-}
-
 .mobile-access-gate-error {
   border: 1px solid rgb(var(--color-ui-danger-light) / 0.32);
   border-radius: 0.5rem;
@@ -666,7 +660,6 @@ body,
   }
 
   .mobile-access-gate-message,
-  .mobile-access-gate-help,
   .mobile-access-gate-error {
     margin-inline: 0;
   }

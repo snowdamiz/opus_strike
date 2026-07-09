@@ -110,8 +110,6 @@ const EMPTY_HERO_ID_SET = new Set<HeroId>();
 const PURCHASE_STATUS_POLL_MS = 1800;
 const PURCHASE_STATUS_POLL_ATTEMPTS = 6;
 const LAMPORTS_PER_SOL = 1_000_000_000n;
-const RANKED_TOKEN_HOLD_CTA_LABEL = 'Hold 500k To Play';
-const RANKED_TOKEN_PUMP_FUN_URL = 'https://pump.fun/coin/5Dq9LnhLRiisTQPfb21pgoGZt8h3E9h31JyiSzvYpump';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -349,24 +347,21 @@ function XProfileLink({ onActivate }: { onActivate: () => void }) {
   );
 }
 
-function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
+function rankedTokenRewardRequirement(status: RankedTokenHoldStatus): string {
   const symbol = rewardTokenTicker(status.tokenSymbol);
   const fallbackAmount = status.requiredTokenAmount || '0';
   const amount = formatCompactTokenAmount(status.requiredTokenAmount, fallbackAmount);
   return `${amount} ${symbol ?? 'tokens'} hold`;
 }
 
-function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
-  if (status.mode === 'locked') return status.lockedReason ?? 'Ranked is locked';
-  return `Ranked requires ${rankedTokenHoldRequirement(status)}`;
-}
-
-function isRankedTokenHoldPurchaseStatus(status: RankedTokenHoldStatus | null): boolean {
-  return status?.mode === 'token_required' && status.eligible === false;
-}
-
-function openRankedTokenHoldLink() {
-  window.open(RANKED_TOKEN_PUMP_FUN_URL, '_blank', 'noopener,noreferrer');
+function rankedRewardEligibilityMessage(status: RankedTokenHoldStatus | null): string {
+  if (!status) return 'SOL rewards require an eligible linked wallet';
+  if (status.rewardEligible) return `SOL rewards enabled with ${rankedTokenRewardRequirement(status)}`;
+  if (status.mode === 'locked') return status.lockedReason ?? 'Ranked SOL rewards are disabled';
+  if (status.rewardIneligibleReason === 'wallet_not_linked') {
+    return `Ranked is open with Discord; link a wallet and hold ${rankedTokenRewardRequirement(status)} for SOL rewards`;
+  }
+  return `Ranked is open; SOL rewards require ${rankedTokenRewardRequirement(status)}`;
 }
 
 function getSeasonBoundaryDate(season: RankedSeasonSnapshot): Date | null {
@@ -525,7 +520,6 @@ export function MainLobby() {
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
   const [playMenuPreferences, setPlayMenuPreferences] = useState<PlayMenuPreferences>(loadPlayMenuPreferences);
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
-  const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
   const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
   const [rewardEconomy, setRewardEconomy] = useState<RewardEconomy | null>(null);
@@ -839,14 +833,12 @@ export function MainLobby() {
     if (activePlayMode !== 'ranked' || !isAuthenticated || isRankedPreseason) {
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
-      setIsRankedTokenHoldLoading(false);
       return;
     }
 
     let isCurrent = true;
     setRankedTokenHoldStatus(null);
     setRankedTokenHoldError(null);
-    setIsRankedTokenHoldLoading(true);
 
     getRankedTokenHoldStatus()
       .then((status) => {
@@ -855,11 +847,7 @@ export function MainLobby() {
       })
       .catch((err) => {
         if (!isCurrent) return;
-        setRankedTokenHoldError(err instanceof Error ? err.message : 'Failed to check ranked token holding');
-      })
-      .finally(() => {
-        if (!isCurrent) return;
-        setIsRankedTokenHoldLoading(false);
+        setRankedTokenHoldError(err instanceof Error ? err.message : 'Failed to check ranked reward eligibility');
       });
 
     return () => {
@@ -1207,23 +1195,6 @@ export function MainLobby() {
     }
     if (!isAuthenticated) {
       handleOpenLogin();
-      return;
-    }
-    if (isRankedTokenHoldPurchaseStatus(rankedTokenHoldStatus)) {
-      openRankedTokenHoldLink();
-      return;
-    }
-    if (rankedTokenHoldStatus?.eligible === false) {
-      setError(rankedTokenGateBlockedMessage(rankedTokenHoldStatus));
-      return;
-    }
-    if (!hasWalletAccount) {
-      const linked = await handleLinkWallet();
-      if (!linked) return;
-      setRankedTokenHoldStatus(null);
-      setRankedTokenHoldError(null);
-    }
-    if (isRankedTokenHoldLoading) {
       return;
     }
     try {
@@ -1996,10 +1967,6 @@ function PlayTab({
     ? getHumanPartyHeroIds(lineupMembers, lineupLocalUserId)
     : EMPTY_HERO_ID_SET;
   const partyHasDuplicateHeroes = isInParty && uniquePartyHeroesRequired && hasDuplicatePartyHeroes(lineupMembers);
-  const isRankedTokenHoldPurchaseState = selectedPlayMode === 'ranked' &&
-    !requiresTutorial &&
-    isRankedTokenHoldPurchaseStatus(rankedTokenHoldStatus);
-  const isRankedTokenHoldPurchaseCtaActive = isRankedTokenHoldPurchaseState && !isReconnectChecking && !canReconnect;
   const mainPlayLabel = isReconnectChecking
     ? 'CHECKING...'
     : canReconnect
@@ -2008,8 +1975,6 @@ function PlayTab({
         ? isLoading
           ? 'STARTING...'
           : 'START TUTORIAL'
-        : isRankedTokenHoldPurchaseCtaActive
-          ? RANKED_TOKEN_HOLD_CTA_LABEL
         : selectedPlayMode === 'practice'
           ? getPlayModeActionLabel(selectedPlayMode, isLoading)
         : isInParty
@@ -2021,23 +1986,19 @@ function PlayTab({
               ? 'UNREADY'
               : 'READY UP'
             : getPlayModeActionLabel(selectedPlayMode, isLoading);
-  const isRankedEligibilityBlocked = selectedPlayMode === 'ranked' &&
-    !requiresTutorial &&
-    rankedTokenHoldStatus?.eligible === false &&
-    !isRankedTokenHoldPurchaseState;
   const isPracticePlayMode = selectedPlayMode === 'practice';
   const partySize = party?.members.length ?? 1;
   const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
   const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
   const isPartyTooLargeForMode = !isPracticePlayMode && isInParty && partySize > partyMemberLimit;
-  const primaryDisabled = isRankedTokenHoldPurchaseCtaActive ? false : isLoading || isReconnectChecking || isSkippingTutorial || (
+  const primaryDisabled = isLoading || isReconnectChecking || isSkippingTutorial || (
     !isPracticePlayMode && isInParty && isPartyLeader && !isPartyReadyToStart
   ) || (!isPracticePlayMode && partyHasDuplicateHeroes) || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
-  ) || isRankedEligibilityBlocked;
-  const primaryDisabledReason = isRankedTokenHoldPurchaseCtaActive ? null : getPrimaryDisabledReason({
+  );
+  const primaryDisabledReason = getPrimaryDisabledReason({
     isLoading,
     isReconnectChecking,
     isInParty,
@@ -2089,7 +2050,6 @@ function PlayTab({
         botFillDisabledReason={botFillDisabledReason}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
-        isRankedTokenHoldPurchaseCtaActive={isRankedTokenHoldPurchaseCtaActive}
         isInParty={isInParty}
         isPartyLeader={isPartyLeader}
         canReconnect={canReconnect}
@@ -2102,7 +2062,6 @@ function PlayTab({
         onSetBotFillEnabled={onSetBotFillEnabled}
         onLogin={onLogin}
         onReconnect={onReconnect}
-        onRankedTokenHoldLink={openRankedTokenHoldLink}
         onStartTutorial={onStartTutorial}
         onSkipTutorial={onSkipTutorial}
         onPlayAction={onPlayAction}
@@ -2519,9 +2478,6 @@ function getPrimaryDisabledReason(input: {
   }
   if (input.selectedPlayMode !== 'ranked' || input.requiresTutorial) return null;
   if (input.rankedSeason.mode === 'preseason') return formatSeasonBoundaryDate(input.rankedSeason);
-  if (input.rankedTokenHoldStatus?.eligible === false) {
-    return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
-  }
   return null;
 }
 
@@ -2584,11 +2540,9 @@ function getModeTitle(input: {
 
   if (input.mode !== 'ranked') return getPlayModeLabel(input.mode);
   if (input.rankedSeason.mode === 'preseason') return 'Ranked is disabled during Pre-season';
-  if (input.rankedTokenHoldStatus?.eligible === false) {
-    return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
-  }
-  if (input.isAuthenticated && !input.hasWalletAccount) return 'Connect a wallet before entering ranked';
-  return input.rankedTokenHoldError ?? 'Battle Royal ranked queue';
+  if (!input.isAuthenticated) return 'Battle Royal ranked queue';
+  if (input.rankedTokenHoldError) return 'Battle Royal ranked queue';
+  return rankedRewardEligibilityMessage(input.rankedTokenHoldStatus);
 }
 
 function PlayActionStack({
@@ -2603,7 +2557,6 @@ function PlayActionStack({
   botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
-  isRankedTokenHoldPurchaseCtaActive,
   isInParty,
   isPartyLeader,
   canReconnect,
@@ -2616,7 +2569,6 @@ function PlayActionStack({
   onSetBotFillEnabled,
   onLogin,
   onReconnect,
-  onRankedTokenHoldLink,
   onStartTutorial,
   onSkipTutorial,
   onPlayAction,
@@ -2632,7 +2584,6 @@ function PlayActionStack({
   botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
-  isRankedTokenHoldPurchaseCtaActive: boolean;
   isInParty: boolean;
   isPartyLeader: boolean;
   canReconnect: boolean;
@@ -2645,7 +2596,6 @@ function PlayActionStack({
   onSetBotFillEnabled: (enabled: boolean) => void;
   onLogin: () => void;
   onReconnect: () => void;
-  onRankedTokenHoldLink: () => void;
   onStartTutorial: () => void;
   onSkipTutorial: () => void;
   onPlayAction: () => void;
@@ -2659,8 +2609,6 @@ function PlayActionStack({
       onReconnect();
     } else if (shouldStartTutorial) {
       onStartTutorial();
-    } else if (isRankedTokenHoldPurchaseCtaActive) {
-      onRankedTokenHoldLink();
     } else {
       onPlayAction();
     }
@@ -2787,10 +2735,7 @@ function PlayModeSelector({
   const renderModeOption = (mode: PlayMenuMode) => {
     const selected = mode === selectedPlayMode;
     const isRanked = mode === 'ranked';
-    const locked = isRanked && (
-      rankedSeason.mode === 'preseason' ||
-      (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
-    );
+    const locked = isRanked && rankedSeason.mode === 'preseason';
     const title = getModeTitle({
       mode,
       isAuthenticated,

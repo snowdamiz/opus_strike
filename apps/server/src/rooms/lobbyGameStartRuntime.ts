@@ -20,6 +20,7 @@ import {
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import type { CreateGameEntryTicketInput } from '../security/entryTickets';
+import type { MatchmakingTicketClaims } from '../security/matchmakingTickets';
 
 export interface LobbyGameStartPlayer {
   id: string;
@@ -221,6 +222,7 @@ export function buildGameEntryTicketInputs(input: {
   matchPerspective: MatchPerspective;
   playerAssignments: readonly ParticipantAssignment[];
   authContexts: ReadonlyMap<string, LobbyGameStartAuthContext>;
+  matchmakingTickets?: ReadonlyMap<string, MatchmakingTicketClaims>;
 }): Map<string, CreateGameEntryTicketInput> {
   const ticketInputs = new Map<string, CreateGameEntryTicketInput>();
 
@@ -230,6 +232,7 @@ export function buildGameEntryTicketInputs(input: {
     if (!authContext) {
       throw new Error('Authenticated player context missing');
     }
+    const matchmakingTicket = input.matchmakingTickets?.get(assignment.playerId);
 
     ticketInputs.set(assignment.playerId, {
       lobbyId: input.lobbyId,
@@ -242,6 +245,9 @@ export function buildGameEntryTicketInputs(input: {
       assignedTeam: assignment.team,
       selectedHero: assignment.heroId,
       selectedSkinId: assignment.skinId,
+      ...(matchmakingTicket?.mode === 'ranked' && matchmakingTicket.rankedRewardEligible === true
+        ? { rankedRewardEligible: true }
+        : {}),
     });
   }
 

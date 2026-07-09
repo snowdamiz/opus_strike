@@ -25,6 +25,7 @@ export interface GameEntryTicketClaims {
   assignedTeam?: Team;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  rankedRewardEligible?: boolean;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -41,6 +42,7 @@ export interface CreateGameEntryTicketInput {
   assignedTeam?: Team;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  rankedRewardEligible?: boolean;
   ttlMs?: number;
 }
 
@@ -70,6 +72,7 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
     selectedSkinId: normalizeSelectedSkinId(input.selectedHero, input.selectedSkinId),
+    rankedRewardEligible: input.rankedRewardEligible === true ? true : undefined,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -93,6 +96,7 @@ export function verifyGameEntryTicket(
   const role = normalizeTicketRole(claims.role);
   if (role === 'combat' && !isTeamId(claims.assignedTeam)) return null;
   if (!claims.userId || !claims.lobbyPlayerId || !claims.displayName || !claims.nonce) return null;
+  if (claims.rankedRewardEligible !== undefined && typeof claims.rankedRewardEligible !== 'boolean') return null;
 
   return {
     ...claims,
@@ -102,5 +106,6 @@ export function verifyGameEntryTicket(
       ? claims.matchPerspective
       : DEFAULT_MATCH_PERSPECTIVE,
     selectedSkinId: normalizeSelectedSkinId(claims.selectedHero, claims.selectedSkinId),
+    rankedRewardEligible: claims.rankedRewardEligible === true ? true : undefined,
   };
 }

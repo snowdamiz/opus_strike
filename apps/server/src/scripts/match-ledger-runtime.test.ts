@@ -53,6 +53,7 @@ function createRuntime(): MatchLedgerRuntime {
   return new MatchLedgerRuntime({
     getConfig: () => config,
     getDurableUserId: (playerId) => durableUsers.get(playerId) ?? null,
+    isRankedRewardEligible: () => true,
     isNpc: (playerId) => npcIds.has(playerId),
     createMatchId: () => `match-${nextMatchId++}`,
   });

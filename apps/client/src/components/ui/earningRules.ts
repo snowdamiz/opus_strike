@@ -40,13 +40,13 @@ function formatUsdCents(cents: number | undefined, fallback: number): string {
   return `$${(value / 100).toFixed(2).replace(/\.00$/, '')}`;
 }
 
-function rankedEntryGateLabel(economy: RewardEconomy | null, tokenSymbol: string | null): string | null {
+function rankedRewardGateLabel(economy: RewardEconomy | null, tokenSymbol: string | null): string | null {
   const gate = economy?.rankedEntryGate;
   if (!gate) return null;
-  if (gate.mode === 'locked') return 'Locked';
+  if (gate.mode === 'locked') return 'Rewards disabled';
 
   const amount = formatCompactTokenAmount(gate.requiredTokenAmount, gate.requiredTokenAmount || '0');
-  return `Hold ${tokenAmountLabel(amount, tokenSymbol)}`;
+  return `Hold ${tokenAmountLabel(amount, tokenSymbol)} for SOL`;
 }
 
 function getRankedBrSolCombatRules(rewards: RewardEconomy['playerRewards'] | undefined): EarningRule[] {
@@ -111,14 +111,14 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
 
   rules.push(...getRankedBrSolCombatRules(rewards));
 
-  const rankedGateLabel = rankedEntryGateLabel(economy, token);
-  if (rankedGateLabel) {
+  const rankedRewardGateLabelText = rankedRewardGateLabel(economy, token);
+  if (rankedRewardGateLabelText) {
     rules.push({
-      label: 'Play Ranked',
-      value: rankedGateLabel,
-      tooltip: rankedGateLabel === 'Locked'
-        ? 'Ranked queue access is currently locked.'
-        : 'Ranked queue access requires holding the listed token amount.',
+      label: 'Ranked rewards',
+      value: rankedRewardGateLabelText,
+      tooltip: rankedRewardGateLabelText === 'Rewards disabled'
+        ? 'Ranked SOL rewards are currently disabled.'
+        : 'Ranked queue is open; SOL rewards require holding the listed token amount.',
     });
   }
 

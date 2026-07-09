@@ -34,11 +34,13 @@ function ticket(input: Partial<GameEntryTicketClaims> = {}): GameEntryTicketClai
   assert.equal(registry.getAuthUserId('session-a'), 'user-a');
   assert.equal(registry.getDurableUserId('session-a'), 'user-a');
   assert.equal(registry.hasEntryTicket('session-a'), false);
+  assert.equal(registry.isRankedRewardEligible('session-a'), false);
   assert.deepEqual(Array.from(registry.getAuthContexts()).map((context) => context.userId), ['user-a']);
 
   registry.clearSession('session-a');
   assert.equal(registry.getAuthUserId('session-a'), undefined);
   assert.equal(registry.getDurableUserId('session-a'), null);
+  assert.equal(registry.isRankedRewardEligible('session-a'), false);
 }
 
 {
@@ -47,6 +49,14 @@ function ticket(input: Partial<GameEntryTicketClaims> = {}): GameEntryTicketClai
   registry.setSession('session-a', auth('auth-user'), ticket({ userId: 'ticket-user' }));
   assert.equal(registry.hasEntryTicket('session-a'), true);
   assert.equal(registry.getDurableUserId('session-a'), 'auth-user');
+  assert.equal(registry.isRankedRewardEligible('session-a'), false);
+}
+
+{
+  const registry = new RoomParticipantRegistry();
+
+  registry.setSession('session-a', auth('auth-user'), ticket({ userId: 'ticket-user', rankedRewardEligible: true }));
+  assert.equal(registry.isRankedRewardEligible('session-a'), true);
 }
 
 {
@@ -85,6 +95,22 @@ function ticket(input: Partial<GameEntryTicketClaims> = {}): GameEntryTicketClai
     issuedAt: 5_000,
     ttlMs: 60_000,
   }), null);
+}
+
+{
+  const registry = new RoomParticipantRegistry();
+
+  registry.rememberReconnectParticipant(ticket({ rankedRewardEligible: true }));
+  assert.equal(
+    registry.createRunningGameReconnectTicket({
+      userId: 'user-a',
+      lobbyId: 'lobby-a',
+      gameRoomId: 'game-a',
+      issuedAt: 6_000,
+      ttlMs: 60_000,
+    })?.rankedRewardEligible,
+    true
+  );
 }
 
 {

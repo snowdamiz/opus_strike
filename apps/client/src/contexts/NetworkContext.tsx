@@ -636,7 +636,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       clearRunningGameSession();
       setPracticeMode(false);
 
-      loggers.network.debug('ranked matchmaking', rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenAmount);
+      loggers.network.debug('ranked matchmaking', rankedTicket.targetRankLabel, {
+        rewardEligible: rankedTicket.tokenHold.rewardEligible,
+        requiredTokenAmount: rankedTicket.tokenHold.requiredTokenAmount,
+      });
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,

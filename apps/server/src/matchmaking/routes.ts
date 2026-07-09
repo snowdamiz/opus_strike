@@ -8,7 +8,6 @@ import {
 } from '../auth/tutorialCompletion';
 import { consumeRateLimitForKey } from '../auth/rateLimit';
 import {
-  assertRankedTokenHoldingEligibility,
   getRankedTokenHoldingStatus,
 } from './rankedTokenHold';
 import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './playerCapacity';
@@ -353,8 +352,8 @@ router.get('/ranked-token-hold-status', async (req: Request, res: Response) => {
 
     res.json({ tokenHold: await getRankedTokenHoldingStatus(context.walletAddress) });
   } catch (error) {
-    console.error('[matchmaking] Failed to check ranked token holding:', error);
-    sendRouteError(res, error, 'Failed to check ranked token holding');
+    console.error('[matchmaking] Failed to check ranked reward eligibility:', error);
+    sendRouteError(res, error, 'Failed to check ranked reward eligibility');
   }
 });
 
@@ -368,7 +367,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       devBypass: req.headers[DEV_TUTORIAL_BYPASS_HEADER],
     });
 
-    const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
+    const tokenHold = await getRankedTokenHoldingStatus(context.walletAddress);
     const selectedHero = readSelectedHero(req.body?.selectedHero);
     const selectedSkinId = selectedHero
       ? await resolveUserLoadoutForHero(context.userId, selectedHero, readSelectedSkin(selectedHero, req.body?.selectedSkinId))

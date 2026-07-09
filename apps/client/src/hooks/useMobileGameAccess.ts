@@ -15,7 +15,7 @@ type LockableScreenOrientation = ScreenOrientation & {
   lock?: (orientation: 'landscape') => Promise<void>;
 };
 
-type MobileGameAccessSnapshot = {
+export type MobileGameAccessSnapshot = {
   isFullscreen: boolean;
   isLandscape: boolean;
   isMobile: boolean;
@@ -133,10 +133,10 @@ function readMobileGameAccessSnapshot(isMobile: boolean): MobileGameAccessSnapsh
   };
 }
 
-function getMobileAccessBlockReason(snapshot: MobileGameAccessSnapshot): MobileGameAccessBlockReason | null {
+export function getMobileAccessBlockReason(snapshot: MobileGameAccessSnapshot): MobileGameAccessBlockReason | null {
   if (!snapshot.isMobile) return null;
   if (!snapshot.isLandscape) return 'portrait';
-  if (!snapshot.isFullscreen) return 'fullscreen';
+  if (!snapshot.isFullscreen && snapshot.isRequestFullscreenSupported) return 'fullscreen';
   return null;
 }
 

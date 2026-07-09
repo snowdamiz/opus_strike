@@ -100,37 +100,37 @@ function valuesFor(economy: RewardEconomy | null): string[] {
 
 assert.deepEqual(
   labelsFor(createEconomy()),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR SOL', 'SOL payouts', 'Play Ranked', 'Golden map', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR SOL', 'SOL payouts', 'Ranked rewards', 'Golden map', 'Wager Games'],
   'enabled reward economy should show all payout rules',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ playerRewards: { enabled: false } })),
-  ['Ranked BR SOL', 'SOL payouts', 'Play Ranked', 'Golden map', 'Wager Games'],
-  'turning off token ranked payouts should still show live ranked BR SOL combat',
+  ['Ranked BR SOL', 'SOL payouts', 'Ranked rewards', 'Golden map', 'Wager Games'],
+  'turning off ranked match payouts should still show live ranked BR SOL combat',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ playerRewards: { rankedBrCombatRewardsEnabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked rewards', 'Golden map', 'Wager Games'],
   'turning off ranked BR SOL combat should hide combat SOL rows',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ playerRewards: { rankedBrCombatRewardsShadowMode: true } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked rewards', 'Golden map', 'Wager Games'],
   'shadowed ranked BR SOL combat should not advertise earnable SOL',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ goldenBiome: { enabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR SOL', 'SOL payouts', 'Play Ranked', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR SOL', 'SOL payouts', 'Ranked rewards', 'Wager Games'],
   'turning off golden map rewards should hide the golden map row',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ wagers: { enabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR SOL', 'SOL payouts', 'Play Ranked', 'Golden map'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR SOL', 'SOL payouts', 'Ranked rewards', 'Golden map'],
   'turning off wagers should hide the wager row',
 );
 
@@ -140,8 +140,8 @@ assert.deepEqual(
     goldenBiome: { enabled: false },
     wagers: { enabled: false },
   })),
-  ['Play Ranked'],
-  'ranked token hold copy stays visible when payout rewards are disabled',
+  ['Ranked rewards'],
+  'ranked reward eligibility copy stays visible when payout rewards are disabled',
 );
 
 assert.deepEqual(
@@ -158,7 +158,7 @@ assert.deepEqual(
     '15K UNITS capture, 5K UNITS return',
     'Earn SOL from ranked BR combat',
     'Clean matches batch into payouts',
-    'Hold 2.5M UNITS',
+    'Hold 2.5M UNITS for SOL',
     '2% roll, 0.2 SOL each winner',
     '90% winners, 5% burn, 5% treasury',
   ],
@@ -167,14 +167,14 @@ assert.deepEqual(
 
 assert.equal(
   valuesFor(createEconomy({ rankedEntryGate: { requiredTokenAmount: '500' } })).at(5),
-  'Hold 500 UNITS',
-  'ranked token hold copy should use the admin-configured amount',
+  'Hold 500 UNITS for SOL',
+  'ranked reward eligibility copy should use the admin-configured amount',
 );
 
 assert.equal(
   valuesFor(createEconomy({ rankedEntryGate: { mode: 'locked', requiredTokenAmount: '0' } })).at(5),
-  'Locked',
-  'locked ranked gates should not show a token amount',
+  'Rewards disabled',
+  'disabled ranked reward gates should not show a token amount',
 );
 
 console.log('earning rules tests passed');

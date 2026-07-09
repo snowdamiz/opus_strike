@@ -38,7 +38,7 @@ function buildQueueStatusUrl(
 }
 
 const MIN_RANK_SEARCH_DISTANCE = 2;
-const RANKED_TOKEN_HOLD_LABEL = 'SPL Token Hold';
+const RANKED_REWARD_ELIGIBILITY_LABEL = 'Ranked Rewards';
 const COUNTDOWN_TICK_MS = 1000;
 
 interface MatchmakingTeammate {
@@ -244,7 +244,7 @@ export function MatchmakingScreen() {
             {capacityBlocked
               ? 'Servers are full. Your squad will launch when a match frees space.'
               : isRanked
-              ? `${playerName ? `${playerName}, ` : ''}token holding verified. Building a ranked Battle Royal roster.`
+              ? `${playerName ? `${playerName}, ` : ''}building a ranked Battle Royal roster.`
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>
           <div className="matchmaking-rank-row mt-5 flex flex-wrap items-center justify-center gap-2">
@@ -276,9 +276,11 @@ export function MatchmakingScreen() {
                 <div>
                   <p className="matchmaking-panel-kicker font-body text-xs uppercase tracking-[0.22em] text-amber-200/55">Access</p>
                   <p className="matchmaking-access-title mt-1 font-display text-2xl text-amber-100">
-                    {RANKED_TOKEN_HOLD_LABEL}
+                    {RANKED_REWARD_ELIGIBILITY_LABEL}
                   </p>
-                  <p className="matchmaking-panel-copy mt-1 font-body text-xs text-white/35">Holding requirement verified</p>
+                  <p className="matchmaking-panel-copy mt-1 font-body text-xs text-white/35">
+                    Ranking enabled; SOL rewards require eligible wallet/token hold
+                  </p>
                 </div>
                 <span className="border border-white/10 bg-white/5 px-2.5 py-1 font-display text-xs uppercase text-white/70">
                   queued

@@ -66,6 +66,7 @@ const ranked = createMatchmakingTicket({
   rankedTokenRequiredBaseUnits: '120000000',
   rankedTokenBalanceBaseUnits: '140000000',
   rankedTokenCheckedAt: claims.issuedAt,
+  rankedRewardEligible: true,
 });
 const rankedVerified = verifyMatchmakingTicket(ranked.ticket, ranked.claims.issuedAt + 1);
 assert.ok(rankedVerified);
@@ -78,5 +79,26 @@ assert.equal(rankedVerified.rankedTokenAddress, RANKED_TEST_SPL_MINT);
 assert.equal(rankedVerified.rankedTokenDecimals, 6);
 assert.equal(rankedVerified.rankedTokenRequiredBaseUnits, '120000000');
 assert.equal(rankedVerified.rankedTokenBalanceBaseUnits, '140000000');
+assert.equal(rankedVerified.rankedRewardEligible, true);
+
+const walletlessRanked = createMatchmakingTicket({
+  mode: 'ranked',
+  selectedHero: 'blaze',
+  userId: 'user_walletless_ranked',
+  competitiveRating: strongPlayer,
+  rankDivisionIndex: getRankDivisionIndex(strongPlayer),
+  targetRankDivisionIndex: getRankDivisionIndex(strongPlayer),
+  placementRemaining: 0,
+  rankedRewardEligible: false,
+});
+const walletlessRankedVerified = verifyMatchmakingTicket(
+  walletlessRanked.ticket,
+  walletlessRanked.claims.issuedAt + 1
+);
+assert.ok(walletlessRankedVerified);
+assert.equal(walletlessRankedVerified.mode, 'ranked');
+assert.equal(walletlessRankedVerified.selectedHero, 'blaze');
+assert.equal(walletlessRankedVerified.rankedRewardEligible, false);
+assert.equal(walletlessRankedVerified.rankedTokenAddress, undefined);
 
 console.log('matchmaking skill tests passed');

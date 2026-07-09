@@ -60,6 +60,7 @@ export interface MatchLedgerConfig {
 export interface MatchLedgerRuntimeDeps {
   getConfig(): MatchLedgerConfig;
   getDurableUserId(playerId: string): string | null;
+  isRankedRewardEligible(playerId: string): boolean;
   isNpc(playerId: string): boolean;
   createMatchId?: () => string;
 }
@@ -168,6 +169,7 @@ export class MatchLedgerRuntime {
       flagReturns: 0,
       joinedAt: new Date(now),
       leftAt: null,
+      rankedRewardEligible: this.deps.isRankedRewardEligible(player.id),
     };
     ledger.participants.set(userId, participant);
     return participant;
@@ -218,6 +220,7 @@ export class MatchLedgerRuntime {
       flagReturns: participant.flagReturns,
       joinedAt: participant.joinedAt,
       leftAt: participant.leftAt,
+      rankedRewardEligible: participant.rankedRewardEligible,
     }));
   }
 
@@ -325,6 +328,7 @@ export class MatchLedgerRuntime {
     participant.displayName = player.name;
     participant.team = player.team as Team;
     participant.heroId = getParticipantHeroId(player);
+    participant.rankedRewardEligible = this.deps.isRankedRewardEligible(player.id);
   }
 
   private isTrackableCombatPlayer(player: Player | null | undefined): player is Player {

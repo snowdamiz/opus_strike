@@ -53,8 +53,18 @@ export interface RankedTokenHoldRuntimeConfig {
 }
 
 export interface RankedTokenHoldingStatus {
+  rankedPlayEligible: true;
   eligible: boolean;
+  rewardEligible: boolean;
   mode: RankedEntryGateMode;
+  rewardIneligibleReason?:
+    | 'reward_gate_disabled'
+    | 'wallet_not_linked'
+    | 'invalid_wallet'
+    | 'reward_gate_unconfigured'
+    | 'rpc_unconfigured'
+    | 'rpc_unavailable'
+    | 'insufficient_balance';
   lockedReason?: string;
   tokenMintAddress: string | null;
   tokenAddress: string;
@@ -112,7 +122,7 @@ function readWholeTokenAmount(value: unknown, options: { requirePositive: boolea
 
 function readGateMode(value: unknown): RankedEntryGateMode {
   if (value === 'locked' || value === 'token_required') return value;
-  throw new Error('Invalid ranked entry gate mode');
+  throw new Error('Invalid ranked reward gate mode');
 }
 
 function toGateMode(value: PrismaRankedEntryGateMode): RankedEntryGateMode {
@@ -364,9 +374,12 @@ async function getSplTokenBalance(
 
 function lockedStatus(config: RankedTokenHoldRuntimeConfig, checkedAt: Date): RankedTokenHoldingStatus {
   return {
+    rankedPlayEligible: true,
     eligible: false,
+    rewardEligible: false,
     mode: 'locked',
-    lockedReason: 'Ranked is locked until the SPL token requirement is enabled',
+    rewardIneligibleReason: 'reward_gate_disabled',
+    lockedReason: 'Ranked SOL rewards are disabled until the token reward requirement is enabled',
     tokenMintAddress: config.tokenMintAddress,
     tokenAddress: config.tokenAddress,
     tokenSymbol: config.tokenSymbol,
@@ -374,6 +387,30 @@ function lockedStatus(config: RankedTokenHoldRuntimeConfig, checkedAt: Date): Ra
     requiredTokenAmount: config.requiredTokenAmount,
     requiredTokenBaseUnits: '0',
     balanceTokenBaseUnits: '0',
+    cluster: config.cluster,
+    checkedAt: checkedAt.toISOString(),
+  };
+}
+
+function rewardIneligibleStatus(
+  config: RankedTokenHoldRuntimeConfig,
+  checkedAt: Date,
+  reason: RankedTokenHoldingStatus['rewardIneligibleReason'],
+  overrides: Partial<Pick<RankedTokenHoldingStatus, 'tokenDecimals' | 'requiredTokenBaseUnits' | 'balanceTokenBaseUnits'>> = {}
+): RankedTokenHoldingStatus {
+  return {
+    rankedPlayEligible: true,
+    eligible: false,
+    rewardEligible: false,
+    mode: config.mode,
+    rewardIneligibleReason: reason,
+    tokenMintAddress: config.tokenMintAddress,
+    tokenAddress: config.tokenAddress,
+    tokenSymbol: config.tokenSymbol,
+    tokenDecimals: overrides.tokenDecimals ?? null,
+    requiredTokenAmount: config.requiredTokenAmount,
+    requiredTokenBaseUnits: overrides.requiredTokenBaseUnits ?? '0',
+    balanceTokenBaseUnits: overrides.balanceTokenBaseUnits ?? '0',
     cluster: config.cluster,
     checkedAt: checkedAt.toISOString(),
   };
@@ -405,23 +442,86 @@ export async function getRankedTokenHoldingStatus(walletAddress?: string | null)
   }
 
   if (!walletAddress) {
-    throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'wallet_not_linked'),
+      now,
+      config.statusCacheMs
+    );
   }
   if (!config.tokenMintAddress || BigInt(config.requiredTokenAmount) <= 0n) {
-    throw Object.assign(new Error('Ranked token gate is not fully configured'), { statusCode: 503 });
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'reward_gate_unconfigured'),
+      now,
+      config.statusCacheMs
+    );
   }
   if (!config.rpcUrl) {
-    throw Object.assign(new Error('SOLANA_RPC_URL is required for ranked SPL token holding checks'), { statusCode: 503 });
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'rpc_unconfigured'),
+      now,
+      config.statusCacheMs
+    );
   }
 
-  const publicKey = parseWalletAddress(walletAddress);
-  const tokenMint = new PublicKey(config.tokenMintAddress);
-  const connection = connectionFactory(config.rpcUrl);
-  const balance = await getSplTokenBalance(connection, publicKey, tokenMint, config.rpcTimeoutMs);
+  let publicKey: PublicKey;
+  try {
+    publicKey = parseWalletAddress(walletAddress);
+  } catch {
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'invalid_wallet'),
+      now,
+      config.statusCacheMs
+    );
+  }
+
+  let tokenMint: PublicKey;
+  try {
+    tokenMint = new PublicKey(config.tokenMintAddress);
+  } catch {
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'reward_gate_unconfigured'),
+      now,
+      config.statusCacheMs
+    );
+  }
+
+  let connection: Connection;
+  try {
+    connection = connectionFactory(config.rpcUrl);
+  } catch {
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'rpc_unavailable'),
+      now,
+      config.statusCacheMs
+    );
+  }
+
+  let balance: TokenHoldingBalance;
+  try {
+    balance = await getSplTokenBalance(connection, publicKey, tokenMint, config.rpcTimeoutMs);
+  } catch {
+    return cacheStatus(
+      cacheKey,
+      rewardIneligibleStatus(config, checkedAt, 'rpc_unavailable'),
+      now,
+      config.statusCacheMs
+    );
+  }
+
   const requiredTokenBaseUnits = calculateRequiredTokenBaseUnits(config.requiredTokenAmount, balance.decimals);
+  const rewardEligible = balance.balanceBaseUnits >= requiredTokenBaseUnits;
   const status: RankedTokenHoldingStatus = {
-    eligible: balance.balanceBaseUnits >= requiredTokenBaseUnits,
+    rankedPlayEligible: true,
+    eligible: rewardEligible,
+    rewardEligible,
     mode: 'token_required',
+    rewardIneligibleReason: rewardEligible ? undefined : 'insufficient_balance',
     tokenMintAddress: config.tokenMintAddress,
     tokenAddress: config.tokenAddress,
     tokenSymbol: config.tokenSymbol,
@@ -434,32 +534,4 @@ export async function getRankedTokenHoldingStatus(walletAddress?: string | null)
   };
 
   return cacheStatus(cacheKey, status, now, config.statusCacheMs);
-}
-
-function formatTokenBaseUnits(baseUnits: string, decimals: number | null, symbol: string): string {
-  if (decimals === null) return `${symbol} token hold`;
-  const value = BigInt(baseUnits);
-  const scale = 10n ** BigInt(decimals);
-  const whole = value / scale;
-  const fraction = (value % scale).toString().padStart(decimals, '0').replace(/0+$/, '');
-  return `${fraction ? `${whole.toString()}.${fraction}` : whole.toString()} ${symbol}`;
-}
-
-export async function assertRankedTokenHoldingEligibility(walletAddress?: string | null): Promise<RankedTokenHoldingStatus> {
-  const status = await getRankedTokenHoldingStatus(walletAddress);
-  if (!status.eligible) {
-    const message = status.mode === 'locked'
-      ? status.lockedReason ?? 'Ranked is locked'
-      : `Ranked requires holding at least ${formatTokenBaseUnits(
-        status.requiredTokenBaseUnits,
-        status.tokenDecimals,
-        status.tokenSymbol
-      )}`;
-
-    throw Object.assign(
-      new Error(message),
-      { statusCode: 403, tokenHold: status }
-    );
-  }
-  return status;
 }
