@@ -9,6 +9,7 @@ import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
 import { BLAZE_UI_COLORS, HERO_PREVIEW_COLORS } from '../../styles/colorTokens';
+import { isIosDevice } from '../../utils/platform';
 import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
 type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
@@ -182,7 +183,7 @@ const PREVIEW_LOOP_CONFIG: Record<
 };
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
 const HERO_PREVIEW_IDLE_YAW_LIMIT = Math.PI / 4;
-const PREVIEW_CLEAR_COLOR_VAR = '--color-strike-canvas';
+const TRANSPARENT_CLEAR_COLOR = new THREE.Color(0, 0, 0);
 const PREVIEW_OFFSCREEN_ROOT_ID = 'hero-preview-offscreen-root';
 const PREVIEW_SAMPLE_SIZE = 24;
 const RANK_PLATFORM_PREVIEW_LIFT = 0.14;
@@ -209,20 +210,6 @@ function createPreviewStageElement(): HTMLDivElement | null {
   element.className = 'hero-preview-stage';
   element.setAttribute('data-ready', 'false');
   return element;
-}
-
-function getCssRgbColor(variableName: string): THREE.Color {
-  const channels = getComputedStyle(document.documentElement)
-    .getPropertyValue(variableName)
-    .trim()
-    .split(/\s+/)
-    .map(Number);
-
-  if (channels.length >= 3 && channels.slice(0, 3).every(Number.isFinite)) {
-    return new THREE.Color(channels[0] / 255, channels[1] / 255, channels[2] / 255);
-  }
-
-  return new THREE.Color(0, 0, 0);
 }
 
 function isCanvasSafeToReveal(canvas: HTMLCanvasElement): boolean {
@@ -315,6 +302,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const shellRef = useRef<HTMLDivElement>(null);
   const hasCanvasCreatedRef = useRef(false);
+  const usePremultipliedAlpha = isIosDevice();
   const shouldIdleRotate = idleRotation ?? interactive;
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
@@ -403,7 +391,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
 
   const handleCanvasCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
     suppressExpectedContextLossLog(gl);
-    gl.setClearColor(getCssRgbColor(PREVIEW_CLEAR_COLOR_VAR), 0);
+    gl.setClearColor(TRANSPARENT_CLEAR_COLOR, 0);
     gl.setClearAlpha(0);
     hasCanvasCreatedRef.current = true;
   }, []);
@@ -447,7 +435,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
           gl={{
             alpha: true,
             antialias: true,
-            premultipliedAlpha: false,
+            premultipliedAlpha: usePremultipliedAlpha,
             preserveDrawingBuffer,
             powerPreference: size === 'compact' ? 'default' : 'high-performance',
           }}

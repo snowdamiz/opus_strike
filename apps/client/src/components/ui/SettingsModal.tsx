@@ -30,7 +30,9 @@ import {
   type RecordingShowcaseJob,
 } from '../../contexts/networkApi';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
+import { canOfferPwaInstallInstructions } from '../../utils/pwa';
 import { GameDialog } from './GameDialog';
+import { ShareGlyph } from './InstallPwaPrompt';
 import { WalletProviderOptions } from './WalletProviderOptions';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account' | 'development';
@@ -143,6 +145,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [playerNameError, setPlayerNameError] = useState<string | null>(null);
   const [playerNameNotice, setPlayerNameNotice] = useState<string | null>(null);
   const [isSavingPlayerName, setIsSavingPlayerName] = useState(false);
+  const [showPwaInstallInstructions, setShowPwaInstallInstructions] = useState(false);
   const [recordingHeroId, setRecordingHeroId] = useState<HeroId>('blaze');
   const [recordingGameplayMode, setRecordingGameplayMode] = useState<GameplayMode>('team_deathmatch');
   const [recordingJob, setRecordingJob] = useState<RecordingShowcaseJob | null>(null);
@@ -169,6 +172,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     && !isSavingPlayerName
     && trimmedPlayerNameDraft.length > 0
     && trimmedPlayerNameDraft !== user?.name;
+  const canInstallPwa = canOfferPwaInstallInstructions();
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -1052,6 +1056,37 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 )}
 
+                {canInstallPwa && (
+                  <>
+                    <SettingRow label="Install App" description="Add Slop Heroes to this device">
+                      <button
+                        type="button"
+                        onClick={() => setShowPwaInstallInstructions((visible) => !visible)}
+                        aria-expanded={showPwaInstallInstructions}
+                        className="settings-install-pwa-button flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-cyan-500/15 px-3.5 font-display text-xs text-cyan-100 transition-colors hover:border-cyan-200/45 hover:bg-cyan-500/25 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/70"
+                      >
+                        <Download className="h-4 w-4" aria-hidden="true" />
+                        {showPwaInstallInstructions ? 'HIDE STEPS' : 'INSTALL'}
+                      </button>
+                    </SettingRow>
+
+                    {showPwaInstallInstructions && (
+                      <div className="settings-install-pwa-card" role="note">
+                        <div className="settings-install-pwa-card-icon">
+                          <ShareGlyph />
+                        </div>
+                        <div className="settings-install-pwa-card-copy">
+                          <p className="settings-install-pwa-card-title">Add to Home Screen</p>
+                          <p className="settings-install-pwa-card-text">
+                            Tap <ShareGlyph /> in the browser toolbar, choose{' '}
+                            <strong>Add to Home Screen</strong>, then confirm.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <SettingRow
                   label="Player"
                   description={hasAccount ? 'Currently signed in' : isSessionLoading ? 'Checking saved session' : 'No active account'}
@@ -1076,7 +1111,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   label="In-Game Name"
                   description={hasAccount ? `${trimmedPlayerNameDraft.length}/16 characters` : 'Sign in to rename'}
                 >
-                  <div className="flex w-[clamp(12rem,34vw,19rem)] flex-col gap-2">
+                  <div className="settings-player-name-editor flex w-[clamp(12rem,34vw,19rem)] flex-col gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <input
                         type="text"
