@@ -40,6 +40,7 @@ import {
   type RoomPhaseStatePatch,
 } from './roomPhaseRuntime';
 import { RoomTimeoutRegistry } from './roomTimeouts';
+import { getBoundedRoomTickSchedule } from './roomTickSchedule';
 import {
   PrimaryMagazineTracker,
   type PrimaryMagazineState,
@@ -873,6 +874,24 @@ interface MovementPhysicsFrameEntry {
   serverOwnedInput?: PlayerInput;
 }
 
+interface StateStreamBroadcastOptions {
+  transforms?: boolean;
+  vitals?: boolean;
+  match?: boolean;
+  forceTransforms?: boolean;
+  forceVitals?: boolean;
+  forceMatch?: boolean;
+}
+
+interface ResolvedStateStreamBroadcastOptions {
+  transforms: boolean;
+  vitals: boolean;
+  match: boolean;
+  forceTransforms: boolean;
+  forceVitals: boolean;
+  forceMatch: boolean;
+}
+
 interface AimTargetHit {
   target: Player;
   hit: PlayerCombatHitResult;
@@ -906,6 +925,7 @@ const RECENT_COMBAT_INTEREST_MS = 900;
 const PLAYER_INTEREST_INTERVAL_MS = 200;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
+const MAX_RETAINED_ROOM_TICKS_AFTER_STALL = 4;
 const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
 const MAP_PING_TTL_MS = 15_000;
 const MAP_PING_MAX_DISTANCE = 380;
@@ -1084,6 +1104,8 @@ export class GameRoom extends Room<GameState> {
   private tickLoopActive = false;
   private tickInProgress = false;
   private nextTickAtMs = 0;
+  private deferStateStreamsForCatchup = false;
+  private pendingCatchupStateStreams: ResolvedStateStreamBroadcastOptions | null = null;
   private consecutiveTickErrors = 0;
   private lastTickErrorLoggedAtMs = 0;
   private matchStartCancelTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1169,6 +1191,7 @@ export class GameRoom extends Room<GameState> {
       this.replicationState.getRecentCombatInterestUntil(recipientId, targetId)
     ),
     buildPackedTransform: (id, player) => this.buildPackedTransform(id, player),
+    isFullRateTransform: (id, player, now) => this.shouldSendFullRateTransform(id, player, now),
   });
   private matchSnapshotSignature = '';
   private readonly playerPings = new PlayerPingRuntime();
@@ -1740,26 +1763,36 @@ export class GameRoom extends Room<GameState> {
     }
 
     const nowMs = performance.now();
-    const scheduledTickAtMs = this.nextTickAtMs || nowMs;
-    const tickDelayMs = nowMs - scheduledTickAtMs;
+    const requestedTickAtMs = this.nextTickAtMs || nowMs;
+    const tickDelayMs = nowMs - requestedTickAtMs;
+    const schedule = getBoundedRoomTickSchedule({
+      nowMs,
+      scheduledTickAtMs: requestedTickAtMs,
+      tickIntervalMs: TICK_INTERVAL_MS,
+      maxRetainedTicks: MAX_RETAINED_ROOM_TICKS_AFTER_STALL,
+    });
+    this.nextTickAtMs = schedule.scheduledTickAtMs;
+    this.deferStateStreamsForCatchup = schedule.hasCatchupTick;
     if (tickDelayMs >= TICK_DELAY_WARN_MS) {
-      this.logTickDelay(tickDelayMs);
+      this.logTickDelay(tickDelayMs, schedule.droppedTickCount);
     }
     this.tickInProgress = true;
+    let tickCompleted = false;
     try {
       this.tick();
+      tickCompleted = true;
       this.consecutiveTickErrors = 0;
     } catch (error) {
       this.handleTickError(error);
     } finally {
+      if (tickCompleted && !this.deferStateStreamsForCatchup) {
+        this.flushPendingCatchupStateStreams();
+      }
       this.tickInProgress = false;
       if (!this.tickLoopActive) return;
 
       const finishedAtMs = performance.now();
-      const idealNextTickAtMs = scheduledTickAtMs + TICK_INTERVAL_MS;
-      this.nextTickAtMs = idealNextTickAtMs <= finishedAtMs
-        ? finishedAtMs + TICK_INTERVAL_MS
-        : idealNextTickAtMs;
+      this.nextTickAtMs = schedule.nextTickAtMs;
       this.scheduleNextTick(this.nextTickAtMs - finishedAtMs);
     }
   }
@@ -1768,12 +1801,14 @@ export class GameRoom extends Room<GameState> {
     this.tickLoopActive = false;
     this.tickInProgress = false;
     this.nextTickAtMs = 0;
+    this.deferStateStreamsForCatchup = false;
+    this.pendingCatchupStateStreams = null;
     if (!this.tickTimer) return;
     clearTimeout(this.tickTimer);
     this.tickTimer = null;
   }
 
-  private logTickDelay(delayMs: number): void {
+  private logTickDelay(delayMs: number, droppedTickCount = 0): void {
     const now = Date.now();
     if (now - this.lastTickDelayLoggedAtMs < TICK_DELAY_LOG_SAMPLE_MS) return;
     this.lastTickDelayLoggedAtMs = now;
@@ -1784,6 +1819,7 @@ export class GameRoom extends Room<GameState> {
       phase: this.state.phase,
       tick: this.state.tick,
       delayMs: Math.round(delayMs),
+      droppedTickCount,
       tickIntervalMs: TICK_INTERVAL_MS,
       eventLoopDelayP99Ms: this.eventLoopDelay ? Math.round(this.eventLoopDelay.percentile(99) / 1_000_000) : 0,
       serverTime: this.state.serverTime || now,
@@ -2888,9 +2924,14 @@ export class GameRoom extends Room<GameState> {
     recipient: Player | null,
     targetId: string,
     target: Player,
-    now: number
+    now: number,
+    frameContext?: ReplicationFrameContext
   ): boolean {
-    if (this.shouldSendFullRateTransform(targetId, target, now)) return true;
+    if (
+      frameContext
+        ? frameContext.fullRateTransformPlayerIds.has(targetId)
+        : this.shouldSendFullRateTransform(targetId, target, now)
+    ) return true;
     if (!recipient) return true;
     if (recipient.id === targetId) return true;
 
@@ -4261,7 +4302,13 @@ export class GameRoom extends Room<GameState> {
       if (exactStateVisible) {
         transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
         signature = options.frameContext?.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
-        highRelevance = this.isHighRelevanceTransform(options.recipient ?? null, id, player, now);
+        highRelevance = this.isHighRelevanceTransform(
+          options.recipient ?? null,
+          id,
+          player,
+          now,
+          options.frameContext
+        );
       }
       const delta = selectPackedTransformDelta({
         state: replicationState,
@@ -4428,7 +4475,7 @@ export class GameRoom extends Room<GameState> {
         this.shouldSendExactEnemyState(targetRecipient, id, player, targetNow, interest)
       ),
       isHighRelevanceTransform: (targetRecipient, id, player, targetNow) => (
-        this.isHighRelevanceTransform(targetRecipient, id, player, targetNow)
+        this.isHighRelevanceTransform(targetRecipient, id, player, targetNow, options.frameContext)
       ),
       buildPackedTransform: (id, player) => this.buildPackedTransform(id, player),
     });
@@ -4495,13 +4542,87 @@ export class GameRoom extends Room<GameState> {
     this.lastMatchSnapshotBroadcastAt = now;
     this.matchSnapshotSignature = signature;
     this.recordObserverEvent('matchSnapshot', snapshot);
+    const snapshotByTeam = new Map<Team, MatchSnapshotMessage>();
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      this.sendTracked(client, 'matchSnapshot', this.buildMatchSnapshot(recipient));
+      const recipientTeam = isBattleRoyalMode(this.gameplayMode) && recipient && !isObserverPlayer(recipient)
+        ? recipient.team as Team
+        : null;
+      if (!recipientTeam) {
+        this.sendTracked(client, 'matchSnapshot', snapshot);
+        continue;
+      }
+
+      let recipientSnapshot = snapshotByTeam.get(recipientTeam);
+      if (!recipientSnapshot) {
+        recipientSnapshot = this.buildMatchSnapshot(recipient);
+        snapshotByTeam.set(recipientTeam, recipientSnapshot);
+      }
+      this.sendTracked(client, 'matchSnapshot', recipientSnapshot);
     }
   }
 
-  private broadcastStateStreams(options: { transforms?: boolean; vitals?: boolean; match?: boolean; forceTransforms?: boolean; forceVitals?: boolean; forceMatch?: boolean } = {}): void {
+  private resolveStateStreamBroadcastOptions(
+    options: StateStreamBroadcastOptions
+  ): ResolvedStateStreamBroadcastOptions {
+    return {
+      transforms: options.transforms ?? (
+        this.state.phase === 'playing' ||
+        this.state.phase === 'countdown' ||
+        this.state.phase === 'deployment'
+      ),
+      vitals: options.vitals ?? true,
+      match: options.match ?? true,
+      forceTransforms: options.forceTransforms === true,
+      forceVitals: options.forceVitals === true,
+      forceMatch: options.forceMatch === true,
+    };
+  }
+
+  private mergeStateStreamBroadcastOptions(
+    left: ResolvedStateStreamBroadcastOptions,
+    right: ResolvedStateStreamBroadcastOptions
+  ): ResolvedStateStreamBroadcastOptions {
+    return {
+      transforms: left.transforms || right.transforms,
+      vitals: left.vitals || right.vitals,
+      match: left.match || right.match,
+      forceTransforms: left.forceTransforms || right.forceTransforms,
+      forceVitals: left.forceVitals || right.forceVitals,
+      forceMatch: left.forceMatch || right.forceMatch,
+    };
+  }
+
+  private queueCatchupStateStreams(options: ResolvedStateStreamBroadcastOptions): void {
+    this.pendingCatchupStateStreams = this.pendingCatchupStateStreams
+      ? this.mergeStateStreamBroadcastOptions(this.pendingCatchupStateStreams, options)
+      : options;
+  }
+
+  private consumePendingCatchupStateStreams(
+    options: ResolvedStateStreamBroadcastOptions
+  ): ResolvedStateStreamBroadcastOptions {
+    const pending = this.pendingCatchupStateStreams;
+    if (!pending) return options;
+    this.pendingCatchupStateStreams = null;
+    return this.mergeStateStreamBroadcastOptions(pending, options);
+  }
+
+  private flushPendingCatchupStateStreams(): void {
+    const pending = this.pendingCatchupStateStreams;
+    if (!pending) return;
+    this.pendingCatchupStateStreams = null;
+    this.broadcastStateStreams(pending);
+  }
+
+  private broadcastStateStreams(options: StateStreamBroadcastOptions = {}): void {
+    const resolvedOptions = this.resolveStateStreamBroadcastOptions(options);
+    if (this.deferStateStreamsForCatchup) {
+      this.queueCatchupStateStreams(resolvedOptions);
+      return;
+    }
+    const effectiveOptions = this.consumePendingCatchupStateStreams(resolvedOptions);
+
     this.visibilityInterest.resetMetricsWindow();
     this.measureTickSpan('ping_probe_broadcast', () => {
       this.probePlayerPings();
@@ -4512,21 +4633,16 @@ export class GameRoom extends Room<GameState> {
       () => this.buildReplicationFrameContext()
     );
 
-    const shouldBroadcastTransforms = options.transforms ?? (
-      this.state.phase === 'playing' ||
-      this.state.phase === 'countdown' ||
-      this.state.phase === 'deployment'
-    );
     this.measureTickSpan('player_state_stream_fanout', () => this.broadcastPlayerStateStreams({
-      transforms: shouldBroadcastTransforms,
-      vitals: options.vitals ?? true,
-      forceTransforms: options.forceTransforms,
-      forceVitals: options.forceVitals,
+      transforms: effectiveOptions.transforms,
+      vitals: effectiveOptions.vitals,
+      forceTransforms: effectiveOptions.forceTransforms,
+      forceVitals: effectiveOptions.forceVitals,
       frameContext,
     }));
 
-    if (options.match ?? true) {
-      this.measureTickSpan('match_snapshot_broadcast', () => this.broadcastMatchSnapshot(options.forceMatch));
+    if (effectiveOptions.match) {
+      this.measureTickSpan('match_snapshot_broadcast', () => this.broadcastMatchSnapshot(effectiveOptions.forceMatch));
     }
   }
 
@@ -12632,18 +12748,22 @@ export class GameRoom extends Room<GameState> {
       SERVER_MOVEMENT_SUBSTEPS_PER_TICK + entry.grantedExtraSubsteps
     );
 
-    for (let step = 0; step < budget; step++) {
-      const stepSeconds = MOVEMENT_SUBSTEP_SECONDS;
-      const stepNow = tickTime + step * stepSeconds * 1000;
-      const epochBeforeStep = authority.movementEpoch;
-      const command = this.movementAuthorities.getNextMovementCommand(authority);
-      if (!command) break;
-      const input = this.writeMovementCommandToInput(
-        command,
-        player.lastInput ?? createEmptyPlayerInput(command.seq, player, stepNow),
-        stepNow
-      );
-      this.measureTickSpan('movement_human_full_steps', () => {
+    const movementStepsStartedAt = performance.now();
+    try {
+      for (let step = 0; step < budget; step++) {
+        const stepSeconds = MOVEMENT_SUBSTEP_SECONDS;
+        // Backlog commands are movement substeps, not future wall-clock events.
+        // Giving each catch-up substep a timestamp after this authoritative tick
+        // can make cooldowns and ability ordering move backwards on the next tick.
+        const stepNow = tickTime;
+        const epochBeforeStep = authority.movementEpoch;
+        const command = this.movementAuthorities.getNextMovementCommand(authority);
+        if (!command) break;
+        const input = this.writeMovementCommandToInput(
+          command,
+          player.lastInput ?? createEmptyPlayerInput(command.seq, player, stepNow),
+          stepNow
+        );
         this.stepAuthoritativeMovementInput(
           player,
           input,
@@ -12652,10 +12772,15 @@ export class GameRoom extends Room<GameState> {
           collisionWorld,
           { processGameplayInput: true, command }
         );
-      });
-      authority.metrics.commandsProcessed++;
-      processedThisTick++;
-      if (authority.movementEpoch !== epochBeforeStep) break;
+        authority.metrics.commandsProcessed++;
+        processedThisTick++;
+        if (authority.movementEpoch !== epochBeforeStep) break;
+      }
+    } finally {
+      this.tickProfiler.recordSpan(
+        'movement_human_full_steps',
+        performance.now() - movementStepsStartedAt
+      );
     }
 
     authority.metrics.queueLength = authority.pendingCommands.length;

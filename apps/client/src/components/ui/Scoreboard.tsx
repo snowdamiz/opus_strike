@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import { getTeamCatalogForGameplayMode } from '@voxel-strike/shared';
@@ -73,6 +73,14 @@ export function Scoreboard() {
   const { reportPlayer } = useNetwork();
   const [reportingPlayerId, setReportingPlayerId] = useState<string | null>(null);
   const [reportNotice, setReportNotice] = useState<string | null>(null);
+  const [confirmingReportId, setConfirmingReportId] = useState<string | null>(null);
+  const confirmReportTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (confirmReportTimeoutRef.current !== null) {
+      window.clearTimeout(confirmReportTimeoutRef.current);
+    }
+  }, []);
   const { gameplayMode, players, localPlayer, playerPings, redScore, blueScore } = useGameStore(
     useShallow(state => ({
       gameplayMode: state.gameplayMode,
@@ -112,13 +120,29 @@ export function Scoreboard() {
 
   const handleReportPlayer = async (player: Player) => {
     if (reportingPlayerId) return;
-    const details = window.prompt(`Report ${player.name} for cheating`, '');
-    if (details === null) return;
 
+    // Two-tap confirm instead of window.prompt: the native dialog drops
+    // pointer lock on desktop and is jarring over the game canvas on touch.
+    if (confirmingReportId !== player.id) {
+      setConfirmingReportId(player.id);
+      if (confirmReportTimeoutRef.current !== null) {
+        window.clearTimeout(confirmReportTimeoutRef.current);
+      }
+      confirmReportTimeoutRef.current = window.setTimeout(() => {
+        setConfirmingReportId(null);
+      }, 3500);
+      return;
+    }
+
+    if (confirmReportTimeoutRef.current !== null) {
+      window.clearTimeout(confirmReportTimeoutRef.current);
+      confirmReportTimeoutRef.current = null;
+    }
+    setConfirmingReportId(null);
     setReportingPlayerId(player.id);
     setReportNotice(null);
     try {
-      await reportPlayer(player.id, 'cheating', details);
+      await reportPlayer(player.id, 'cheating');
       setReportNotice(`Report submitted for ${player.name}.`);
     } catch (error) {
       setReportNotice(error instanceof Error ? error.message : 'Report failed.');
@@ -137,6 +161,7 @@ export function Scoreboard() {
         mutedPlayerIds={mutedPlayerIds}
         togglePlayerMute={togglePlayerMute}
         reportingPlayerId={reportingPlayerId}
+        confirmingReportId={confirmingReportId}
         reportNotice={reportNotice}
         onReportPlayer={handleReportPlayer}
       />
@@ -238,6 +263,7 @@ export function Scoreboard() {
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
                   canReport={player.id !== localPlayer?.id && !player.isBot}
                   isReporting={reportingPlayerId === player.id}
+                  isConfirmingReport={confirmingReportId === player.id}
                   onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
                   faction={factionToPresentation(FACTIONS.red)}
@@ -268,6 +294,7 @@ export function Scoreboard() {
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
                   canReport={player.id !== localPlayer?.id && !player.isBot}
                   isReporting={reportingPlayerId === player.id}
+                  isConfirmingReport={confirmingReportId === player.id}
                   onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
                   faction={factionToPresentation(FACTIONS.blue)}
@@ -309,6 +336,7 @@ interface BattleRoyalScoreboardProps {
   mutedPlayerIds: Set<string>;
   togglePlayerMute: (playerId: string) => void;
   reportingPlayerId: string | null;
+  confirmingReportId: string | null;
   reportNotice: string | null;
   onReportPlayer: (player: Player) => Promise<void>;
 }
@@ -321,6 +349,7 @@ function BattleRoyalScoreboard({
   mutedPlayerIds,
   togglePlayerMute,
   reportingPlayerId,
+  confirmingReportId,
   reportNotice,
   onReportPlayer,
 }: BattleRoyalScoreboardProps) {
@@ -402,6 +431,7 @@ function BattleRoyalScoreboard({
                         onToggleVoiceMute={() => togglePlayerMute(player.id)}
                         canReport={player.id !== localPlayer?.id && !player.isBot}
                         isReporting={reportingPlayerId === player.id}
+                        isConfirmingReport={confirmingReportId === player.id}
                         onReport={() => void onReportPlayer(player)}
                         pingMs={playerPings.get(player.id) ?? null}
                         faction={faction}
@@ -460,6 +490,7 @@ interface PlayerRowProps {
   onToggleVoiceMute: () => void;
   canReport: boolean;
   isReporting: boolean;
+  isConfirmingReport: boolean;
   onReport: () => void;
   pingMs: number | null;
   isCaptureTheFlag: boolean;
@@ -475,6 +506,7 @@ function PlayerRow({
   onToggleVoiceMute,
   canReport,
   isReporting,
+  isConfirmingReport,
   onReport,
   pingMs,
   isCaptureTheFlag,
@@ -553,6 +585,8 @@ function PlayerRow({
           <button
             type="button"
             title={voiceMuted ? 'Unmute voice' : 'Mute voice'}
+            aria-label={voiceMuted ? 'Unmute voice' : 'Mute voice'}
+            aria-pressed={voiceMuted}
             onClick={(event) => {
               event.stopPropagation();
               onToggleVoiceMute();
@@ -580,14 +614,19 @@ function PlayerRow({
           <button
             type="button"
             title="Report cheating"
+            aria-label={isConfirmingReport ? 'Tap again to confirm report' : 'Report player for cheating'}
             disabled={isReporting}
             onClick={(event) => {
               event.stopPropagation();
               onReport();
             }}
-            className="h-7 rounded-md border border-amber-300/20 bg-amber-400/10 px-2 font-display text-[9px] uppercase tracking-wider text-amber-100/75 transition hover:border-amber-200/45 hover:bg-amber-300/18 hover:text-white disabled:cursor-wait disabled:opacity-55"
+            className={`h-7 rounded-md border px-2 font-display text-[9px] uppercase tracking-wider transition disabled:cursor-wait disabled:opacity-55 ${
+              isConfirmingReport
+                ? 'border-red-300/60 bg-red-500/25 text-red-100'
+                : 'border-amber-300/20 bg-amber-400/10 text-amber-100/75 hover:border-amber-200/45 hover:bg-amber-300/18 hover:text-white'
+            }`}
           >
-            {isReporting ? '...' : 'Report'}
+            {isReporting ? '...' : isConfirmingReport ? 'Sure?' : 'Report'}
           </button>
         ) : (
           <span className="text-white/18">-</span>

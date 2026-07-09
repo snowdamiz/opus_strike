@@ -25,6 +25,7 @@ export function serializeUser(user: UserWithAccounts): UserResponse {
     name: user.name,
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     tutorialCompletedAt: user.tutorialCompletedAt?.toISOString() ?? null,
+    appOpenedAt: user.appOpenedAt?.toISOString() ?? null,
     stats: {
       totalGames: user.totalGames,
       totalWins: user.totalWins,

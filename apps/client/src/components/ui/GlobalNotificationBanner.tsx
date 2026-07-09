@@ -140,7 +140,7 @@ export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificat
     <div
       role="status"
       aria-live="polite"
-      className="absolute inset-x-0 top-0 z-[300] flex min-h-8 items-center justify-center bg-strike-bg/20 px-9 py-1 text-center"
+      className="absolute inset-x-0 top-0 z-[300] flex min-h-8 items-center justify-center bg-strike-bg/20 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] pl-[max(2.25rem,env(safe-area-inset-left))] pr-[max(2.25rem,env(safe-area-inset-right))] text-center"
     >
       <p className="max-w-[88rem] break-words font-body text-xs font-semibold leading-snug text-orange-50 sm:text-sm">
         {notification.message}
@@ -149,9 +149,11 @@ export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificat
         type="button"
         aria-label="Dismiss notification"
         onClick={dismiss}
-        className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-sm bg-white/[0.04] font-mono text-xs font-bold text-white/70 transition hover:bg-white/[0.1] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+        className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-sm bg-white/[0.04] text-white/70 transition hover:bg-white/[0.1] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
       >
-        x
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
       </button>
     </div>
   );

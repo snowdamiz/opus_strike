@@ -160,6 +160,7 @@ export interface MovementNetworkDiagnosticsSnapshot {
   positionErrors: number[];
   velocityErrors: number[];
   replayedCommands: number[];
+  replayBudgetExceededCorrections: number;
   visualCorrectionMagnitudes: number[];
   visualCorrectionDurationsMs: number[];
   localReactiveUpdates: Record<LocalReactiveUpdateSource, number>;
@@ -219,6 +220,7 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   positionErrors: [],
   velocityErrors: [],
   replayedCommands: [],
+  replayBudgetExceededCorrections: 0,
   visualCorrectionMagnitudes: [],
   visualCorrectionDurationsMs: [],
   localReactiveUpdates: {
@@ -550,6 +552,7 @@ export function resetMovementNetworkDiagnostics(): void {
   diagnostics.positionErrors.length = 0;
   diagnostics.velocityErrors.length = 0;
   diagnostics.replayedCommands.length = 0;
+  diagnostics.replayBudgetExceededCorrections = 0;
   diagnostics.visualCorrectionMagnitudes.length = 0;
   diagnostics.visualCorrectionDurationsMs.length = 0;
   diagnostics.localReactiveUpdates.vitals = 0;
@@ -716,6 +719,7 @@ export function recordAuthorityFrameApplied(metrics: PredictionCorrectionMetrics
     pushSample(diagnostics.positionErrors, metric.positionError);
     pushSample(diagnostics.velocityErrors, metric.velocityError);
     pushSample(diagnostics.replayedCommands, metric.replayedCommands);
+    if (metric.replayBudgetExceeded) diagnostics.replayBudgetExceededCorrections++;
     pushSample(diagnostics.visualCorrectionMagnitudes, metric.visualCorrectionMagnitude);
     pushSample(diagnostics.visualCorrectionDurationsMs, metric.visualCorrectionDurationMs);
   }

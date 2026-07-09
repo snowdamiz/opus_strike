@@ -1,5 +1,5 @@
-/* Premium fonts - Bebas Neue for headlines, Exo 2 for body */
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Exo+2:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Premium fonts (Bebas Neue headlines, Exo 2 body) load from index.html so
+   they ride the preconnect instead of a render-blocking @import. */
 
 @tailwind base;
 @tailwind components;
@@ -44,6 +44,10 @@
   --color-map-golden-glow: 247 190 71;
   --color-map-golden-highlight: 255 239 164;
 
+  /* Text tokens consumed by colorTokens.ts fallbacks. */
+  --color-text-primary: 244 244 245;
+  --color-text-strong: 255 255 255;
+
   --bg-primary: rgb(var(--color-strike-bg));
   --bg-surface: rgb(var(--color-strike-surface));
   --bg-elevated: rgb(var(--color-strike-elevated));
@@ -51,13 +55,51 @@
   --accent-cyan: rgb(var(--color-accent-secondary));
   --team-red: rgb(var(--color-team-red));
   --team-blue: rgb(var(--color-team-blue));
+
+  /* Canonical safe-area insets; EditableHudItem reads these from JS. */
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
 }
+
+/* ===== BREAKPOINT SCALE =====
+   Canonical widths for NEW rules — do not invent new cutoffs:
+
+     480   small phones (portrait)
+     640   large phones
+     768   portrait tablets
+     980   nav collapse / tab strip scrolls
+     1024  desktop split (pairs: max-width 1023 <-> min-width 1024)
+     1180  wide workbench layouts (skins/loadout)
+     1280 / 1440  wide-desktop scale tiers
+     2200 / 3200  (min-width) 4K/8K upscaling
+
+   Interaction queries beat width sniffing — prefer:
+     (pointer: coarse)                            touch devices
+     (hover: none), (pointer: coarse)             no-hover fallbacks
+     (pointer: coarse) and (orientation: landscape)  phone-landscape gameplay
+
+   Legacy feature-tuned cutoffs (kept intentionally; each is calibrated to a
+   specific component's overflow point — do NOT merge them into the scale
+   without visually retesting the affected band):
+     380  ultra-small HUD compaction + settings footer stacking
+     390  PWA install toast compaction
+     430  scoreboard ultra-compact columns
+     440  stats rewards stacking
+     560  skins/loadout roster collapse
+     700  chat overlay + short-viewport settings (often OR max-height 560)
+     760  scoreboard mobile layout
+     820  coarse-pointer fallback width in menu queries
+     860  skins/loadout mid ladder
+     920  phone-landscape width guard in play-tab queries */
 
 /* ===== BASE STYLES ===== */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -67,11 +109,21 @@ body,
   height: 100%;
   min-height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg-primary);
   font-family: 'Exo 2', 'Rajdhani', sans-serif;
   color: white;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+[role='button'],
+input,
+select,
+textarea,
+a {
+  touch-action: manipulation;
 }
 
 /* ===== SCROLLBAR ===== */
@@ -257,7 +309,6 @@ body,
 }
 
 .slide-effects-overlay {
-  --slide-blur: 0px;
   --slide-edge-opacity: 0;
   --slide-haze-opacity: 0;
   --slide-haze-side-opacity: 0;
@@ -274,10 +325,9 @@ body,
 
 .slide-edge-blur {
   position: absolute;
-  background: rgba(255, 255, 255, 0.006);
-  backdrop-filter: blur(var(--slide-blur)) saturate(1.08);
-  -webkit-backdrop-filter: blur(var(--slide-blur)) saturate(1.08);
+  background: rgba(157, 238, 255, 0.08);
   opacity: var(--slide-edge-opacity);
+  mix-blend-mode: screen;
 }
 
 .slide-edge-blur-left {
@@ -1021,8 +1071,8 @@ body,
     0 14px 32px rgb(0 0 0 / 0.3),
     inset 0 1px 0 var(--mobile-glass-shine),
     inset 0 0 34px rgb(255 255 255 / 0.035);
-  backdrop-filter: blur(14px) saturate(1.08);
-  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
   touch-action: none;
 }
 
@@ -1153,8 +1203,8 @@ body,
   box-shadow:
     0 12px 26px rgb(0 0 0 / 0.28),
     inset 0 1px 0 var(--mobile-glass-shine);
-  backdrop-filter: blur(14px) saturate(1.08);
-  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
   touch-action: none;
   transition: transform 80ms ease-out, border-color 80ms ease-out, background-color 80ms ease-out;
 }
@@ -1767,6 +1817,10 @@ body,
 }
 
 .main-lobby-ca-badge {
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   position: absolute;
   top: calc(100% + 0.8rem);
   left: 50%;
@@ -4544,9 +4598,6 @@ body,
 .play-season-plate-kicker {
   font-family: 'Exo 2', 'Rajdhani', sans-serif;
   text-transform: uppercase;
-}
-
-.play-season-plate-kicker {
   display: inline-flex;
   max-width: 100%;
   align-items: center;
@@ -8541,7 +8592,7 @@ body,
 }
 
 .dialog-page {
-  max-height: calc(100vh - 3rem);
+  max-height: calc(100dvh - 3rem);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -13065,5 +13116,167 @@ input[type="color"]::-webkit-color-swatch {
     width: 1.65rem;
     height: 1.65rem;
     border-radius: 0.42rem;
+  }
+}
+
+/* ===== MOBILE ERGONOMICS OVERRIDES =====
+   Late-cascade layer: keep this section last so it wins ties against the
+   breakpoint ladders above. Minimum touch targets, iOS-zoom-safe input text,
+   scroll safety nets, and reduced-motion support. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Combat feedback (damage vignettes, hitmarkers, kill feed) and touch
+     controls communicate game state, not decoration — keep them animating. */
+  .z-hud *,
+  .z-hud *::before,
+  .z-hud *::after,
+  .mobile-controls *,
+  .mobile-controls *::before,
+  .mobile-controls *::after {
+    animation-duration: revert !important;
+    animation-iteration-count: revert !important;
+    transition-duration: revert !important;
+  }
+}
+
+@media (pointer: coarse) {
+  /* iOS Safari zooms focused inputs whose computed font-size is below 16px. */
+  .global-chat-form input,
+  .custom-wager-entry input,
+  .input {
+    font-size: 16px;
+  }
+
+  .global-chat-form {
+    min-height: 2.5rem;
+  }
+
+  .global-chat-form button {
+    width: 2.5rem;
+  }
+
+  /* Primary interactions: honor the 44px minimum touch target. */
+  .play-mode-option {
+    min-height: 2.75rem;
+  }
+
+  /* Custom-lobby bot pickers render at 20px on desktop; unusable on touch. */
+  .lobby-inline-picker-trigger {
+    height: 2.6rem;
+    font-size: 0.75rem;
+  }
+
+  .lobby-inline-picker-option {
+    height: 2.6rem;
+    font-size: 0.75rem;
+  }
+
+  .main-lobby-x-link,
+  .menu-back-button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .main-lobby-tabs button {
+    min-height: 2.75rem;
+  }
+
+  .guest-hero-carousel-arrow {
+    width: 2.75rem;
+    min-width: 2.75rem;
+  }
+
+  .guest-hero-quick-button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .play-main-cta {
+    min-height: 2.75rem;
+  }
+
+  /* Compact controls that cannot grow visually get an expanded hit area. */
+  .party-member-action-button,
+  .scoreboard-voice-cell button,
+  .scoreboard-report-cell button,
+  .game-dialog-close,
+  .pwa-install-dismiss {
+    position: relative;
+  }
+
+  .party-member-action-button::after,
+  .scoreboard-voice-cell button::after,
+  .scoreboard-report-cell button::after,
+  .game-dialog-close::after,
+  .pwa-install-dismiss::after {
+    content: '';
+    position: absolute;
+    inset: -0.5rem;
+  }
+
+  /* Social row buttons sit 0.5rem apart; expand hit areas only up to the
+     midpoint so neighbors don't overlap. */
+  .social-icon-button {
+    position: relative;
+  }
+
+  .social-icon-button::after {
+    content: '';
+    position: absolute;
+    inset: -0.25rem;
+  }
+
+  /* Large glass surfaces: heavy blur radii stall mobile GPUs. */
+  .social-sidebar-panel {
+    backdrop-filter: blur(10px) saturate(1.08);
+    -webkit-backdrop-filter: blur(10px) saturate(1.08);
+  }
+
+  .play-disabled-reason {
+    font-size: 0.72rem;
+  }
+}
+
+/* The tab strip scrolls with hidden scrollbars below 980px; fade the edges
+   so off-screen tabs are discoverable. */
+@media (max-width: 980px) {
+  .main-lobby-tabs {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, black 0.9rem, black calc(100% - 0.9rem), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, black 0.9rem, black calc(100% - 0.9rem), transparent 100%);
+  }
+}
+
+/* Team lobby: two 14rem columns cannot fit portrait phones. */
+@media (max-width: 480px) {
+  .team-select-layout.lobby-layout,
+  .team-select-layout.lobby-layout.lobby-layout-observer {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 100%;
+  }
+}
+
+/* Matchmaking: centered flex clips its top edge once content overflows, so
+   switch to margin-auto centering and let the screen scroll as a safety net. */
+@media (pointer: coarse), (max-height: 600px) {
+  .matchmaking-main {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  .matchmaking-main > * {
+    margin: auto;
   }
 }

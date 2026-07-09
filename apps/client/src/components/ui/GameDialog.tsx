@@ -1,4 +1,7 @@
-import { useId, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
+
+// Stack of mounted dialogs so Escape only closes the topmost one.
+const dialogStack: object[] = [];
 
 type GameDialogSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -37,7 +40,7 @@ export function GameDialog({
   children,
   footer,
   onClose,
-  bodyClassName = 'p-[clamp(1.125rem,1.45vw,1.5rem)]',
+  bodyClassName = 'overflow-y-auto overscroll-contain p-[clamp(1.125rem,1.45vw,1.5rem)]',
   footerClassName = 'flex items-center justify-between gap-3 px-[clamp(1.125rem,1.45vw,1.5rem)] py-[clamp(0.75rem,1vw,1rem)] border-t border-white/5 bg-strike-elevated/50',
   panelClassName,
   closeLabel = 'Close dialog',
@@ -45,9 +48,29 @@ export function GameDialog({
   style,
 }: GameDialogProps) {
   const titleId = useId();
+  const stackTokenRef = useRef<object>({});
+
+  useEffect(() => {
+    const token = stackTokenRef.current;
+    dialogStack.push(token);
+    return () => {
+      const index = dialogStack.indexOf(token);
+      if (index >= 0) dialogStack.splice(index, 1);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (dialogStack[dialogStack.length - 1] !== stackTokenRef.current) return;
+      onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   return (
-    <div className="game-dialog-overlay fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,1.8vw,1.75rem)]">
+    <div className="game-dialog-overlay fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,1.8vw,1.75rem)] pb-[max(clamp(1rem,1.8vw,1.75rem),env(safe-area-inset-bottom))]">
       <div className="game-dialog-scrim absolute inset-0 bg-black/80" onClick={onClose} />
 
       <section
@@ -55,7 +78,7 @@ export function GameDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         className={cn(
-          'game-dialog relative w-full max-h-[min(84vh,46rem)] bg-strike-surface border border-white/10 rounded-xl overflow-hidden shadow-2xl animate-scale-in flex flex-col',
+          'game-dialog relative w-full max-h-[min(84dvh,46rem)] bg-strike-surface border border-white/10 rounded-xl overflow-hidden shadow-2xl animate-scale-in flex flex-col',
           sizeClasses[size],
           panelClassName,
         )}

@@ -93,6 +93,7 @@ export interface UserData {
   name: string;
   lastLoginAt: string | null;
   tutorialCompletedAt: string | null;
+  appOpenedAt: string | null;
   stats: {
     totalGames: number;
     totalWins: number;
@@ -164,6 +165,7 @@ interface WalletContextType {
   registerUser: (name: string) => Promise<UserData>;
   updatePlayerName: (name: string) => Promise<UserData>;
   completeTutorial: () => Promise<UserData>;
+  markAppOpened: () => Promise<void>;
   logout: () => Promise<void>;
 
   error: string | null;
@@ -1113,6 +1115,38 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [applyUserSession, authProvider]);
 
+  // Fire-and-forget marker recorded when the app runs as the installed App
+  // (standalone). Intentionally silent on failure — it's a background signal, so
+  // it must never surface an error or throw into the caller's effect.
+  const markAppOpened = useCallback(async (): Promise<void> => {
+    try {
+      const result = await apiRequest<{ success: boolean; user: UserData }>(
+        '/auth/app-opened',
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+
+      if (result.success && result.user) {
+        applyUserSession(result.user, authProvider);
+      }
+    } catch (err) {
+      loggers.auth.error('app open marker error:', err);
+    }
+  }, [applyUserSession, authProvider]);
+
+  // When the app is opened from the installed home-screen App (standalone), record
+  // it once against the account so the web (Safari) session can later nudge the
+  // user to switch back. Guarded by the ref + the server-set timestamp so it fires
+  // at most one POST per session and never after it's already recorded.
+  const appOpenedReportedRef = useRef(false);
+  useEffect(() => {
+    if (appOpenedReportedRef.current) return;
+    if (!isAuthenticated || !user || user.appOpenedAt) return;
+    if (!isStandaloneDisplayMode()) return;
+
+    appOpenedReportedRef.current = true;
+    void markAppOpened();
+  }, [isAuthenticated, user, markAppOpened]);
+
   const logout = useCallback(async () => {
     try {
       await apiRequest('/auth/logout', { method: 'POST' });
@@ -1177,6 +1211,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     registerUser,
     updatePlayerName,
     completeTutorial,
+    markAppOpened,
     logout,
     error,
     notice,
@@ -1187,6 +1222,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     clearError,
     clearNotice,
     completeTutorial,
+    markAppOpened,
     connectWallet,
     disconnect,
     error,

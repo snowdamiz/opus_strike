@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -204,6 +205,15 @@ interface InlinePickerProps<T extends string> {
   onChange: (value: T) => void;
 }
 
+interface InlinePickerMenuPosition {
+  left: number;
+  top: number | null;
+  bottom: number | null;
+  minWidth: number;
+}
+
+const INLINE_PICKER_MENU_MAX_HEIGHT = 208; // matches max-h-52
+
 function InlinePicker<T extends string>({
   label,
   value,
@@ -213,11 +223,67 @@ function InlinePicker<T extends string>({
   onChange,
 }: InlinePickerProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<InlinePickerMenuPosition | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const selected = options.find((option) => option.value === value) ?? options[0];
+
+  // The listbox renders in a portal with fixed positioning so ancestor
+  // overflow containers (lobby scroll panels) can no longer clip it.
+  const openMenu = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+    const estimatedItemHeight = isCoarsePointer ? 42 : 26;
+    const estimatedMenuHeight = Math.min(options.length * estimatedItemHeight + 6, INLINE_PICKER_MENU_MAX_HEIGHT);
+    const opensUpward = rect.bottom + 4 + estimatedMenuHeight > viewportHeight - 8;
+
+    setMenuPosition({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)),
+      minWidth: rect.width,
+      top: opensUpward ? null : rect.bottom + 4,
+      bottom: opensUpward ? Math.max(8, window.innerHeight - rect.top + 4) : null,
+    });
+    setIsOpen(true);
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setIsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    const handleScroll = (event: Event) => {
+      // Scrolling inside the listbox is fine; ancestor scrolls invalidate
+      // the fixed position, so close instead of chasing the trigger.
+      if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
+      setIsOpen(false);
+    };
+    const handleResize = () => setIsOpen(false);
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [isOpen]);
 
   return (
     <div className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
       <button
+        ref={triggerRef}
         type="button"
         aria-label={label}
         aria-haspopup="listbox"
@@ -225,9 +291,13 @@ function InlinePicker<T extends string>({
         title={selected.disabledReason}
         onClick={(event) => {
           event.stopPropagation();
-          setIsOpen((open) => !open);
+          if (isOpen) {
+            setIsOpen(false);
+          } else {
+            openMenu();
+          }
         }}
-        className={`flex h-5 ${widthClass} items-center justify-between gap-1 rounded-md border px-1.5 font-body text-[9px] uppercase outline-none transition-all hover:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-white/30`}
+        className={`lobby-inline-picker-trigger flex h-5 ${widthClass} items-center justify-between gap-1 rounded-md border px-1.5 font-body text-[10px] uppercase outline-none transition-all hover:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-white/30`}
         style={{
           background: isOpen ? `${accentColor}1f` : 'rgba(0,0,0,0.25)',
           borderColor: isOpen ? `${accentColor}80` : `${accentColor}35`,
@@ -240,14 +310,22 @@ function InlinePicker<T extends string>({
         </svg>
       </button>
 
-      {isOpen && (
+      {isOpen && menuPosition && createPortal(
         <div
+          ref={menuRef}
           role="listbox"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-40 min-w-full overflow-hidden rounded-md border bg-strike-chrome/95 p-0.5 shadow-2xl backdrop-blur-xl"
+          aria-label={label}
+          className="lobby-inline-picker-menu fixed z-[400] max-h-52 overflow-y-auto overscroll-contain rounded-md border bg-strike-chrome/95 p-0.5 shadow-2xl backdrop-blur-xl"
           style={{
+            left: menuPosition.left,
+            top: menuPosition.top ?? 'auto',
+            bottom: menuPosition.bottom ?? 'auto',
+            minWidth: menuPosition.minWidth,
+            maxWidth: 'calc(100vw - 1rem)',
             borderColor: `${accentColor}42`,
             boxShadow: `0 14px 30px rgba(0,0,0,0.45), 0 0 18px ${accentColor}24`,
           }}
+          onClick={(event) => event.stopPropagation()}
         >
           {options.map((option) => {
             const isSelected = option.value === value;
@@ -266,7 +344,7 @@ function InlinePicker<T extends string>({
                   onChange(option.value);
                   setIsOpen(false);
                 }}
-                className={`flex h-6 w-full items-center whitespace-nowrap rounded px-1.5 text-left font-body text-[9px] uppercase tracking-wide transition-colors ${
+                className={`lobby-inline-picker-option flex h-6 w-full items-center whitespace-nowrap rounded px-1.5 text-left font-body text-[10px] uppercase tracking-wide transition-colors ${
                   isDisabled ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/[0.07]'
                 }`}
                 style={{
@@ -278,7 +356,8 @@ function InlinePicker<T extends string>({
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -666,7 +745,7 @@ export function Lobby() {
 
       <DailyMissionTracker
         enabled={isAuthenticated}
-        className="absolute left-4 top-[5.35rem] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
+        className="absolute left-4 top-[calc(var(--menu-nav-h)+0.6rem)] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
       />
 
       {/* Main Content */}
@@ -1464,7 +1543,7 @@ function PlayerCard({
             </span>
           )}
           {isCurrentPlayer && !player.isHost && (
-            <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 text-[8px] font-display rounded border border-cyan-500/30 uppercase">
+            <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] font-display rounded border border-cyan-500/30 uppercase">
               You
             </span>
           )}

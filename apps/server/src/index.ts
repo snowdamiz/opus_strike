@@ -30,6 +30,7 @@ import { createRecordingsRouter } from './recordings/routes';
 import { dailyMissionService } from './missions/service';
 import { playerRewardService } from './rewards/service';
 import { wagerService } from './wagers/service';
+import type { RedisOwnerLockClient } from './wagers/workerLock';
 import { voiceService } from './voice/VoiceService';
 import {
   createDistributedColyseusOptions,
@@ -479,7 +480,7 @@ async function startServer(): Promise<void> {
 
     await server.listen(PORT);
     wagerService.startBackgroundJobs();
-    playerRewardService.startBackgroundJobs();
+    playerRewardService.startBackgroundJobs(sharedRedisClient as RedisOwnerLockClient | null);
     dailyMissionService.startBackgroundJobs();
     pregeneratedMapPoolAutoTopUpHandle = startPregeneratedMapPoolAutoTopUp({
       config: getPregeneratedMapPoolAutoTopUpConfig(),

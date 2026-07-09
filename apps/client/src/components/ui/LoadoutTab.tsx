@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { FeaturedHeroPreviewFallback } from './FeaturedHeroPreviewFallback';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
@@ -192,7 +193,7 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
           </div>
 
           <div className="loadout-stage-preview">
-            <Suspense fallback={null}>
+            <Suspense fallback={<FeaturedHeroPreviewFallback className="loadout-featured-preview" />}>
               <FeaturedHeroPreview
                 heroId={featuredHero}
                 initialYaw={Math.PI - 0.18}

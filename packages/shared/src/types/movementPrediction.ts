@@ -8,6 +8,9 @@ export const MOVEMENT_SUBSTEP_RATE = 60;
 export const MOVEMENT_SUBSTEP_MS = 1000 / MOVEMENT_SUBSTEP_RATE;
 export const MOVEMENT_SUBSTEP_SECONDS = 1 / MOVEMENT_SUBSTEP_RATE;
 export const MOVEMENT_COMMAND_BUFFER_SIZE = 256;
+// A hard correction is already a visible discontinuity. Replaying several
+// seconds of stale input synchronously makes it a main-thread hitch as well.
+export const MOVEMENT_MAX_RECONCILE_REPLAY_COMMANDS = 32;
 export const MOVEMENT_MAX_PACKET_COMMANDS = 8;
 export const MOVEMENT_MAX_SERVER_QUEUE = 96;
 export const MOVEMENT_MAX_COMMANDS_PER_SECOND = 90;

@@ -2282,6 +2282,22 @@ export function HUD() {
         contentClassName="grid h-full w-full place-items-center"
       >
         <div className="relative w-[clamp(8.75rem,14vw,13rem)]">
+          <div className="mb-0.5 flex items-baseline justify-between gap-2">
+            <span
+              className="font-mono text-[11px] sm:text-xs font-bold leading-none tabular-nums"
+              style={{ color: healthColor, textShadow: '0 1px 4px rgba(0, 0, 0, 0.85)' }}
+            >
+              {Math.ceil(displayedHealth)}
+            </span>
+            {localMaxShield > 0 && !isLocalDowned && (localShield ?? 0) > 0 && (
+              <span
+                className="font-mono text-[10px] font-semibold leading-none tabular-nums"
+                style={{ color: '#38bdf8', textShadow: '0 1px 4px rgba(0, 0, 0, 0.85)' }}
+              >
+                +{Math.ceil(localShield ?? 0)}
+              </span>
+            )}
+          </div>
           {localMaxShield > 0 && !isLocalDowned && (
             <div
               className="mb-1 h-1.5 rounded-full overflow-hidden"

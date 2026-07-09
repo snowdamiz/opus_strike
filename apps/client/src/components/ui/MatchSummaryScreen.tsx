@@ -117,8 +117,8 @@ export function MatchSummaryScreen() {
         backgroundPosition: 'center',
       }}
     >
-      <div className="match-summary-body min-h-full px-4 py-5 sm:px-6 lg:px-8">
-        <div className="match-summary-shell mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-7xl flex-col gap-5">
+      <div className="match-summary-body min-h-full px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 lg:px-8">
+        <div className="match-summary-shell mx-auto flex min-h-[calc(100dvh-2.5rem)] max-w-7xl flex-col gap-5">
           <header className="match-summary-header grid gap-4 border-b border-white/10 pb-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
             <div className="min-w-0">
               <p className="match-summary-kicker font-body text-xs uppercase text-white/40">

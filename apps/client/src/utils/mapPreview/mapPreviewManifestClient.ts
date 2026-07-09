@@ -47,12 +47,34 @@ interface PendingPreviewManifestRequest {
   reject: (error: Error) => void;
 }
 
+const MAX_CACHED_PREVIEW_MANIFESTS = 4;
 const manifestCache = new Map<string, VoxelMapManifest>();
 const pendingManifestPromises = new Map<string, Promise<VoxelMapManifest>>();
 const pendingManifestRequests = new Map<number, PendingPreviewManifestRequest>();
 
 let previewManifestWorker: Worker | null = null;
 let nextPreviewManifestRequestId = 1;
+
+function getCachedManifest(key: string): VoxelMapManifest | null {
+  const cached = manifestCache.get(key) ?? null;
+  if (!cached) return null;
+
+  // Map preserves insertion order, so reinserting turns it into a tiny LRU.
+  manifestCache.delete(key);
+  manifestCache.set(key, cached);
+  return cached;
+}
+
+function cacheManifest(key: string, manifest: VoxelMapManifest): void {
+  manifestCache.delete(key);
+  manifestCache.set(key, manifest);
+
+  while (manifestCache.size > MAX_CACHED_PREVIEW_MANIFESTS) {
+    const oldestKey = manifestCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    manifestCache.delete(oldestKey);
+  }
+}
 
 export function getMapPreviewManifestCacheKey({
   seed,
@@ -108,7 +130,7 @@ function getPreviewManifestWorker(): Worker | null {
         return;
       }
 
-      manifestCache.set(pending.key, message.manifest);
+      cacheManifest(pending.key, message.manifest);
       pending.resolve(message.manifest);
     };
     previewManifestWorker.onerror = (event) => {
@@ -136,7 +158,7 @@ function generatePreviewManifestOnMainThread(input: MapPreviewManifestRequest): 
 
 export function requestMapPreviewManifest(input: MapPreviewManifestRequest): Promise<VoxelMapManifest> {
   const key = getMapPreviewManifestCacheKey(input);
-  const cached = manifestCache.get(key);
+  const cached = getCachedManifest(key);
   if (cached) return Promise.resolve(cached);
 
   const pending = pendingManifestPromises.get(key);
@@ -163,7 +185,7 @@ export function requestMapPreviewManifest(input: MapPreviewManifestRequest): Pro
         }
       })
     : generatePreviewManifestOnMainThread(input).then((manifest) => {
-        manifestCache.set(key, manifest);
+        cacheManifest(key, manifest);
         return manifest;
       });
 
@@ -175,7 +197,7 @@ export function requestMapPreviewManifest(input: MapPreviewManifestRequest): Pro
 }
 
 export function getCachedMapPreviewManifest(input: MapPreviewManifestRequest): VoxelMapManifest | null {
-  return manifestCache.get(getMapPreviewManifestCacheKey(input)) ?? null;
+  return getCachedManifest(getMapPreviewManifestCacheKey(input));
 }
 
 export function clearMapPreviewManifestCache(): void {
