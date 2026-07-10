@@ -15,6 +15,7 @@ import { MobileControls } from './components/ui/MobileControls';
 import { MobileAccessGate } from './components/ui/MobileAccessGate';
 import { InstallPwaPrompt } from './components/ui/InstallPwaPrompt';
 import { TutorialGuide } from './components/ui/TutorialGuide';
+import { MatchSummaryScreen } from './components/ui/MatchSummaryScreen';
 import { disposeSharedAudioResources, useAudio, useMusic } from './hooks/useAudio';
 import { useGlobalButtonSounds } from './hooks/useUiAudio';
 import { useNetwork } from './contexts/NetworkContext';
@@ -45,7 +46,6 @@ const MapVoteScreen = lazy(() => loadMapVoteScreenModule().then((module) => ({ d
 const Scoreboard = lazy(() => loadScoreboardModule().then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => loadInGameMenuModule().then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => loadGameConsoleModule().then((module) => ({ default: module.GameConsole })));
-const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
 const STARTUP_QUALITY_RAMP_MS = 1600;
@@ -783,9 +783,7 @@ export function App() {
   if (shouldRenderGameScene) {
     if (visibleMatchSummary) {
       return renderWithMobileGate(
-        <Suspense fallback={null}>
-          <MatchSummaryScreen />
-        </Suspense>
+        <MatchSummaryScreen />
       );
     }
 
