@@ -194,6 +194,24 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
 }
 
 {
+  let losChecks = 0;
+  const manager = new VisibilityInterestManager({
+    proximityRevealMeters: 1,
+    maxPerceptionMeters: 20,
+  });
+  const droppingEnemy = makePlayer('blue-dropping', 'blue', 100, 0, { state: 'dropping' });
+  const decision = manager.getRecipientInterest(self, droppingEnemy, makeContext({
+    hasLineOfSight: () => {
+      losChecks++;
+      return false;
+    },
+  }));
+  assert.equal(decision.state, 'visible');
+  assert.equal(decision.reason, 'deployment');
+  assert.equal(losChecks, 0);
+}
+
+{
   const manager = new VisibilityInterestManager({
     proximityRevealMeters: 1,
     visibleTtlMs: 1,

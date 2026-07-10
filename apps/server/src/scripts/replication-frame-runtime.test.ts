@@ -146,31 +146,34 @@ function createRuntime(options: {
     collisionRevision: 7,
     isFullRateTransform: (id, _player, now) => {
       fullRateCalls.push(`${id}:${now}`);
-      return id === 'red';
+      return id === 'red' || id === 'dropping';
     },
   });
   const red = player({ id: 'red' });
   const blue = player({ id: 'blue', team: 'blue', state: 'spawning' });
   const downed = player({ id: 'downed', team: 'blue', state: 'downed' });
+  const dropping = player({ id: 'dropping', team: 'blue', state: 'dropping' });
   const spectator = player({ id: 'spectator', state: 'spectating' });
   const frame = runtime.buildFrameContext(new Map([
     [red.id, red],
     [blue.id, blue],
     [downed.id, downed],
+    [dropping.id, dropping],
     [spectator.id, spectator],
   ]), 1_000);
 
   assert.equal(frame.now, 1_000);
   assert.equal(frame.visibilityContext.now, 1_000);
   assert.equal(frame.visibilityContext.collisionRevision, 7);
-  assert.deepEqual([...frame.currentIds].sort(), ['blue', 'downed', 'red', 'spectator']);
+  assert.deepEqual([...frame.currentIds].sort(), ['blue', 'downed', 'dropping', 'red', 'spectator']);
   assert.deepEqual(frame.packedTransforms.get('red'), transform('red'));
   assert.deepEqual(frame.packedTransforms.get('blue'), transform('blue'));
   assert.deepEqual(frame.packedTransforms.get('downed'), transform('downed'));
+  assert.deepEqual(frame.packedTransforms.get('dropping'), transform('dropping'));
   assert.equal(frame.packedTransforms.has('spectator'), false);
   assert.equal(frame.packedTransformSignatures.get('red'), frame.packedTransforms.get('red'));
-  assert.deepEqual([...frame.fullRateTransformPlayerIds], ['red']);
-  assert.deepEqual(fullRateCalls.sort(), ['blue:1000', 'downed:1000', 'red:1000']);
+  assert.deepEqual([...frame.fullRateTransformPlayerIds], ['red', 'dropping']);
+  assert.deepEqual(fullRateCalls.sort(), ['blue:1000', 'downed:1000', 'dropping:1000', 'red:1000']);
 
   frame.recipientInterests.set('missing', new Map());
   frame.fullVitalsByPlayer.set('red', {} as PlayerVitalsSnapshot);
@@ -242,11 +245,13 @@ function createRuntime(options: {
   const red = player({ id: 'red', team: 'red' });
   const blue = player({ id: 'blue', team: 'blue' });
   const downed = player({ id: 'downed', team: 'blue', state: 'downed' });
+  const dropping = player({ id: 'dropping', team: 'blue', state: 'dropping' });
   const spectator = player({ id: 'spectator', state: 'spectating' });
   const players = new Map([
     [red.id, red],
     [blue.id, blue],
     [downed.id, downed],
+    [dropping.id, dropping],
     [spectator.id, spectator],
   ]);
   const frame = runtime.buildFrameContext(players, 4_000);
@@ -289,11 +294,11 @@ function createRuntime(options: {
     buildPackedTransform: (playerId) => transform(playerId),
   });
 
-  assert.deepEqual(collection.vitalsPlayers.map((vitals) => vitals.id), ['red', 'blue', 'downed', 'spectator']);
+  assert.deepEqual(collection.vitalsPlayers.map((vitals) => vitals.id), ['red', 'blue', 'downed', 'dropping', 'spectator']);
   assert.deepEqual(collection.removedPlayerIds, ['globally-removed', 'stale']);
-  assert.deepEqual(collection.interestPlayers.map((interest) => interest.playerId), ['red', 'blue', 'downed', 'spectator']);
+  assert.deepEqual(collection.interestPlayers.map((interest) => interest.playerId), ['red', 'blue', 'downed', 'dropping', 'spectator']);
   assert.equal(interestSignatures.has('stale'), false);
-  assert.deepEqual(collection.transformPlayers, [transform('red'), transform('downed')]);
+  assert.deepEqual(collection.transformPlayers, [transform('red'), transform('downed'), transform('dropping')]);
   assert.deepEqual(collection.hiddenPlayerIds, ['blue']);
 }
 

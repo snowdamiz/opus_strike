@@ -6,6 +6,7 @@ export type InterestPrecision = 'full' | 'coarse' | 'none';
 export type InterestReason =
   | 'self'
   | 'team'
+  | 'deployment'
   | 'invalid_target'
   | 'explicit_reveal'
   | 'recent_combat'
@@ -276,6 +277,9 @@ export class VisibilityInterestManager {
     }
     if (recipient.team === target.team) {
       return this.visibleDecision(recipient.id, target.id, context.now, 'team', target.position, previous);
+    }
+    if (target.state === 'dropping') {
+      return this.visibleDecision(recipient.id, target.id, context.now, 'deployment', target.position, previous);
     }
     if (!canReceiveLiveTransform(target)) {
       return this.hiddenOrLastKnownDecision(recipient.id, target.id, context.now, 'invalid_target', previous);
