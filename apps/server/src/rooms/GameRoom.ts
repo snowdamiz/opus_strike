@@ -964,11 +964,11 @@ const DEFAULT_BOT_PLANNING_BUDGET_TUNING: BotPlanningBudgetTuning = {
   minDeferredBudget: 1,
 };
 const BATTLE_ROYAL_BOT_PLANNING_BUDGET_TUNING: BotPlanningBudgetTuning = {
-  urgentBudget: 8,
-  deferredBudget: 4,
-  fullRateCount: 8,
+  urgentBudget: 7,
+  deferredBudget: 2,
+  fullRateCount: 7,
   lodStartCount: 16,
-  midUrgentBudget: 6,
+  midUrgentBudget: 4,
   midDeferredBudget: 2,
   minUrgentBudget: 4,
   minDeferredBudget: 1,
@@ -2918,6 +2918,7 @@ export class GameRoom extends Room<GameState> {
 
   private shouldSendFullRateTransform(id: string, player: Player, now: number): boolean {
     return (
+      player.state === 'dropping' ||
       player.hasFlag ||
       this.isChronosAegisActive(player) ||
       this.replicationState.getRecentCombatTransformUntil(id) > now ||
@@ -9005,6 +9006,11 @@ export class GameRoom extends Room<GameState> {
       }
 
       const simulationTier = this.getServerOwnedBotSimulationTier(bot, now, brain, true);
+      if (this.shouldDeferInitialBotPlanning(brain, now)) {
+        this.tickProfiler.recordCounter('bot_initial_planning_stagger_skipped');
+        this.continueDeferredBotInput(botId, now, simulationTier);
+        return;
+      }
       if (!this.shouldScheduleBotPlanningForTier(bot, simulationTier, aliveBotCount)) {
         this.tickProfiler.recordCounter('bot_planning_tier_cadence_skipped');
         this.continueDeferredBotInput(botId, now, simulationTier);
@@ -9062,6 +9068,10 @@ export class GameRoom extends Room<GameState> {
       scheduledBotCount,
       DEFAULT_BOT_PLANNING_BUDGET_TUNING
     );
+  }
+
+  private shouldDeferInitialBotPlanning(brain: BotBrain, now: number): boolean {
+    return brain.blackboard === null && now < Math.min(brain.nextThinkAt, brain.nextBlackboardAt);
   }
 
   private continueDeferredBotInput(
@@ -11717,6 +11727,12 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (options.preserveAlivePlayers && player.state === 'alive') {
+        if (player.isBot) {
+          this.botRuntime.setBrain(player.id, this.createBotBrain(player, hashString(player.id), {
+            now,
+            staggerInitialSchedule: true,
+          }));
+        }
         if (ledger.state === 'active') {
           this.registerMatchParticipant(player, this.state.roundStartTime);
         }
@@ -12152,7 +12168,7 @@ export class GameRoom extends Room<GameState> {
       const deploymentBotCount = this.getBattleRoyalDropStatusCounts(drop).bot;
       if (
         completionReason === 'all_players_landed' &&
-        deploymentBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT &&
+        deploymentBotCount >= BOT_MOVEMENT_LOD_START_COUNT &&
         this.battleRoyalCombatPrewarmTick < 0
       ) {
         this.measureTickSpan('bot_frame_context', () => this.refreshBotTeamTactics(now));
@@ -12736,6 +12752,8 @@ export class GameRoom extends Room<GameState> {
       }
     });
 
+    this.reserveFreshBattleRoyalBotMovementBudget(entries, tickTime);
+
     if (catchupRequests.length === 0) {
       return entries;
     }
@@ -13061,6 +13079,40 @@ export class GameRoom extends Room<GameState> {
     return this.consumeServerOwnedBotMovementFullStepBudget(aliveBotCount, simulationTier);
   }
 
+  private reserveFreshBattleRoyalBotMovementBudget(
+    entries: readonly MovementPhysicsFrameEntry[],
+    tickTime: number
+  ): void {
+    if (!isBattleRoyalMode(this.gameplayMode)) return;
+    const aliveBotCount = this.getAliveBotMovementLodCount();
+    if (aliveBotCount < BOT_MOVEMENT_LOD_START_COUNT) return;
+
+    const fullStepBudget = this.getServerOwnedBotMovementFullStepBudget(aliveBotCount);
+    if (!Number.isFinite(fullStepBudget)) return;
+
+    // Freshly planned critical bots bypass the shared counter for responsiveness.
+    // Reserve their slots up front so reused inputs cannot make the frame exceed
+    // the total physics budget; the planning cursor rotates the fresh set fairly.
+    let reservedFreshCriticalSteps = 0;
+    for (const entry of entries) {
+      const { player, serverOwnedInput } = entry;
+      if (!player.isBot || !serverOwnedInput || this.botsWithReusedInputThisTick.has(player.id)) continue;
+      if (this.getServerOwnedBotSimulationTier(player, tickTime) !== 'critical') continue;
+      if (serverOwnedInput.interact) continue;
+      const reason = this.getServerOwnedBotMovementFullRateReason(player, serverOwnedInput);
+      if (!reason || !this.isCriticalBattleRoyalBotMovementFullRateReason(reason)) continue;
+      reservedFreshCriticalSteps++;
+    }
+
+    if (reservedFreshCriticalSteps === 0) return;
+    this.botMovementFullStepBudgetTick = this.state.tick;
+    this.botMovementFullStepBudgetRemaining = Math.max(0, fullStepBudget - reservedFreshCriticalSteps);
+    this.tickProfiler.recordCounter(
+      'movement_bot_lod_fresh_critical_budget_reserved',
+      reservedFreshCriticalSteps
+    );
+  }
+
   private recordBotMovementBudgetStepTierCounter(tier: BotSimulationTier): void {
     switch (tier) {
       case 'critical':
@@ -13099,7 +13151,7 @@ export class GameRoom extends Room<GameState> {
       if (input.interact) return true;
       if (
         botId &&
-        this.getAliveBotMovementLodCount() >= BOT_MOVEMENT_LOD_MEDIUM_COUNT &&
+        this.getAliveBotMovementLodCount() >= BOT_MOVEMENT_LOD_START_COUNT &&
         this.botsWithReusedInputThisTick.has(botId)
       ) {
         this.tickProfiler.recordCounter('movement_bot_lod_reused_critical_bypass_suppressed');

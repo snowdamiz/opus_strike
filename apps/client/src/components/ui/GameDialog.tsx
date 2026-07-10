@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 // Stack of mounted dialogs so Escape only closes the topmost one.
 const dialogStack: object[] = [];
@@ -69,7 +70,12 @@ export function GameDialog({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  return (
+  // Portal to <body> so the overlay escapes any ancestor stacking context
+  // (e.g. the lobby's z-10 `.menu-main`) or `transform` (e.g. `menu-compact-scale`)
+  // that would otherwise trap `z-modal` beneath the nav or break `position: fixed`.
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <div className="game-dialog-overlay fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,1.8vw,1.75rem)] pb-[max(clamp(1rem,1.8vw,1.75rem),env(safe-area-inset-bottom))]">
       <div className="game-dialog-scrim absolute inset-0 bg-black/80" onClick={onClose} />
 
@@ -116,6 +122,7 @@ export function GameDialog({
 
         {footer && <footer className={footerClassName}>{footer}</footer>}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

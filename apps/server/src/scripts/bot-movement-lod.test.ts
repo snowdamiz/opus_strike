@@ -12,7 +12,9 @@ import {
   type MovementCollisionWorld,
 } from '@voxel-strike/physics';
 import {
+  createInitialBotBrain,
   getBotSkillProfile,
+  type BotBrain,
   type BotSteeringChoice,
   type PlainVec2,
 } from '../rooms/bot-ai';
@@ -26,6 +28,11 @@ type BotMovementLodRoom = {
   stepServerOwnedBotMovementLodProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
   stepServerOwnedBotKinematicMovementProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
   getBotPlanningBudgets(scheduledBotCount: number): { urgentBudget: number; deferredBudget: number };
+  shouldDeferInitialBotPlanning(brain: BotBrain, now: number): boolean;
+  reserveFreshBattleRoyalBotMovementBudget(
+    entries: ReadonlyArray<{ player: Player; serverOwnedInput?: PlayerInput }>,
+    tickTime: number
+  ): void;
   getServerOwnedBotSimulationTier(
     bot: Player,
     now: number,
@@ -427,10 +434,12 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const room = createRoom();
   room.gameplayMode = 'battle_royal';
   const planningBudgets = room.getBotPlanningBudgets(48);
+  const belowLodPlanningBudgets = room.getBotPlanningBudgets(7);
   const smallPlanningBudgets = room.getBotPlanningBudgets(8);
 
-  assert.equal(smallPlanningBudgets.urgentBudget, 8);
-  assert.equal(smallPlanningBudgets.deferredBudget, 4);
+  assert.equal(belowLodPlanningBudgets.urgentBudget, 7);
+  assert.equal(smallPlanningBudgets.urgentBudget, 4);
+  assert.equal(smallPlanningBudgets.deferredBudget, 2);
   assert.equal(planningBudgets.urgentBudget, 4);
   assert.equal(planningBudgets.deferredBudget, 1);
   assert.equal(room.getServerOwnedBotMovementFullStepBudget(8), 6);
@@ -445,6 +454,18 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(room.getBotSteeringProbeFrameBudget(8), 32);
   assert.equal(room.getBotSteeringProbeFrameBudget(24), 40);
   assert.equal(room.getBotSteeringProbeFrameBudget(48), 48);
+}
+
+{
+  const room = createRoom();
+  const brain = createInitialBotBrain();
+  brain.nextThinkAt = room.state.serverTime + 100;
+  brain.nextBlackboardAt = room.state.serverTime + 150;
+
+  assert.equal(room.shouldDeferInitialBotPlanning(brain, room.state.serverTime), true);
+  assert.equal(room.shouldDeferInitialBotPlanning(brain, room.state.serverTime + 100), false);
+  brain.blackboard = {} as BotBrain['blackboard'];
+  assert.equal(room.shouldDeferInitialBotPlanning(brain, room.state.serverTime), false);
 }
 
 {
@@ -860,7 +881,7 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const room = createRoom();
   room.gameplayMode = 'battle_royal';
   const bot = createBot(room, { id: 'reused-critical-bot', team: 'br_01' });
-  for (let index = 1; index < 16; index++) {
+  for (let index = 1; index < 8; index++) {
     createBot(room, {
       id: `dense-bot-${index}`,
       team: index % 2 === 0 ? 'br_01' : 'br_02',
@@ -888,6 +909,32 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
     true,
     'expected critical revive/soul interactions to stay responsive'
   );
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const entries: Array<{ player: Player; serverOwnedInput: PlayerInput }> = [];
+  const counters = new Map<string, number>();
+  room.tickProfiler = {
+    recordCounter: (name, count = 1) => counters.set(name, (counters.get(name) ?? 0) + count),
+  };
+
+  for (let index = 0; index < 8; index++) {
+    const bot = createBot(room, {
+      id: `budget-bot-${index}`,
+      team: index % 2 === 0 ? 'br_01' : 'br_02',
+      x: index * 0.5,
+    });
+    entries.push({ player: bot, serverOwnedInput: botInput(bot, { jump: true }) });
+    if (index >= 4) room.botsWithReusedInputThisTick.add(bot.id);
+  }
+
+  room.reserveFreshBattleRoyalBotMovementBudget(entries, room.state.serverTime);
+
+  assert.equal(room.botMovementFullStepBudgetTick, room.state.tick);
+  assert.equal(room.botMovementFullStepBudgetRemaining, 2);
+  assert.equal(counters.get('movement_bot_lod_fresh_critical_budget_reserved'), 4);
 }
 
 console.log('bot movement LOD tests passed');

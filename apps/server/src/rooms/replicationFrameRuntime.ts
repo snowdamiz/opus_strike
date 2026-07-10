@@ -62,6 +62,10 @@ export interface ReplicationFrameRuntimeOptions {
   isFullRateTransform?: (id: string, player: Player, now: number) => boolean;
 }
 
+function canReplicateLiveTransform(player: Player): boolean {
+  return canReceiveLiveTransform(player) || player.state === 'dropping';
+}
+
 export interface PlayerStateStreamBroadcastPlanInput {
   transforms: boolean;
   vitals: boolean;
@@ -204,7 +208,7 @@ export class ReplicationFrameRuntime {
     players.forEach((player, id) => {
       frameContext.currentIds.add(id);
       frameContext.visibilityPlayers.set(id, createVisibilityInterestPlayer(player));
-      if (!canReceiveLiveTransform(player)) return;
+      if (!canReplicateLiveTransform(player)) return;
 
       const transform = this.options.buildPackedTransform(id, player);
       frameContext.packedTransforms.set(id, transform);
@@ -377,7 +381,7 @@ export function collectRecipientPlayerStateStreams(
     }
 
     if (input.transformState) {
-      if (!canReceiveLiveTransform(player)) return;
+      if (!canReplicateLiveTransform(player)) return;
       if (!input.forceTransforms && id === input.recipientId) return;
 
       let transformInterest: RecipientInterestDecision | undefined;
