@@ -53,8 +53,7 @@ export function InstallPwaPrompt() {
         <div className="pwa-install-copy">
           <div className="pwa-install-title">Open the App</div>
           <div className="pwa-install-text">
-            You have Slop Heroes installed. Open it from your <strong>Home Screen</strong> for
-            fullscreen play and faster sign-in.
+            Launch Slop Heroes from your <strong>Home Screen</strong>.
           </div>
         </div>
         <button type="button" className="pwa-install-dismiss" onClick={dismiss} aria-label="Dismiss App reminder">
@@ -70,8 +69,7 @@ export function InstallPwaPrompt() {
       <div className="pwa-install-copy">
         <div className="pwa-install-title">Install Slop Heroes</div>
         <div className="pwa-install-text">
-          Get fullscreen play and faster wallet sign-in: tap <ShareGlyph /> then{' '}
-          <strong>Add to Home Screen</strong>.
+          Tap <ShareGlyph /> then <strong>Add to Home Screen</strong>.
         </div>
       </div>
       <button type="button" className="pwa-install-dismiss" onClick={dismiss} aria-label="Dismiss install prompt">
