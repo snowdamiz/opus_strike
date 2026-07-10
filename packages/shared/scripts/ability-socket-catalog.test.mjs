@@ -16,6 +16,7 @@ const expectedAbilityIds = [
   'blaze_flamethrower',
   'blaze_rocket',
   'blaze_rocketjump',
+  'blaze_scrapshot',
   'chronos_ascendant_paradox',
   'chronos_lifeline_conduit',
   'chronos_timebreak',
@@ -70,6 +71,12 @@ assert.equal(blazeRocket.heroId, 'blaze');
 assert.equal(blazeRocket.socketRole, 'staffTip');
 assert.equal(blazeRocket.side, 1);
 assert.deepEqual(blazeRocket.socketNames, [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME]);
+
+const blazeScrapshot = resolveAbilitySocket({ abilityId: 'blaze_scrapshot' });
+assert.ok(blazeScrapshot);
+assert.equal(blazeScrapshot.heroId, 'blaze');
+assert.equal(blazeScrapshot.socketRole, 'staffTip');
+assert.deepEqual(blazeScrapshot.socketNames, [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME]);
 
 const chronosCenter = resolveAbilitySocket({ abilityId: 'chronos_timebreak', side: -1 });
 assert.ok(chronosCenter);

@@ -14,7 +14,7 @@
     "test:combat-feedback": "tsx src/store/combatFeedbackStore.test.ts",
     "test:lobby-listeners": "tsx src/contexts/lobbyListeners.test.ts",
     "test:game-room-listeners": "tsx src/contexts/gameRoomListeners.test.ts",
-    "test:settings": "tsx src/store/settingsStore.test.ts",
+    "test:settings": "tsx src/store/settingsStore.test.ts && tsx src/store/loadoutStore.test.ts",
     "test:movement": "tsx src/hooks/useInput.test.ts && tsx src/hooks/gamepadInput.test.ts && tsx src/movement/localPrediction.test.ts && tsx src/hooks/player/useCamera.test.ts && tsx src/hooks/player/abilityAim.test.ts && tsx src/hooks/player/abilities/useHookshotAbilities.test.ts && tsx src/components/game/PlayerController.frame.test.ts",
     "test:player-frame": "tsx src/components/game/PlayerController.frame.test.ts",
     "test:visual-store": "tsx src/store/visualStore.test.ts && tsx src/store/gameTimingStore.test.ts && tsx src/store/projectileSlicePerformance.test.ts && tsx src/components/game/performanceUtils.test.ts && tsx src/components/game/RemoteMovementEffects.test.ts && tsx src/components/game/OtherPlayers.test.ts && tsx src/components/game/RemoteHeroBatchRenderer.test.ts && tsx src/components/game/BattleRoyalTeamSpectatorCameraController.test.ts && tsx src/components/game/playerWorldAnchors.test.ts && tsx src/components/game/brVisibilityConfig.test.ts",

@@ -38,7 +38,7 @@
     "dev:server:cluster:logs": "docker compose --profile server-cluster logs -f server-us-1 server-us-2 server-us-3 server-eu-1 server-asia-1",
     "dev:server:cluster:infra-logs": "docker compose --profile server-cluster logs -f postgres redis",
     "dev:server:local": "pnpm db:up && pnpm db:migrate && pnpm dev:server:runtime",
-    "dev:server:runtime": "COLYSEUS_DISTRIBUTED=${COLYSEUS_DISTRIBUTED:-1} COLYSEUS_REDIS_URL=${COLYSEUS_REDIS_URL:-redis://localhost:${REDIS_PORT:-6379}} PREGENERATED_MAP_AUTO_TOP_UP_ENABLED=${PREGENERATED_MAP_AUTO_TOP_UP_ENABLED:-1} PREGENERATED_MAP_AUTO_TOP_UP_INITIAL_DELAY_MS=${PREGENERATED_MAP_AUTO_TOP_UP_INITIAL_DELAY_MS:-1000} PREGENERATED_MAP_AUTO_TOP_UP_INTERVAL_MS=${PREGENERATED_MAP_AUTO_TOP_UP_INTERVAL_MS:-5000} PREGENERATED_MAP_AUTO_TOP_UP_MAX_GENERATED_PER_RUN=${PREGENERATED_MAP_AUTO_TOP_UP_MAX_GENERATED_PER_RUN:-16} turbo run dev --filter=@voxel-strike/server",
+    "dev:server:runtime": "COLYSEUS_DISTRIBUTED=${COLYSEUS_DISTRIBUTED:-1} COLYSEUS_REDIS_URL=${COLYSEUS_REDIS_URL:-redis://localhost:${REDIS_PORT:-56379}} PREGENERATED_MAP_AUTO_TOP_UP_ENABLED=${PREGENERATED_MAP_AUTO_TOP_UP_ENABLED:-1} PREGENERATED_MAP_AUTO_TOP_UP_INITIAL_DELAY_MS=${PREGENERATED_MAP_AUTO_TOP_UP_INITIAL_DELAY_MS:-1000} PREGENERATED_MAP_AUTO_TOP_UP_INTERVAL_MS=${PREGENERATED_MAP_AUTO_TOP_UP_INTERVAL_MS:-5000} PREGENERATED_MAP_AUTO_TOP_UP_MAX_GENERATED_PER_RUN=${PREGENERATED_MAP_AUTO_TOP_UP_MAX_GENERATED_PER_RUN:-16} turbo run dev --filter=@voxel-strike/server",
     "test:distributed": "pnpm --filter @voxel-strike/server test:distributed-runtime",
     "verify:autoscaler-live": "pnpm --filter @voxel-strike/server verify:autoscaler-live",
     "simulate:autoscaler-demand": "pnpm --filter @voxel-strike/server simulate:autoscaler-demand"

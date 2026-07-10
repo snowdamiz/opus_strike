@@ -107,7 +107,7 @@
     "test:voxel-chunks": "tsx src/scripts/voxel-chunk-lookup.test.ts",
     "test:anticheat": "tsx src/scripts/anti-cheat-service.test.ts && tsx src/scripts/anti-cheat-shadow-simulation.test.ts && tsx src/scripts/anti-cheat-trace-replay.test.ts && pnpm test:movement-parity",
     "test:voice": "tsx src/scripts/voice-service.test.ts",
-    "test:wager": "tsx src/scripts/wager-service.test.ts",
+    "test:wager": "tsx src/scripts/wager-service.test.ts && tsx src/scripts/wager-treasury-reconciliation.test.ts",
     "test:skin-token-payments": "tsx src/scripts/skin-token-payments.test.ts",
     "test:skin-purchase-lifecycle": "tsx src/scripts/skin-purchase-lifecycle.test.ts",
     "test:skin-shop": "tsx src/scripts/skin-shop-service.test.ts",

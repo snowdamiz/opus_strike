@@ -9,6 +9,8 @@ import {
   createEmptyInputState,
   type HeroId,
   type InputState,
+  type BlazePrimarySkill,
+  getBlazePrimaryAbilityId,
 } from '@voxel-strike/shared';
 import { playSharedBlazeAirstrikeSound, playSharedSound } from '../useAudio';
 import { resetPredictedLocalAbilityVisuals } from './useLocalAbilityVisualPrediction';
@@ -62,6 +64,7 @@ export interface LocalAbilityAudioPredictionFrame {
   phantomPrimaryReloading: boolean;
   blazePrimaryAmmo: number;
   blazePrimaryReloading: boolean;
+  blazePrimarySkill: BlazePrimarySkill;
   chronosPrimaryAmmo: number;
   chronosPrimaryReloading: boolean;
   canUseAbility: (abilityId: string, isUltimate: boolean, isTargetingActive?: boolean) => boolean;
@@ -262,6 +265,7 @@ export function useLocalAbilityAudioPrediction() {
       phantomPrimaryReloading,
       blazePrimaryAmmo,
       blazePrimaryReloading,
+      blazePrimarySkill,
       chronosPrimaryAmmo,
       chronosPrimaryReloading,
       canUseAbility,
@@ -349,8 +353,12 @@ export function useLocalAbilityAudioPrediction() {
           blazePrimaryAmmo > 0 &&
           canPlayPrimary(now, BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier)
         ) {
-          markPredictedLocalAbilitySound('blaze_rocket', now);
-          void playSharedSound('blazeRocket', { pitch: 0.85 + Math.random() * 0.3 });
+          markPredictedLocalAbilitySound(getBlazePrimaryAbilityId(blazePrimarySkill), now);
+          void playSharedSound('blazeRocket', {
+            pitch: blazePrimarySkill === 'scrapshot'
+              ? 0.72 + Math.random() * 0.12
+              : 0.85 + Math.random() * 0.3,
+          });
         }
         break;
       case 'hookshot':

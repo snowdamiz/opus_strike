@@ -294,6 +294,8 @@ import {
   BLAZE_GEARSTORM_DAMAGE,
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
+  BLAZE_SCRAPSHOT_MAGAZINE_SIZE,
+  BLAZE_SCRAPSHOT_RANGE,
   BLAZE_ROCKET_SPEED,
   BLAZE_ROCKET_SPLASH_RADIUS,
   BLAZE_BOMB_SPLASH_RADIUS,
@@ -373,8 +375,11 @@ import {
   getPlayerEyePosition as getSharedPlayerEyePosition,
   getAimConeHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstPlayerCombatHitbox,
+  getBlazeScrapshotPelletDirections,
+  isBlazePrimarySkill,
   getSegmentHitAgainstChronosAegis,
   calculateFalloffDamage,
+  calculateBlazeScrapshotPelletDamage,
   resolveDirectionalMovementIntent,
   canReceiveLiveTransform,
   getPlayerRole,
@@ -388,6 +393,7 @@ import {
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
+  BlazePrimarySkill,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -1127,6 +1133,11 @@ export class GameRoom extends Room<GameState> {
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
   });
+  private readonly blazeScrapshotPrimaryMagazines = new PrimaryMagazineTracker({
+    magazineSize: BLAZE_SCRAPSHOT_MAGAZINE_SIZE,
+    reloadMs: BLAZE_PRIMARY_RELOAD_MS,
+  });
+  private readonly blazePrimarySkills = new Map<string, BlazePrimarySkill>();
   private readonly chronosPrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
     reloadMs: CHRONOS_PRIMARY_RELOAD_MS,
@@ -1871,6 +1882,11 @@ export class GameRoom extends Room<GameState> {
       this.handleTeamSelect(client, team);
     });
 
+    this.onRateLimitedMessage('setBlazePrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isBlazePrimarySkill(data.skill)) return;
+      this.handleSetBlazePrimarySkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
       this.handleMatchSceneReady(client, data);
     });
@@ -1936,6 +1952,16 @@ export class GameRoom extends Room<GameState> {
 
     player.name = displayName;
     this.syncReconnectParticipantFromPlayer(player);
+  }
+
+  private handleSetBlazePrimarySkill(client: Client, skill: BlazePrimarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazePrimarySkills.has(player.id)) return;
+
+    this.blazePrimarySkills.set(player.id, skill);
+    if (player.heroId !== 'blaze') return;
+
+    this.resetPrimaryMagazineForHero(player.id, player.heroId);
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -2313,6 +2339,8 @@ export class GameRoom extends Room<GameState> {
     this.playerPressStates.clear(playerId);
     this.phantomPrimaryMagazines.clear(playerId);
     this.blazePrimaryMagazines.clear(playerId);
+    this.blazeScrapshotPrimaryMagazines.clear(playerId);
+    this.blazePrimarySkills.delete(playerId);
     this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
@@ -6916,6 +6944,122 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private fireBlazeScrapshot(player: Player, attack: AttackConfig, now: number): void {
+    const castId = this.abilityIds.nextSharedCastId(player.id, 'blaze_scrapshot');
+    const aimOrigin = this.getBlazeAimOrigin(player);
+    const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_scrapshot');
+    const rawForward = getForwardVector(player.lookYaw, player.lookPitch);
+    const aimDirection = this.resolveValidatedCastAimDirection(
+      player,
+      'blaze_scrapshot',
+      aimOrigin,
+      rawForward,
+      BLAZE_SCRAPSHOT_RANGE
+    );
+    const candidates = [...this.queryPlayersConeCandidates(
+      aimOrigin,
+      BLAZE_SCRAPSHOT_RANGE,
+      {
+        excludeTeam: player.team as Team,
+        excludeId: player.id,
+        includeDowned: true,
+      }
+    )];
+    const targetIds = new Set<string>();
+    const visibilityRecordedTargetIds = new Set<string>();
+    const pelletImpacts: Array<{
+      position: PlainVec3;
+      kind: 'miss' | 'terrain' | 'player' | 'aegis';
+    }> = [];
+    let interceptedByChronosAegis = false;
+
+    for (const pelletDirection of getBlazeScrapshotPelletDirections(aimDirection)) {
+      const fallbackEndpoint = this.addScaled3D(aimOrigin, pelletDirection, BLAZE_SCRAPSHOT_RANGE);
+      const terrainHit = this.raycastTerrain(aimOrigin, pelletDirection, BLAZE_SCRAPSHOT_RANGE, 0.18);
+      const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Number.POSITIVE_INFINITY;
+      const aegisHit = this.getChronosAegisSkillHit(
+        player,
+        aimOrigin,
+        pelletDirection,
+        BLAZE_SCRAPSHOT_RANGE,
+        { projectileRadius: attack.collisionRadius ?? 0 }
+      );
+
+      let targetHit: AimTargetHit | null = null;
+      for (const target of candidates) {
+        const hit = this.getAimHitAgainstPlayer(
+          aimOrigin,
+          pelletDirection,
+          BLAZE_SCRAPSHOT_RANGE,
+          target
+        );
+        if (!hit || (targetHit && hit.distance >= targetHit.hit.distance)) continue;
+        targetHit = { target, hit };
+      }
+
+      const targetDistance = targetHit?.hit.distance ?? Number.POSITIVE_INFINITY;
+      const aegisDistance = aegisHit?.distance ?? Number.POSITIVE_INFINITY;
+      if (aegisHit && aegisDistance <= terrainDistance && aegisDistance <= targetDistance) {
+        interceptedByChronosAegis = true;
+        this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+          source: player,
+          damageType: attack.damageType,
+          position: aegisHit.point,
+          direction: aegisHit.normal,
+        });
+        pelletImpacts.push({ position: aegisHit.point, kind: 'aegis' });
+        continue;
+      }
+
+      if (targetHit && targetDistance <= terrainDistance) {
+        const target = targetHit.target;
+        targetIds.add(target.id);
+        if (!visibilityRecordedTargetIds.has(target.id)) {
+          visibilityRecordedTargetIds.add(target.id);
+          this.recordCombatVisibilityAtHit(player, target, 'primary', attack.damageType, now);
+        }
+        this.applyDamage(
+          target,
+          calculateBlazeScrapshotPelletDamage(targetDistance),
+          player.id,
+          attack.damageType,
+          {
+            abilityId: 'blaze_scrapshot',
+            sourcePosition: aimOrigin,
+            sourceDirection: pelletDirection,
+          }
+        );
+        pelletImpacts.push({ position: targetHit.hit.targetPoint, kind: 'player' });
+        continue;
+      }
+
+      if (terrainHit) {
+        pelletImpacts.push({ position: terrainHit, kind: 'terrain' });
+      } else {
+        pelletImpacts.push({ position: fallbackEndpoint, kind: 'miss' });
+      }
+    }
+
+    const magazine = this.getOrCreatePrimaryMagazine(player);
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_scrapshot',
+      castId,
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      aimDirection,
+      pelletImpacts,
+      targetIds: Array.from(targetIds),
+      interceptedByChronosAegis,
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      ammoRemaining: magazine?.ammo,
+      reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
+      reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
+    });
+  }
+
   private getChronosAimOrigin(player: Player): PlainVec3 {
     return getSharedPlayerEyePosition(player.position);
   }
@@ -7589,9 +7733,17 @@ export class GameRoom extends Room<GameState> {
     this.chronosPrimaryHolds.clear(playerId);
   }
 
-  private getPrimaryMagazineTracker(heroId: string): PrimaryMagazineTracker | null {
+  private getBlazePrimarySkill(playerId: string): BlazePrimarySkill {
+    return this.blazePrimarySkills.get(playerId) ?? 'fireball_rockets';
+  }
+
+  private getPrimaryMagazineTracker(playerId: string, heroId: string): PrimaryMagazineTracker | null {
     if (heroId === 'phantom') return this.phantomPrimaryMagazines;
-    if (heroId === 'blaze') return this.blazePrimaryMagazines;
+    if (heroId === 'blaze') {
+      return this.getBlazePrimarySkill(playerId) === 'scrapshot'
+        ? this.blazeScrapshotPrimaryMagazines
+        : this.blazePrimaryMagazines;
+    }
     if (heroId === 'chronos') return this.chronosPrimaryMagazines;
     return null;
   }
@@ -7602,18 +7754,23 @@ export class GameRoom extends Room<GameState> {
     if (heroId === 'phantom') {
       this.phantomPrimaryMagazines.reset(playerId);
       this.blazePrimaryMagazines.clear(playerId);
+      this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
     } else if (heroId === 'blaze') {
-      this.blazePrimaryMagazines.reset(playerId);
+      this.blazePrimaryMagazines.clear(playerId);
+      this.blazeScrapshotPrimaryMagazines.clear(playerId);
+      this.getPrimaryMagazineTracker(playerId, heroId)?.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
     } else if (heroId === 'chronos') {
       this.chronosPrimaryMagazines.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
+      this.blazeScrapshotPrimaryMagazines.clear(playerId);
     } else {
       this.phantomPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
+      this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
     }
 
@@ -7624,11 +7781,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getOrCreatePrimaryMagazine(player: Player): PrimaryMagazineState | null {
-    return this.getPrimaryMagazineTracker(player.heroId)?.getOrCreate(player.id) ?? null;
+    return this.getPrimaryMagazineTracker(player.id, player.heroId)?.getOrCreate(player.id) ?? null;
   }
 
   private completePrimaryReloadIfReady(player: Player, now: number): PrimaryMagazineState | null {
-    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    const tracker = this.getPrimaryMagazineTracker(player.id, player.heroId);
     if (!tracker) return null;
 
     const { magazine, completed } = tracker.completeReloadIfReady(player.id, now);
@@ -7650,7 +7807,7 @@ export class GameRoom extends Room<GameState> {
   private sendPrimaryMagazineState(player: Player, now: number): void {
     if (player.isBot) return;
 
-    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    const tracker = this.getPrimaryMagazineTracker(player.id, player.heroId);
     if (!tracker) return;
 
     const client = this.clientRegistry.getClient(player.id);
@@ -7665,7 +7822,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private consumePrimaryShot(player: Player, now: number): boolean {
-    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    const tracker = this.getPrimaryMagazineTracker(player.id, player.heroId);
     if (!tracker) return true;
 
     this.completePrimaryReloadIfReady(player, now);
@@ -7680,7 +7837,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private reloadHeroPrimary(player: Player, now: number): boolean {
-    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    const tracker = this.getPrimaryMagazineTracker(player.id, player.heroId);
     if (!tracker) return false;
 
     this.completePrimaryReloadIfReady(player, now);
@@ -7944,6 +8101,7 @@ export class GameRoom extends Room<GameState> {
         heroId,
         mode,
         chronosAscendantActive: heroId === 'chronos' && mode === 'primary' && this.isChronosAscendantActive(player),
+        blazePrimarySkill: heroId === 'blaze' ? this.getBlazePrimarySkill(player.id) : undefined,
       })
       : null;
     const readinessRejection = getAttackPreflightRejection({
@@ -7992,7 +8150,11 @@ export class GameRoom extends Room<GameState> {
 
     if (heroId === 'blaze') {
       if (mode === 'primary') {
-        this.fireBlazeRocket(player, attack, now);
+        if (this.getBlazePrimarySkill(player.id) === 'scrapshot') {
+          this.fireBlazeScrapshot(player, attack, now);
+        } else {
+          this.fireBlazeRocket(player, attack, now);
+        }
       } else {
         this.dropBlazeBomb(player, attack, now);
       }
@@ -8804,7 +8966,7 @@ export class GameRoom extends Room<GameState> {
     this.attackCooldowns.adjust(player.id, 'primary', adjustmentMs, now);
     this.attackCooldowns.adjust(player.id, 'secondary', adjustmentMs, now);
 
-    const primaryMagazines = this.getPrimaryMagazineTracker(player.heroId);
+    const primaryMagazines = this.getPrimaryMagazineTracker(player.id, player.heroId);
     if (primaryMagazines?.adjustActiveReload(player.id, adjustmentMs, now).adjusted) {
       this.sendPrimaryMagazineState(player, now);
     }

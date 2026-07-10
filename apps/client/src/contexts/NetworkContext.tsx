@@ -77,6 +77,7 @@ import { createPracticeAbilityStates } from '../utils/practiceAbilityStates';
 import { usePartyStore } from '../store/partyStore';
 import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 import { useStreamerStore } from '../store/streamerStore';
+import { useLoadoutStore } from '../store/loadoutStore';
 import {
   getStreamerMapTransitionKey,
   preloadStreamerMapTransitionTarget,
@@ -1146,6 +1147,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         });
 
       setupGameListeners(gameRoomRef.current, playerName);
+      gameRoomRef.current.send('setBlazePrimarySkill', {
+        skill: useLoadoutStore.getState().blazePrimarySkill,
+      });
 
       setRoomId(gameRoomRef.current.id);
       setPlayerId(gameRoomRef.current.sessionId);

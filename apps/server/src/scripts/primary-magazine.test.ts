@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
+  BLAZE_SCRAPSHOT_MAGAZINE_SIZE,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
   CHRONOS_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
@@ -21,6 +22,13 @@ function createPhantomTracker(): PrimaryMagazineTracker {
 function createBlazeTracker(): PrimaryMagazineTracker {
   return new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: BLAZE_PRIMARY_RELOAD_MS,
+  });
+}
+
+function createBlazeScrapshotTracker(): PrimaryMagazineTracker {
+  return new PrimaryMagazineTracker({
+    magazineSize: BLAZE_SCRAPSHOT_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
   });
 }
@@ -134,6 +142,23 @@ function createChronosTracker(): PrimaryMagazineTracker {
   const completed = tracker.completeReloadIfReady(playerId, emptyAt + BLAZE_PRIMARY_RELOAD_MS);
   assert.equal(completed.completed, true);
   assert.equal(completed.magazine.ammo, BLAZE_PRIMARY_MAGAZINE_SIZE);
+}
+
+{
+  const tracker = createBlazeScrapshotTracker();
+  const now = 25_000;
+
+  for (let shot = 1; shot <= BLAZE_SCRAPSHOT_MAGAZINE_SIZE; shot++) {
+    const result = tracker.consumeShot(playerId, now + shot);
+    assert.equal(result.consumed, true);
+    assert.equal(result.magazine.ammo, BLAZE_SCRAPSHOT_MAGAZINE_SIZE - shot);
+  }
+
+  const emptyAt = now + BLAZE_SCRAPSHOT_MAGAZINE_SIZE;
+  assert.equal(tracker.getClientState(playerId, emptyAt + 1).reloading, true);
+  const completed = tracker.completeReloadIfReady(playerId, emptyAt + BLAZE_PRIMARY_RELOAD_MS);
+  assert.equal(completed.completed, true);
+  assert.equal(completed.magazine.ammo, BLAZE_SCRAPSHOT_MAGAZINE_SIZE);
 }
 
 {

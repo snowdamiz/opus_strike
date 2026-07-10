@@ -8,6 +8,9 @@ import {
   BLAZE_ROCKET_DAMAGE,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
   BLAZE_ROCKET_SPLASH_RADIUS,
+  BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS,
+  BLAZE_SCRAPSHOT_PELLET_DAMAGE,
+  BLAZE_SCRAPSHOT_RANGE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
@@ -29,6 +32,7 @@ import {
   PHANTOM_VOID_RAY_COLLISION_RADIUS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   PHANTOM_VOID_RAY_DAMAGE,
+  type BlazePrimarySkill,
   type HeroId,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
@@ -107,6 +111,15 @@ export const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   },
 };
 
+export const BLAZE_SCRAPSHOT_ATTACK: AttackConfig = {
+  damage: BLAZE_SCRAPSHOT_PELLET_DAMAGE,
+  range: BLAZE_SCRAPSHOT_RANGE,
+  cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS,
+  coneDot: 1,
+  collisionRadius: BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS,
+  damageType: 'scrapshot',
+};
+
 export const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: {
     damage: PHANTOM_VOID_RAY_DAMAGE,
@@ -152,7 +165,11 @@ export function getRoomAttackConfig(input: {
   heroId: HeroId;
   mode: AttackMode;
   chronosAscendantActive: boolean;
+  blazePrimarySkill?: BlazePrimarySkill;
 }): AttackConfig | null {
+  if (input.heroId === 'blaze' && input.mode === 'primary' && input.blazePrimarySkill === 'scrapshot') {
+    return BLAZE_SCRAPSHOT_ATTACK;
+  }
   const baseAttack = input.mode === 'primary'
     ? PRIMARY_ATTACKS[input.heroId]
     : SECONDARY_ATTACKS[input.heroId];
@@ -211,6 +228,8 @@ export function getChronosAegisCollisionRadiusForAttack(attack: Pick<AttackConfi
       return PHANTOM_DIRE_BALL_COLLISION_RADIUS;
     case 'rocket':
       return BLAZE_ROCKET_COLLISION_RADIUS;
+    case 'scrapshot':
+      return BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS;
     case 'bomb':
       return BLAZE_BOMB_AEGIS_COLLISION_RADIUS;
     case 'verdant_pulse':

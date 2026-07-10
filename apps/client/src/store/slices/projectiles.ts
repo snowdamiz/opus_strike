@@ -92,7 +92,7 @@ export interface ProjectileActions {
   clearExpiredRockets: () => void;
   setBlazePrimaryAmmo: (ammo: number) => void;
   setBlazePrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
-  resetBlazePrimaryMagazine: () => void;
+  resetBlazePrimaryMagazine: (magazineSize?: number) => void;
 
   // Blaze bomb actions
   addBomb: (bomb: BombData) => void;
@@ -523,9 +523,10 @@ export const createProjectileSlice: StateCreator<
     };
   }),
 
-  resetBlazePrimaryMagazine: () => set((state) => {
+  resetBlazePrimaryMagazine: (magazineSize = BLAZE_PRIMARY_MAGAZINE_SIZE) => set((state) => {
+    const nextMagazineSize = Math.max(1, Math.min(BLAZE_PRIMARY_MAGAZINE_SIZE, Math.floor(magazineSize)));
     if (
-      state.blazePrimaryAmmo === BLAZE_PRIMARY_MAGAZINE_SIZE &&
+      state.blazePrimaryAmmo === nextMagazineSize &&
       !state.blazePrimaryReloading &&
       state.blazePrimaryReloadStart === 0 &&
       state.blazePrimaryReloadEnd === 0
@@ -534,7 +535,7 @@ export const createProjectileSlice: StateCreator<
     }
 
     return {
-      blazePrimaryAmmo: BLAZE_PRIMARY_MAGAZINE_SIZE,
+      blazePrimaryAmmo: nextMagazineSize,
       blazePrimaryReloading: false,
       blazePrimaryReloadStart: 0,
       blazePrimaryReloadEnd: 0,

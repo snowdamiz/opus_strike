@@ -8,9 +8,8 @@ import type { AbilityIconType } from './HeroIcons';
 // The game currently binds exactly one skill to each input slot. Each slot is
 // seeded from the real shipped skill (`getHeroSkillItems`, common rarity, owned)
 // plus one hand-authored "epic" alternative per category (LMB / RMB / ability /
-// ultimate). The epics are UI-only — none are wired to gameplay yet — so they all
-// ship `locked` and can be browsed but not equipped. Unlike the old placeholder
-// clones, each epic is a distinct play pattern rather than a stat tweak.
+// ultimate). Implemented alternatives are owned/equippable; concepts that are not
+// wired to gameplay remain locked and browsable.
 
 export type LoadoutSlotKey =
   | 'primaryFire'
@@ -63,9 +62,8 @@ export interface LoadoutSkillOption extends HeroSkillItem {
 
 export type HeroLoadoutPool = Record<HeroId, Record<LoadoutSlotKey, LoadoutSkillOption[]>>;
 
-// A hand-authored epic loadout skill (UI-only, ships locked). One per hero per
-// category. Each is a distinct play pattern, not a stat clone — see the loadout
-// design notes for the rationale behind each one.
+// A hand-authored epic loadout skill. One per hero per category; implemented
+// entries are equippable while the remaining concepts stay locked.
 interface NewEpicSkill {
   /** id suffix, unique within hero + slot (e.g. 'soulrend') */
   key: string;
@@ -312,7 +310,7 @@ function buildStockOption(heroId: HeroId, slot: LoadoutSlotDef, base: HeroSkillI
   };
 }
 
-// A hand-authored epic alternative: distinct play pattern, UI-only, always locked.
+// A hand-authored epic alternative with ownership derived from implementation status.
 function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill): LoadoutSkillOption {
   const item: HeroSkillItem = {
     input: def.input,
@@ -331,7 +329,9 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     isPlaceholder: false,
     tagline: def.tagline,
     rarity: 'epic',
-    ownership: 'locked',
+    ownership: heroId === 'blaze' && slot.key === 'primaryFire' && def.key === 'scrapshot'
+      ? 'owned'
+      : 'locked',
     meta: buildDisplayMeta(item),
   };
 }
@@ -367,6 +367,8 @@ export const HERO_LOADOUT_POOL: HeroLoadoutPool = (() => {
 export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
   return HERO_LOADOUT_POOL[heroId][slot][0].id;
 }
+
+export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
 
 // E (ability1) and Q (ability2) draw from one shared, interchangeable pool —
 // any ability can occupy either slot.

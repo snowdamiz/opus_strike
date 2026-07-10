@@ -18,9 +18,13 @@ import {
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_BOMB_SPLASH_RADIUS,
-  BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_ROCKET_STAFF_SOCKET,
+  BLAZE_SCRAPSHOT_RANGE,
+  getBlazePrimaryAbilityId,
+  getBlazePrimaryMagazineSize,
+  getBlazeScrapshotPelletDirections,
+  type BlazePrimarySkill,
   type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -57,6 +61,8 @@ import { isActionLockBlocking } from '../actionLock';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 import { playSharedSound } from '../../useAudio';
+import { addScrapshotEffects } from '../../../components/game/Effects';
+import { applyTutorialOfflineTrainingScrapshot } from '../../../utils/tutorialOfflineCombatRuntime';
 
 const FUEL_AUTHORITY_EPSILON = 0.05;
 
@@ -154,8 +160,8 @@ function calculateBlazeFlamethrowerPose(
 export interface UseBlazeAbilitiesReturn {
   // State refs
   lastBombTimeRef: React.MutableRefObject<number>;
-  lastRocketTimeRef: React.MutableRefObject<number>;
-  rocketIdRef: React.MutableRefObject<number>;
+  lastPrimaryTimeRef: React.MutableRefObject<number>;
+  primaryShotIdRef: React.MutableRefObject<number>;
   blazePrimaryAmmoRef: React.MutableRefObject<number>;
   blazePrimaryReloadingRef: React.MutableRefObject<boolean>;
   blazePrimaryReloadStartRef: React.MutableRefObject<number>;
@@ -175,7 +181,7 @@ export interface UseBlazeAbilitiesReturn {
   reloadBlazePrimary: (now?: number) => boolean;
   resetBlazePrimaryMagazine: () => void;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
-  fireRocket: (ctx: AbilityContext) => void;
+  firePrimary: (ctx: AbilityContext) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
   handleFlamethrower: (
     ctx: AbilityContext,
@@ -199,10 +205,11 @@ interface PendingRocketJump {
   activateAtMs: number;
 }
 
-export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
-  const lastRocketTimeRef = useRef(0);
-  const rocketIdRef = useRef(0);
-  const blazePrimaryAmmoRef = useRef(BLAZE_PRIMARY_MAGAZINE_SIZE);
+export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlazeAbilitiesReturn {
+  const primaryMagazineSize = getBlazePrimaryMagazineSize(blazePrimarySkill);
+  const lastPrimaryTimeRef = useRef(0);
+  const primaryShotIdRef = useRef(0);
+  const blazePrimaryAmmoRef = useRef(primaryMagazineSize);
   const blazePrimaryReloadingRef = useRef(false);
   const blazePrimaryReloadStartRef = useRef(0);
 
@@ -239,21 +246,21 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   ), []);
 
   const completeBlazePrimaryReload = useCallback(() => {
-    blazePrimaryAmmoRef.current = BLAZE_PRIMARY_MAGAZINE_SIZE;
+    blazePrimaryAmmoRef.current = primaryMagazineSize;
     blazePrimaryReloadingRef.current = false;
     blazePrimaryReloadStartRef.current = 0;
 
     const store = useGameStore.getState();
-    store.setBlazePrimaryAmmo(BLAZE_PRIMARY_MAGAZINE_SIZE);
+    store.setBlazePrimaryAmmo(primaryMagazineSize);
     store.setBlazePrimaryReload(false, 0, 0);
-  }, []);
+  }, [primaryMagazineSize]);
 
   const beginBlazePrimaryReload = useCallback((now = Date.now()): boolean => {
     const store = useGameStore.getState();
     const currentAmmo = Math.min(store.blazePrimaryAmmo, blazePrimaryAmmoRef.current);
 
     if (store.blazePrimaryReloading || blazePrimaryReloadingRef.current) return false;
-    if (currentAmmo >= BLAZE_PRIMARY_MAGAZINE_SIZE) return false;
+    if (currentAmmo >= primaryMagazineSize) return false;
 
     blazePrimaryAmmoRef.current = Math.max(0, currentAmmo);
     blazePrimaryReloadingRef.current = true;
@@ -263,7 +270,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     store.setBlazePrimaryReload(true, now, now + BLAZE_PRIMARY_RELOAD_MS);
     playPredictedBlazePrimaryReload(now);
     return true;
-  }, []);
+  }, [primaryMagazineSize]);
 
   const updateBlazePrimaryReload = useCallback((now = Date.now()) => {
     const store = useGameStore.getState();
@@ -290,12 +297,12 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   }, [beginBlazePrimaryReload, updateBlazePrimaryReload]);
 
   const resetBlazePrimaryMagazine = useCallback(() => {
-    lastRocketTimeRef.current = 0;
-    blazePrimaryAmmoRef.current = BLAZE_PRIMARY_MAGAZINE_SIZE;
+    lastPrimaryTimeRef.current = 0;
+    blazePrimaryAmmoRef.current = primaryMagazineSize;
     blazePrimaryReloadingRef.current = false;
     blazePrimaryReloadStartRef.current = 0;
-    useGameStore.getState().resetBlazePrimaryMagazine();
-  }, []);
+    useGameStore.getState().resetBlazePrimaryMagazine(primaryMagazineSize);
+  }, [primaryMagazineSize]);
 
   // Handle Meteor Strike targeting mode
   const handleBombTargeting = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
@@ -340,7 +347,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     secondaryFirePressedRef.current = isHoldingSecondary;
   }, []);
 
-  const fireRocket = useCallback((ctx: AbilityContext) => {
+  const firePrimary = useCallback((ctx: AbilityContext) => {
     if (!ctx.inputState.primaryFire) return;
     const store = useGameStore.getState();
     if (store.bombTargeting) return;
@@ -354,17 +361,22 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     }
 
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    if (now - lastRocketTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier) return;
+    if (now - lastPrimaryTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier) return;
 
-    lastRocketTimeRef.current = now;
-    rocketIdRef.current += 1;
+    lastPrimaryTimeRef.current = now;
+    primaryShotIdRef.current += 1;
+    const abilityId = getBlazePrimaryAbilityId(blazePrimarySkill);
     const holdBlend = 1;
-    const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_rocket', now, holdBlend);
+    const staffTipPose = sampleBlazeStaffTipPose(ctx, abilityId, now, holdBlend);
     const startPosition = staffTipPose
       ? vectorToPlainPosition(staffTipPose.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
-    const direction = resolveAbilityAimDirection(ctx, startPosition);
-    const visualId = `predicted_blaze_rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
+    const direction = resolveAbilityAimDirection(
+      ctx,
+      startPosition,
+      blazePrimarySkill === 'scrapshot' ? BLAZE_SCRAPSHOT_RANGE : undefined
+    );
+    const visualId = `predicted_${abilityId}_${ctx.localPlayer.id}_${primaryShotIdRef.current}`;
 
     blazePrimaryAmmoRef.current = Math.max(0, blazePrimaryAmmoRef.current - 1);
     store.setBlazePrimaryAmmo(blazePrimaryAmmoRef.current);
@@ -372,23 +384,38 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       beginBlazePrimaryReload(now);
     }
 
-    store.addRocket({
-      id: visualId,
-      position: startPosition,
-      velocity: {
-        x: direction.x * BLAZE_ROCKET_SPEED,
-        y: direction.y * BLAZE_ROCKET_SPEED,
-        z: direction.z * BLAZE_ROCKET_SPEED,
-      },
-      startTime: now,
-      ownerId: ctx.localPlayer.id,
-      ownerTeam: getOwnerTeam(ctx.localPlayer.team),
-    });
+    if (blazePrimarySkill === 'scrapshot') {
+      const pelletDirections = getBlazeScrapshotPelletDirections(direction);
+      addScrapshotEffects(startPosition, pelletDirections.map((pelletDirection) => ({
+        x: startPosition.x + pelletDirection.x * BLAZE_SCRAPSHOT_RANGE,
+        y: startPosition.y + pelletDirection.y * BLAZE_SCRAPSHOT_RANGE,
+        z: startPosition.z + pelletDirection.z * BLAZE_SCRAPSHOT_RANGE,
+      })));
+      applyTutorialOfflineTrainingScrapshot({
+        origin: startPosition,
+        direction,
+        sourceId: ctx.localPlayer.id,
+        sourceTeam: getOwnerTeam(ctx.localPlayer.team),
+      });
+    } else {
+      store.addRocket({
+        id: visualId,
+        position: startPosition,
+        velocity: {
+          x: direction.x * BLAZE_ROCKET_SPEED,
+          y: direction.y * BLAZE_ROCKET_SPEED,
+          z: direction.z * BLAZE_ROCKET_SPEED,
+        },
+        startTime: now,
+        ownerId: ctx.localPlayer.id,
+        ownerTeam: getOwnerTeam(ctx.localPlayer.team),
+      });
+    }
     if (store.isTutorialMode) {
       store.recordPrimaryFire(now);
     }
-    markPredictedLocalAbilityVisual('blaze_rocket', ctx.localPlayer.id, visualId, { now });
-  }, [beginBlazePrimaryReload, updateBlazePrimaryReload]);
+    markPredictedLocalAbilityVisual(abilityId, ctx.localPlayer.id, visualId, { now });
+  }, [beginBlazePrimaryReload, blazePrimarySkill, updateBlazePrimaryReload]);
 
   // Execute Meteor Strike
   const executeBombDrop = useCallback((sounds: PlayerSounds) => {
@@ -591,8 +618,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   }, []);
 
   return {
-    lastRocketTimeRef,
-    rocketIdRef,
+    lastPrimaryTimeRef,
+    primaryShotIdRef,
     blazePrimaryAmmoRef,
     blazePrimaryReloadingRef,
     blazePrimaryReloadStartRef,
@@ -611,7 +638,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     reloadBlazePrimary,
     resetBlazePrimaryMagazine,
     handleBombTargeting,
-    fireRocket,
+    firePrimary,
     executeBombDrop,
     handleFlamethrower,
     executeRocketJump,

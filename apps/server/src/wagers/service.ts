@@ -47,10 +47,13 @@ import { runWithRedisOwnerLock, type RedisOwnerLockClient } from './workerLock';
 import { getGameTokenConfig } from '../config/gameToken';
 import {
   createWagerMemo,
-  findWagerMemoInParsedTransaction,
   verifyParsedSolPayment,
   type PaymentVerificationFailure,
 } from './solana';
+import {
+  isMonthlyRpcCapacityError,
+  reconcileWagerTreasuryDeposits,
+} from './treasuryReconciliation';
 import {
   buildBurnCheckedTransaction,
   buildJupiterSwapTransaction,
@@ -94,8 +97,8 @@ const WAGER_TRANSFER_RETRY_GRACE_MS = 60_000;
 const WAGER_DEPOSIT_CONFIRM_CONCURRENCY = 6;
 const WAGER_REFUND_RETRY_CONCURRENCY = 3;
 const WAGER_SETTLEMENT_RETRY_CONCURRENCY = 2;
-const WAGER_TREASURY_RECONCILE_CONCURRENCY = 6;
 const WAGER_STATUS_EMIT_CONCURRENCY = 10;
+const WAGER_TREASURY_BALANCE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 const GOLDEN_BIOME_SETTINGS_ID = 'default';
 const UNSIGNED_INTEGER_PATTERN = /^[0-9]+$/;
 
@@ -468,6 +471,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function wagerTreasuryRpcStateId(config: WagerRuntimeConfig): string {
+  return `${config.cluster}:${config.treasuryWallet}`;
+}
+
 function hashGoldenRoll(seed: number, salt: number): number {
   let hash = (seed >>> 0) ^ Math.imul(salt >>> 0, 0x9e3779b1);
   hash = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
@@ -574,6 +581,7 @@ export function buildWagerUserStatIncrements(input: {
 
 export class WagerService extends EventEmitter {
   private connection: Connection | null = null;
+  private backgroundConnection: Connection | null = null;
   private backgroundStarted = false;
   private backgroundTimers: ReturnType<typeof setInterval>[] = [];
 
@@ -685,6 +693,53 @@ export class WagerService extends EventEmitter {
       this.connection = new Connection(config.rpcUrl, 'confirmed');
     }
     return this.connection;
+  }
+
+  private getBackgroundConnection(): Connection {
+    const config = this.getConfig();
+    assertWagerPaymentsConfigured(config);
+    if (!this.backgroundConnection || this.backgroundConnection.rpcEndpoint !== config.rpcUrl) {
+      this.backgroundConnection = new Connection(config.rpcUrl, {
+        commitment: 'confirmed',
+        disableRetryOnRateLimit: true,
+      });
+    }
+    return this.backgroundConnection;
+  }
+
+  private async isBackgroundRpcCapacityBlocked(
+    config = this.getConfig(),
+    now = new Date()
+  ): Promise<boolean> {
+    if (!config.enabled || !config.rpcUrl || !config.treasuryWallet) return false;
+    const state = await prisma.wagerTreasuryRpcState.findUnique({
+      where: { id: wagerTreasuryRpcStateId(config) },
+      select: { capacityBlockedUntil: true },
+    });
+    return Boolean(state?.capacityBlockedUntil && state.capacityBlockedUntil.getTime() > now.getTime());
+  }
+
+  private async pauseBackgroundRpcAfterCapacityFailure(error: unknown): Promise<void> {
+    if (!isMonthlyRpcCapacityError(error)) return;
+    const config = this.getConfig();
+    if (!config.enabled || !config.rpcUrl || !config.treasuryWallet) return;
+
+    const capacityBlockedUntil = new Date(Date.now() + config.rpcCapacityBackoffMs);
+    await prisma.wagerTreasuryRpcState.upsert({
+      where: { id: wagerTreasuryRpcStateId(config) },
+      create: {
+        id: wagerTreasuryRpcStateId(config),
+        cluster: config.cluster,
+        treasuryWallet: config.treasuryWallet,
+        capacityBlockedUntil,
+      },
+      update: { capacityBlockedUntil },
+    });
+    loggers.room.warn('Paused wager background RPC after monthly capacity failure', {
+      cluster: config.cluster,
+      treasuryWallet: config.treasuryWallet,
+      capacityBlockedUntil: capacityBlockedUntil.toISOString(),
+    });
   }
 
   async getTreasuryBalanceLamports(): Promise<bigint> {
@@ -1786,7 +1841,7 @@ export class WagerService extends EventEmitter {
       this.runBackgroundJobWithLock('treasury-balance', () => this.checkTreasuryBalance()).catch((error) => {
         loggers.room.error('Wager treasury balance check failed', error);
       });
-    }, 120_000));
+    }, WAGER_TREASURY_BALANCE_CHECK_INTERVAL_MS));
     run();
   }
 
@@ -1797,9 +1852,21 @@ export class WagerService extends EventEmitter {
   }
 
   private async runBackgroundJobWithLock(jobName: string, fn: () => Promise<void>): Promise<void> {
+    const guardedRun = async () => {
+      try {
+        await fn();
+      } catch (error) {
+        await this.pauseBackgroundRpcAfterCapacityFailure(error).catch((pauseError) => {
+          loggers.room.warn('Failed to persist wager RPC capacity backoff', {
+            error: pauseError instanceof Error ? pauseError.message : String(pauseError),
+          });
+        });
+        throw error;
+      }
+    };
     const colyseusConfig = getColyseusRuntimeConfig();
     if (!colyseusConfig.distributed) {
-      await fn();
+      await guardedRun();
       return;
     }
 
@@ -1855,13 +1922,14 @@ export class WagerService extends EventEmitter {
           pid: process.pid,
         });
       },
-    }, fn);
+    }, guardedRun);
 
     if (!result.acquired) return;
   }
 
   async runBackgroundOnce(): Promise<void> {
     await this.expireOldIntents();
+    if (await this.isBackgroundRpcCapacityBlocked()) return;
     await this.confirmSubmittedDeposits();
     await this.retryFailedRefunds();
     await this.retrySettlements();
@@ -3145,6 +3213,7 @@ export class WagerService extends EventEmitter {
     });
     await runWithConcurrency(submitted, WAGER_DEPOSIT_CONFIRM_CONCURRENCY, async (payment) => {
       await this.verifySubmittedPayment(payment.id, { keepSubmittedWhenNotFound: true }).catch((error) => {
+        if (isMonthlyRpcCapacityError(error)) throw error;
         loggers.room.warn('Failed to confirm wager deposit', payment.id, error);
       });
     });
@@ -3158,6 +3227,7 @@ export class WagerService extends EventEmitter {
     });
     await runWithConcurrency(refunding, WAGER_REFUND_RETRY_CONCURRENCY, async (payment) => {
       await this.refundSinglePayment(payment.id, 'retry').catch((error) => {
+        if (isMonthlyRpcCapacityError(error)) throw error;
         loggers.room.warn('Failed to retry wager refund', payment.id, error);
       });
     });
@@ -3176,6 +3246,7 @@ export class WagerService extends EventEmitter {
     });
     await runWithConcurrency(settlements, WAGER_SETTLEMENT_RETRY_CONCURRENCY, async (settlement) => {
       await this.processSettlement(settlement.id).catch((error) => {
+        if (isMonthlyRpcCapacityError(error)) throw error;
         loggers.room.warn('Failed to retry wager settlement', settlement.id, error);
       });
     });
@@ -3198,6 +3269,7 @@ export class WagerService extends EventEmitter {
     });
     await runWithConcurrency(rewards, WAGER_SETTLEMENT_RETRY_CONCURRENCY, async (reward) => {
       await this.processGoldenBiomeReward(reward.id).catch((error) => {
+        if (isMonthlyRpcCapacityError(error)) throw error;
         loggers.room.warn('Failed to retry golden biome reward', reward.id, error);
       });
     });
@@ -3207,57 +3279,82 @@ export class WagerService extends EventEmitter {
     const config = this.getConfig();
     if (!config.enabled || !config.rpcUrl || !config.treasuryWallet) return;
 
-    const connection = this.getConnection();
-    const signatures = await connection.getSignaturesForAddress(new PublicKey(config.treasuryWallet), { limit: 50 });
-    const signatureValues = signatures.map((signatureInfo) => signatureInfo.signature);
-    const existingRows = signatureValues.length === 0
-      ? []
-      : await prisma.wagerPayment.findMany({
-        where: { depositSignature: { in: signatureValues } },
-        select: { depositSignature: true },
-      });
-    const existingSignatures = new Set(
-      existingRows.flatMap((row) => row.depositSignature ? [row.depositSignature] : [])
-    );
-    const unknownSignatures = signatures.filter((signatureInfo) => !existingSignatures.has(signatureInfo.signature));
-
-    await runWithConcurrency(unknownSignatures, WAGER_TREASURY_RECONCILE_CONCURRENCY, async (signatureInfo) => {
-      try {
-        const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
-          commitment: 'confirmed',
-          maxSupportedTransactionVersion: 0,
+    const connection = this.getBackgroundConnection();
+    const result = await reconcileWagerTreasuryDeposits({
+      cluster: config.cluster,
+      treasuryWallet: config.treasuryWallet,
+      now: new Date(),
+      intentExpiryGraceMs: config.intentExpiryGraceMs,
+    }, {
+      findRecoverablePayments: ({ expiresAfter }) => prisma.wagerPayment.findMany({
+        where: {
+          depositSignature: null,
+          status: { in: ['intent_created', 'expired'] },
+          intentExpiresAt: { gte: expiresAfter },
+        },
+        select: { id: true, memo: true, createdAt: true },
+      }),
+      getLastScannedSignature: async () => {
+        const state = await prisma.wagerTreasuryRpcState.findUnique({
+          where: { id: wagerTreasuryRpcStateId(config) },
+          select: { lastScannedSignature: true },
         });
-        const memo = findWagerMemoInParsedTransaction(transaction);
-        if (!memo) return;
-
-        const intentId = memo.slice(createWagerMemo('').length);
-        const payment = await prisma.wagerPayment.findUnique({ where: { id: intentId } });
-        if (!payment) {
-          loggers.room.warn('Found unmatched wager deposit memo', {
-            signature: signatureInfo.signature,
-            memo,
-          });
-          return;
+        return state?.lastScannedSignature ?? null;
+      },
+      listSignatures: ({ treasuryWallet, until, limit }) => connection.getSignaturesForAddress(
+        new PublicKey(treasuryWallet),
+        {
+          limit,
+          ...(until ? { until } : {}),
         }
-
-        await prisma.wagerPayment.update({
-          where: { id: payment.id },
+      ),
+      loadParsedTransaction: (signature) => connection.getParsedTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      }),
+      claimRecoveredPayment: async ({ paymentId, signature }) => {
+        const claimed = await prisma.wagerPayment.updateMany({
+          where: {
+            id: paymentId,
+            depositSignature: null,
+            status: { in: ['intent_created', 'expired'] },
+          },
           data: {
-            depositSignature: signatureInfo.signature,
+            depositSignature: signature,
             status: 'submitted',
+            lastError: null,
           },
         });
-        await this.verifySubmittedPayment(payment.id, { keepSubmittedWhenNotFound: true });
-      } catch (error) {
-        loggers.room.warn('Failed to reconcile wager treasury deposit', signatureInfo.signature, error);
-      }
+        return claimed.count === 1;
+      },
+      setLastScannedSignature: async ({ signature }) => {
+        await prisma.wagerTreasuryRpcState.upsert({
+          where: { id: wagerTreasuryRpcStateId(config) },
+          create: {
+            id: wagerTreasuryRpcStateId(config),
+            cluster: config.cluster,
+            treasuryWallet: config.treasuryWallet,
+            lastScannedSignature: signature,
+          },
+          update: { lastScannedSignature: signature },
+        });
+      },
     });
+
+    for (const paymentId of result.recoveredPaymentIds) {
+      await this.verifySubmittedPayment(paymentId, { keepSubmittedWhenNotFound: true });
+    }
+
+    if (result.scannedSignatureCount > 0) {
+      loggers.room.debug('Wager treasury reconciliation pass completed', result);
+    }
   }
 
   private async checkTreasuryBalance(): Promise<void> {
     const config = this.getConfig();
     if (!config.enabled || !config.rpcUrl || !config.treasuryWallet) return;
-    const balance = BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
+    if (await this.isBackgroundRpcCapacityBlocked(config)) return;
+    const balance = BigInt(await this.getBackgroundConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
     if (balance < config.treasuryLowBalanceLamports) {
       loggers.room.warn('Wager treasury balance is low', {
         treasuryWallet: config.treasuryWallet,

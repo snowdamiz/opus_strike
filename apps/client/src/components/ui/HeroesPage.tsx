@@ -6,6 +6,7 @@ import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { HeroIcon } from './HeroIcons';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { HERO_COLORS, SKILL_RARITY_COLORS } from '../../styles/colorTokens';
+import { resolveHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
 
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
   default: module.FeaturedHeroPreview,
@@ -24,9 +25,15 @@ interface HeroesPageProps {
 }
 
 export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
+  const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
+  const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
   const heroInfo = HERO_DEFINITIONS[selectedHero];
   const heroColor = HERO_COLORS[selectedHero];
-  const kitItems = getHeroSkillItems(selectedHero);
+  const kitItems = getHeroSkillItems(
+    selectedHero,
+    blazePrimarySkill,
+    resolveHeroAbilityBindings(selectedHero, heroAbilityBindings),
+  );
 
   return (
     <div className="heroes-page-layout menu-content-wide">

@@ -128,6 +128,14 @@ export const BLAZE_ROCKET_SPEED = 117.6;
 export const BLAZE_ROCKET_DAMAGE = 24;
 export const BLAZE_ROCKET_COLLISION_RADIUS = 0.21;
 export const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
+export const BLAZE_SCRAPSHOT_PELLET_COUNT = 6;
+export const BLAZE_SCRAPSHOT_PELLET_DAMAGE = 8;
+export const BLAZE_SCRAPSHOT_MAGAZINE_SIZE = 6;
+export const BLAZE_SCRAPSHOT_RANGE = 14;
+export const BLAZE_SCRAPSHOT_FULL_DAMAGE_RANGE = 4;
+export const BLAZE_SCRAPSHOT_SPREAD_RADIANS = 0.14;
+export const BLAZE_SCRAPSHOT_FALLOFF_SCALE = 0.75;
+export const BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS = 0.06;
 export const BLAZE_BOMB_COOLDOWN_SECONDS = 5;
 export const BLAZE_BOMB_COOLDOWN_MS = BLAZE_BOMB_COOLDOWN_SECONDS * 1000;
 export const BLAZE_BOMB_DAMAGE = 51;
@@ -183,6 +191,11 @@ export const ABILITY_CARD_STATS = {
   blaze_rocket: [
     { value: BLAZE_ROCKET_DAMAGE, label: 'dmg' },
     { value: BLAZE_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: BLAZE_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
+  ],
+  blaze_scrapshot: [
+    { value: BLAZE_SCRAPSHOT_PELLET_DAMAGE, label: `dmg x${BLAZE_SCRAPSHOT_PELLET_COUNT}` },
+    { value: BLAZE_SCRAPSHOT_MAGAZINE_SIZE, label: 'ammo' },
     { value: BLAZE_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
   ],
   blaze_bomb: [

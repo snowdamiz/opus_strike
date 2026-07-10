@@ -42,7 +42,7 @@ const processPatterns = [
 ];
 
 const devPorts = [3000, 2567, 2568, 2569, 2570, 2571, 3030, 3031];
-const servicePorts = [5432, 55433, 6379, 7880, 7881];
+const servicePorts = [5432, 55433, 56379, 7880, 7881];
 const watchedPorts = [...new Set([...devPorts, ...servicePorts])];
 
 const knownContainers = [

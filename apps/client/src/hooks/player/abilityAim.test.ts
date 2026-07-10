@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
+import { BLAZE_SCRAPSHOT_RANGE } from '@voxel-strike/shared';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET,
   calculateLookDirection,
@@ -14,6 +15,7 @@ import {
 } from './abilityAim';
 import { buildAbilityCastOriginHints } from './abilityCastOriginHints';
 import type { AbilityContext } from './types';
+import { useLoadoutStore } from '../../store/loadoutStore';
 
 function makeContext(overrides: Partial<AbilityContext> = {}): AbilityContext {
   return {
@@ -104,6 +106,21 @@ const rawChronosOrigin = calculatePlayerSocketPosition(
 assert.ok(rawChronosOrigin);
 assert.equal(chronosHint.aimPoint?.y, 12);
 assert.equal(chronosHint.origin.y > rawChronosOrigin.y + 0.2, true);
+
+useLoadoutStore.getState().setBlazePrimarySkill('scrapshot');
+const blazeContext = makeContext({
+  heroId: 'blaze',
+  camera: chronosCamera,
+  position: new THREE.Vector3(0, 1, 0),
+  viewmodelElapsedSeconds: 0,
+  viewmodelNowMs: 1000,
+});
+const blazeHints = buildAbilityCastOriginHints(blazeContext, {
+  ...blazeContext.inputState,
+  primaryFire: true,
+});
+assert.ok(blazeHints?.some((hint) => hint.abilityId === 'blaze_scrapshot'));
+useLoadoutStore.getState().setBlazePrimarySkill('fireball_rockets');
 
 const mobileAssistCandidates: MobileAimAssistTargetCandidate[] = [
   {
@@ -201,6 +218,14 @@ assert.equal(
     ability1: true,
   }),
   null
+);
+assert.deepEqual(
+  getMobileAimAssistActionConfig('blaze', {
+    primaryFire: true,
+    secondaryFire: false,
+    ability1: false,
+  }, 'scrapshot'),
+  { maxDistance: BLAZE_SCRAPSHOT_RANGE, targetTeam: 'enemy' }
 );
 
 console.log('ability aim tests passed');

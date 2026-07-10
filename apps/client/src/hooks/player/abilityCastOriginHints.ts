@@ -22,6 +22,7 @@ import {
 import { offsetResolvedChronosOrbVisualOrigin } from '../../model-system/chronosOrbVisualOrigin';
 import { resolveAbilityAimDirection } from './abilityAim';
 import type { AbilityContext } from './types';
+import { useLoadoutStore } from '../../store/loadoutStore';
 
 interface BuildAbilityCastOriginHintOptions {
   bombTargeting?: boolean;
@@ -308,13 +309,16 @@ export function buildAbilityCastOriginHints(
 
   if (ctx.heroId === 'blaze') {
     if (input.primaryFire) {
+      const primaryAbilityId = useLoadoutStore.getState().blazePrimarySkill === 'scrapshot'
+        ? 'blaze_scrapshot'
+        : 'blaze_rocket';
       pushHint(
         hints,
         seen,
         hintFromOrigin(
           ctx,
-          'blaze_rocket',
-          resolveBlazeStaffOrigin(ctx, 'blaze_rocket', now, 1)
+          primaryAbilityId,
+          resolveBlazeStaffOrigin(ctx, primaryAbilityId, now, 1)
         )
       );
     }
