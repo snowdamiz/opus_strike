@@ -34,6 +34,7 @@ import {
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
   BLAZE_BOMB_WARNING_LEAD,
+  EYE_HEIGHT,
   FUEL_UPDATE_THRESHOLD,
   calculatePlayerSocketPosition,
 } from '../constants';
@@ -61,8 +62,16 @@ import { isActionLockBlocking } from '../actionLock';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 import { playSharedSound } from '../../useAudio';
-import { addScrapshotEffects } from '../../../components/game/Effects';
+import {
+  addScrapshotEffects,
+  type ScrapshotEffectImpactInput,
+} from '../../../components/game/Effects';
 import { applyTutorialOfflineTrainingScrapshot } from '../../../utils/tutorialOfflineCombatRuntime';
+import {
+  createRaycastDirectionHitResult,
+  isPhysicsReady,
+  raycastDirectionInto,
+} from '../../usePhysics';
 
 const FUEL_AUTHORITY_EPSILON = 0.05;
 
@@ -122,26 +131,30 @@ function playPredictedBlazePrimaryReload(now: number): void {
   });
 }
 
-function sampleBlazeStaffTipPose(
+function resolveBlazeStaffTipPose(
   ctx: AbilityContext,
   abilityId: string,
   nowMs: number,
   holdBlend: number
 ): ResolvedAbilitySocketOrigin | null {
-  if (!ctx.camera) return null;
-
-  ctx.camera.updateMatrixWorld();
+  ctx.camera?.updateMatrixWorld();
 
   return resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
-    sampledContext: {
-      camera: ctx.camera,
-      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
-      holdBlend,
-      timestampMs: ctx.viewmodelNowMs ?? nowMs,
-    } satisfies BlazeRocketStaffPoseSampleContext,
-    preferSampled: true,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
+    sampledContext: ctx.camera
+      ? {
+        camera: ctx.camera,
+        elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+        holdBlend,
+        timestampMs: ctx.viewmodelNowMs ?? nowMs,
+      } satisfies BlazeRocketStaffPoseSampleContext
+      : undefined,
+    preferSampled: false,
     warnOnSampleDrift: true,
   });
 }
@@ -212,6 +225,7 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
   const blazePrimaryAmmoRef = useRef(primaryMagazineSize);
   const blazePrimaryReloadingRef = useRef(false);
   const blazePrimaryReloadStartRef = useRef(0);
+  const scrapshotTerrainHitRef = useRef(createRaycastDirectionHitResult());
 
   // Meteor Strike state
   const lastBombTimeRef = useRef(0);
@@ -367,7 +381,7 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     primaryShotIdRef.current += 1;
     const abilityId = getBlazePrimaryAbilityId(blazePrimarySkill);
     const holdBlend = 1;
-    const staffTipPose = sampleBlazeStaffTipPose(ctx, abilityId, now, holdBlend);
+    const staffTipPose = resolveBlazeStaffTipPose(ctx, abilityId, now, holdBlend);
     const startPosition = staffTipPose
       ? vectorToPlainPosition(staffTipPose.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
@@ -386,17 +400,43 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
 
     if (blazePrimarySkill === 'scrapshot') {
       const pelletDirections = getBlazeScrapshotPelletDirections(direction);
-      addScrapshotEffects(startPosition, pelletDirections.map((pelletDirection) => ({
-        x: startPosition.x + pelletDirection.x * BLAZE_SCRAPSHOT_RANGE,
-        y: startPosition.y + pelletDirection.y * BLAZE_SCRAPSHOT_RANGE,
-        z: startPosition.z + pelletDirection.z * BLAZE_SCRAPSHOT_RANGE,
-      })));
-      applyTutorialOfflineTrainingScrapshot({
+      const practiceResult = applyTutorialOfflineTrainingScrapshot({
         origin: startPosition,
         direction,
         sourceId: ctx.localPlayer.id,
         sourceTeam: getOwnerTeam(ctx.localPlayer.team),
       });
+      const predictedImpacts: ScrapshotEffectImpactInput[] = pelletDirections.map((pelletDirection) => {
+        const terrainHit = scrapshotTerrainHitRef.current;
+        const didHitTerrain = isPhysicsReady() && raycastDirectionInto(
+          terrainHit,
+          ctx.position.x,
+          ctx.position.y + EYE_HEIGHT,
+          ctx.position.z,
+          pelletDirection.x,
+          pelletDirection.y,
+          pelletDirection.z,
+          BLAZE_SCRAPSHOT_RANGE,
+          { priority: 'visual', feature: 'ability:blazeScrapshot' },
+        );
+        return {
+          position: didHitTerrain
+            ? { ...terrainHit.point }
+            : {
+              x: startPosition.x + pelletDirection.x * BLAZE_SCRAPSHOT_RANGE,
+              y: startPosition.y + pelletDirection.y * BLAZE_SCRAPSHOT_RANGE,
+              z: startPosition.z + pelletDirection.z * BLAZE_SCRAPSHOT_RANGE,
+            },
+          kind: didHitTerrain ? 'terrain' as const : 'miss' as const,
+        };
+      });
+      practiceResult.playerImpacts.forEach((impact) => {
+        predictedImpacts[impact.pelletIndex] = {
+          position: impact.position,
+          kind: 'player',
+        };
+      });
+      addScrapshotEffects(startPosition, predictedImpacts, 'prediction');
     } else {
       store.addRocket({
         id: visualId,
@@ -548,7 +588,7 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
       setFlamethrowerActive(true);
 
       const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);
-      const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_flamethrower', now, holdBlend);
+      const staffTipPose = resolveBlazeStaffTipPose(ctx, 'blaze_flamethrower', now, holdBlend);
       const staffTipOrigin = staffTipPose ? vectorToPlainPosition(staffTipPose.position) : undefined;
       const { origin, direction } = calculateBlazeFlamethrowerPose(ctx, staffTipOrigin);
       setFlamethrowerVisualPose(origin, direction);

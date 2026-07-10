@@ -72,8 +72,6 @@ function resolveBlazeStaffOrigin(
   now: number,
   holdBlend: number
 ): ResolvedAbilitySocketOrigin | null {
-  if (!ctx.camera) return null;
-
   return resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
@@ -81,13 +79,15 @@ function resolveBlazeStaffOrigin(
       position: ctx.position,
       yaw: ctx.yaw,
     },
-    sampledContext: {
-      camera: ctx.camera,
-      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
-      holdBlend,
-      timestampMs: ctx.viewmodelNowMs ?? now,
-    } satisfies BlazeRocketStaffPoseSampleContext,
-    preferSampled: true,
+    sampledContext: ctx.camera
+      ? {
+        camera: ctx.camera,
+        elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+        holdBlend,
+        timestampMs: ctx.viewmodelNowMs ?? now,
+      } satisfies BlazeRocketStaffPoseSampleContext
+      : undefined,
+    preferSampled: false,
     warnOnSampleDrift: true,
   });
 }

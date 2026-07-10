@@ -2642,10 +2642,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('blaze_scrapshot', data.playerId)
         : null;
-      if (!predictedVisualId && data.pelletImpacts?.length) {
+      if (data.pelletImpacts?.length) {
+        const visibleImpacts = predictedVisualId
+          ? data.pelletImpacts.filter((impact) => impact.kind === 'player' || impact.kind === 'aegis')
+          : data.pelletImpacts;
         addScrapshotEffects(
           startPosition,
-          data.pelletImpacts.map((impact) => impact.position)
+          visibleImpacts,
+          predictedVisualId ? 'impacts' : 'full',
         );
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_scrapshot')) {

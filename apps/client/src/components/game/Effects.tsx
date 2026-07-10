@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState, type MutableRefObject } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useState, type MutableRefObject } from 'react';
 import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
@@ -19,12 +19,27 @@ import {
 import { useDeferredFrameCommit } from './systems/useDeferredFrameCommit';
 import { SHARED_GEOMETRIES } from './effectResources';
 
+export type ScrapshotImpactKind = 'miss' | 'terrain' | 'player' | 'aegis';
+export type ScrapshotEffectMode = 'prediction' | 'full' | 'impacts';
+
+export interface ScrapshotEffectImpactInput {
+  position: { x: number; y: number; z: number };
+  kind: ScrapshotImpactKind;
+}
+
+interface ScrapshotEffectImpact {
+  position: THREE.Vector3;
+  kind: ScrapshotImpactKind;
+}
+
 interface Effect {
   id: string;
   type: 'grapple' | 'scrapshot' | 'blink' | 'explosion' | 'hit' | 'lifeline' | 'heal' | 'chronosSelfHealPulse' | 'chronosAegisBreak';
   position: THREE.Vector3;
   direction?: THREE.Vector3;
   endPosition?: THREE.Vector3;
+  scrapshotImpacts?: ScrapshotEffectImpact[];
+  scrapshotMode?: ScrapshotEffectMode;
   sourceAbilityId?: string;
   sourcePlayerId?: string;
   startTime: number;
@@ -44,14 +59,13 @@ const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
 const EFFECT_FORWARD = new THREE.Vector3(0, 0, 1);
 const EXPLOSION_INSTANCE_DUMMY = new THREE.Object3D();
 const GRAPPLE_LINE_MATERIAL = new THREE.LineBasicMaterial({ color: '#00ff88', linewidth: 2 });
-const SCRAPSHOT_TRACER_MATERIAL = new THREE.LineBasicMaterial({
-  color: '#ffb347',
-  transparent: true,
-  opacity: 0.9,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-  toneMapped: false,
-});
+const SCRAPSHOT_INSTANCE_DUMMY = new THREE.Object3D();
+const SCRAPSHOT_MUZZLE_SPARK_COUNT = 12;
+const SCRAPSHOT_IMPACT_SPARKS_PER_HIT = 4;
+const SCRAPSHOT_SMOKE_PUFF_COUNT = 4;
+const SCRAPSHOT_VISUAL_TRAVEL_SPEED = 68;
+const SCRAPSHOT_MIN_TRAVEL_SECONDS = 0.09;
+const SCRAPSHOT_MAX_TRAVEL_SECONDS = 0.22;
 const CHRONOS_AEGIS_BREAK_SHARD_COUNT = 14;
 type GlobalEffectUpdater = (state: RootState, delta: number) => void;
 const globalEffectUpdaters = createFrameUpdaterRegistry<RootState>();
@@ -59,6 +73,11 @@ const globalEffectUpdaters = createFrameUpdaterRegistry<RootState>();
 type GlobalEffectMaterialKind =
   | 'blinkStart'
   | 'blinkEnd'
+  | 'scrapshotCore'
+  | 'scrapshotGlow'
+  | 'scrapshotMuzzle'
+  | 'scrapshotImpact'
+  | 'scrapshotSmoke'
   | 'explosion'
   | 'hit'
   | 'lifelineGlow'
@@ -75,6 +94,11 @@ type GlobalEffectMaterialKind =
 const GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY: Record<GlobalEffectMaterialKind, number> = {
   blinkStart: 1,
   blinkEnd: 0,
+  scrapshotCore: 0.98,
+  scrapshotGlow: 0.68,
+  scrapshotMuzzle: 1,
+  scrapshotImpact: 0.92,
+  scrapshotSmoke: 0.28,
   explosion: 1,
   hit: 1,
   lifelineGlow: 0.2,
@@ -99,6 +123,26 @@ function createGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshB
         transparent: true,
         opacity: GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind],
         side: THREE.DoubleSide,
+      });
+    case 'scrapshotCore':
+      return createAdditiveBasicMaterial(0xfff7d6, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind]);
+    case 'scrapshotGlow':
+      return createAdditiveBasicMaterial(0xff5a00, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind]);
+    case 'scrapshotMuzzle':
+      return createAdditiveBasicMaterial(0xffd36a, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'scrapshotImpact':
+      return createAdditiveBasicMaterial(0xffffff, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'scrapshotSmoke':
+      return new THREE.MeshBasicMaterial({
+        color: 0x3b211d,
+        transparent: true,
+        opacity: GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind],
+        depthWrite: false,
+        toneMapped: false,
       });
     case 'explosion':
       return new THREE.MeshBasicMaterial({
@@ -402,14 +446,21 @@ export function addEffects(newEffects: readonly Omit<Effect, 'id' | 'startTime'>
 
 export function addScrapshotEffects(
   startPosition: { x: number; y: number; z: number },
-  endPositions: readonly { x: number; y: number; z: number }[]
+  impacts: readonly ScrapshotEffectImpactInput[],
+  mode: ScrapshotEffectMode = 'full',
 ): void {
-  addEffects(endPositions.map((endPosition) => ({
-    type: 'scrapshot' as const,
+  if (impacts.length === 0) return;
+
+  addEffect({
+    type: 'scrapshot',
     position: new THREE.Vector3(startPosition.x, startPosition.y, startPosition.z),
-    endPosition: new THREE.Vector3(endPosition.x, endPosition.y, endPosition.z),
-    duration: 120,
-  })));
+    scrapshotImpacts: impacts.map((impact) => ({
+      position: new THREE.Vector3(impact.position.x, impact.position.y, impact.position.z),
+      kind: impact.kind,
+    })),
+    scrapshotMode: mode,
+    duration: mode === 'impacts' ? 340 : 430,
+  });
 }
 
 export function getGlobalEffectStats(now = Date.now()): GlobalEffectStats {
@@ -435,13 +486,15 @@ function runGlobalEffectsFrame(
   if (now - lastCleanupRef.current >= 100) {
     lastCleanupRef.current = now;
     compactExpiredEffects(now);
-    activeEffectsRef.current = effects;
+  }
 
-    // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
-    if (effects.length !== lastEffectCountRef.current) {
-      lastEffectCountRef.current = effects.length;
-      commitEffectCount(effects.length);
-    }
+  activeEffectsRef.current = effects;
+  // Additions need to mount on the next rendered frame; only expiration cleanup
+  // remains throttled. Gating this check behind cleanup made short casts appear
+  // up to 100ms late and consumed most of their visible lifetime.
+  if (effects.length !== lastEffectCountRef.current) {
+    lastEffectCountRef.current = effects.length;
+    commitEffectCount(effects.length);
   }
 
   globalEffectUpdaters.run(state, delta);
@@ -483,7 +536,7 @@ export function Effects() {
           case 'grapple':
             return <GrappleLine key={effect.id} effect={effect} />;
           case 'scrapshot':
-            return <ScrapshotTracer key={effect.id} effect={effect} />;
+            return <ScrapshotBlastEffect key={effect.id} effect={effect} />;
           case 'blink':
             return <BlinkEffect key={effect.id} effect={effect} />;
           case 'explosion':
@@ -540,23 +593,583 @@ function GrappleLine({ effect }: EffectProps) {
   );
 }
 
-function ScrapshotTracer({ effect }: EffectProps) {
-  const geometry = useMemo(() => {
-    const positions = new Float32Array(6);
-    writeGrappleLinePositions(positions, effect);
-    const bufferGeometry = new THREE.BufferGeometry();
-    bufferGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    return bufferGeometry;
-  }, [effect]);
-  const lineObject = useMemo(() => {
-    const line = new THREE.Line(geometry, SCRAPSHOT_TRACER_MATERIAL);
-    line.frustumCulled = false;
-    return line;
-  }, [geometry]);
+interface ScrapshotPelletVisual {
+  end: THREE.Vector3;
+  direction: THREE.Vector3;
+  tracerQuaternion: THREE.Quaternion;
+  impactQuaternion: THREE.Quaternion;
+  length: number;
+  travelSeconds: number;
+  kind: ScrapshotImpactKind;
+}
 
-  useEffect(() => () => geometry.dispose(), [geometry]);
+interface ScrapshotSparkVisual {
+  origin: THREE.Vector3;
+  direction: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  speed: number;
+  scale: number;
+  delay: number;
+  color: number;
+}
 
-  return <primitive object={lineObject} />;
+interface ScrapshotSmokeVisual {
+  direction: THREE.Vector3;
+  speed: number;
+  scale: number;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function getScrapshotImpactColor(kind: ScrapshotImpactKind): number {
+  switch (kind) {
+    case 'player':
+      return 0xfff4bd;
+    case 'aegis':
+      return 0xa7f3d0;
+    case 'terrain':
+      return 0xff7a00;
+    case 'miss':
+      return 0xffb347;
+  }
+}
+
+function createScrapshotPelletVisuals(effect: Effect): ScrapshotPelletVisual[] {
+  const impacts = effect.scrapshotImpacts ?? [];
+  const visuals: ScrapshotPelletVisual[] = [];
+
+  for (const impact of impacts) {
+    const direction = impact.position.clone().sub(effect.position);
+    const length = direction.length();
+    if (length <= 0.001) continue;
+    direction.multiplyScalar(1 / length);
+    visuals.push({
+      end: impact.position,
+      direction,
+      tracerQuaternion: new THREE.Quaternion().setFromUnitVectors(LIFELINE_AXIS, direction),
+      impactQuaternion: new THREE.Quaternion().setFromUnitVectors(EFFECT_FORWARD, direction),
+      length,
+      travelSeconds: Math.max(
+        SCRAPSHOT_MIN_TRAVEL_SECONDS,
+        Math.min(SCRAPSHOT_MAX_TRAVEL_SECONDS, length / SCRAPSHOT_VISUAL_TRAVEL_SPEED),
+      ),
+      kind: impact.kind,
+    });
+  }
+
+  return visuals;
+}
+
+function createScrapshotMuzzleSparks(
+  effect: Effect,
+  pellets: readonly ScrapshotPelletVisual[],
+): ScrapshotSparkVisual[] {
+  if (pellets.length === 0) return [];
+
+  const sparks: ScrapshotSparkVisual[] = [];
+  let seed = hashEffectId(`${effect.id}:scrapshot_muzzle`);
+  for (let index = 0; index < SCRAPSHOT_MUZZLE_SPARK_COUNT; index++) {
+    const pellet = pellets[index % pellets.length];
+    const reference = Math.abs(pellet.direction.y) < 0.92
+      ? LIFELINE_AXIS
+      : new THREE.Vector3(1, 0, 0);
+    const right = new THREE.Vector3().crossVectors(pellet.direction, reference).normalize();
+    const up = new THREE.Vector3().crossVectors(right, pellet.direction).normalize();
+    let random: number;
+    [random, seed] = nextSeededUnit(seed);
+    const horizontalJitter = (random * 2 - 1) * 0.24;
+    [random, seed] = nextSeededUnit(seed);
+    const verticalJitter = (random * 2 - 1) * 0.2;
+    const direction = pellet.direction.clone()
+      .addScaledVector(right, horizontalJitter)
+      .addScaledVector(up, verticalJitter)
+      .normalize();
+    [random, seed] = nextSeededUnit(seed);
+    const speed = 6.5 + random * 6.5;
+    [random, seed] = nextSeededUnit(seed);
+    const scale = 0.035 + random * 0.045;
+
+    sparks.push({
+      origin: effect.position,
+      direction,
+      quaternion: new THREE.Quaternion().setFromUnitVectors(LIFELINE_AXIS, direction),
+      speed,
+      scale,
+      delay: index * 0.0015,
+      color: 0xffd36a,
+    });
+  }
+  return sparks;
+}
+
+function createScrapshotImpactSparks(
+  effect: Effect,
+  pellets: readonly ScrapshotPelletVisual[],
+  immediate: boolean,
+): ScrapshotSparkVisual[] {
+  const sparks: ScrapshotSparkVisual[] = [];
+  let seed = hashEffectId(`${effect.id}:scrapshot_impacts`);
+
+  for (const pellet of pellets) {
+    if (pellet.kind === 'miss') continue;
+    const reference = Math.abs(pellet.direction.y) < 0.92
+      ? LIFELINE_AXIS
+      : new THREE.Vector3(1, 0, 0);
+    const right = new THREE.Vector3().crossVectors(pellet.direction, reference).normalize();
+    const up = new THREE.Vector3().crossVectors(right, pellet.direction).normalize();
+
+    for (let index = 0; index < SCRAPSHOT_IMPACT_SPARKS_PER_HIT; index++) {
+      let random: number;
+      [random, seed] = nextSeededUnit(seed);
+      const angle = (index / SCRAPSHOT_IMPACT_SPARKS_PER_HIT) * Math.PI * 2 + random * 0.7;
+      const direction = pellet.direction.clone().multiplyScalar(-0.38)
+        .addScaledVector(right, Math.cos(angle))
+        .addScaledVector(up, Math.sin(angle) * 0.82 + 0.24)
+        .normalize();
+      [random, seed] = nextSeededUnit(seed);
+      const speed = 2.8 + random * 4.2;
+      [random, seed] = nextSeededUnit(seed);
+      const scale = 0.026 + random * 0.028;
+
+      sparks.push({
+        origin: pellet.end,
+        direction,
+        quaternion: new THREE.Quaternion().setFromUnitVectors(LIFELINE_AXIS, direction),
+        speed,
+        scale,
+        delay: immediate ? 0 : pellet.travelSeconds,
+        color: getScrapshotImpactColor(pellet.kind),
+      });
+    }
+  }
+  return sparks;
+}
+
+function createScrapshotSmoke(
+  effect: Effect,
+  forward: THREE.Vector3,
+): ScrapshotSmokeVisual[] {
+  const reference = Math.abs(forward.y) < 0.92 ? LIFELINE_AXIS : new THREE.Vector3(1, 0, 0);
+  const right = new THREE.Vector3().crossVectors(forward, reference).normalize();
+  let seed = hashEffectId(`${effect.id}:scrapshot_smoke`);
+
+  return Array.from({ length: SCRAPSHOT_SMOKE_PUFF_COUNT }, (_, index) => {
+    let random: number;
+    [random, seed] = nextSeededUnit(seed);
+    const sideways = (random * 2 - 1) * 0.55;
+    [random, seed] = nextSeededUnit(seed);
+    const upward = 0.5 + random * 0.48;
+    [random, seed] = nextSeededUnit(seed);
+    const speed = 0.55 + random * 0.65;
+    [random, seed] = nextSeededUnit(seed);
+    const scale = 0.16 + random * 0.11 + index * 0.018;
+    return {
+      direction: forward.clone().multiplyScalar(-0.2)
+        .addScaledVector(right, sideways)
+        .addScaledVector(LIFELINE_AXIS, upward)
+        .normalize(),
+      speed,
+      scale,
+    };
+  });
+}
+
+function writeScrapshotInstance(
+  mesh: THREE.InstancedMesh | null,
+  index: number,
+  position: THREE.Vector3,
+  quaternion: THREE.Quaternion,
+  scaleX: number,
+  scaleY: number,
+  scaleZ: number,
+): void {
+  if (!mesh) return;
+  SCRAPSHOT_INSTANCE_DUMMY.position.copy(position);
+  SCRAPSHOT_INSTANCE_DUMMY.quaternion.copy(quaternion);
+  SCRAPSHOT_INSTANCE_DUMMY.scale.set(scaleX, scaleY, scaleZ);
+  SCRAPSHOT_INSTANCE_DUMMY.updateMatrix();
+  mesh.setMatrixAt(index, SCRAPSHOT_INSTANCE_DUMMY.matrix);
+}
+
+function commitScrapshotInstances(mesh: THREE.InstancedMesh | null): void {
+  if (mesh) mesh.instanceMatrix.needsUpdate = true;
+}
+
+function hideScrapshotInstances(mesh: THREE.InstancedMesh | null, position: THREE.Vector3): void {
+  if (!mesh) return;
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  SCRAPSHOT_INSTANCE_DUMMY.position.copy(position);
+  SCRAPSHOT_INSTANCE_DUMMY.quaternion.identity();
+  SCRAPSHOT_INSTANCE_DUMMY.scale.setScalar(0.001);
+  SCRAPSHOT_INSTANCE_DUMMY.updateMatrix();
+  for (let index = 0; index < mesh.count; index++) {
+    mesh.setMatrixAt(index, SCRAPSHOT_INSTANCE_DUMMY.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+function ScrapshotBlastEffect({ effect }: EffectProps) {
+  const elapsedSeconds = useRef(0);
+  const tracerGlowRef = useRef<THREE.InstancedMesh>(null);
+  const tracerCoreRef = useRef<THREE.InstancedMesh>(null);
+  const pelletHeadRef = useRef<THREE.InstancedMesh>(null);
+  const muzzleSparkRef = useRef<THREE.InstancedMesh>(null);
+  const smokeRef = useRef<THREE.InstancedMesh>(null);
+  const impactFlareRef = useRef<THREE.InstancedMesh>(null);
+  const impactRingRef = useRef<THREE.InstancedMesh>(null);
+  const impactSparkRef = useRef<THREE.InstancedMesh>(null);
+  const muzzleCoreRef = useRef<THREE.Mesh>(null);
+  const muzzleGlowRef = useRef<THREE.Mesh>(null);
+  const muzzleConeRef = useRef<THREE.Mesh>(null);
+  const muzzleRingARef = useRef<THREE.Mesh>(null);
+  const muzzleRingBRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const mode = effect.scrapshotMode ?? 'full';
+  const compactMuzzle = mode === 'prediction';
+  const muzzleFlashDuration = compactMuzzle ? 0.075 : 0.11;
+  const muzzleOpacity = compactMuzzle ? 0.38 : 0.62;
+  const muzzleLightIntensity = compactMuzzle ? 2.2 : 5.5;
+  const muzzleLightDistance = compactMuzzle ? 2.8 : 4.5;
+  const pelletVisuals = useMemo(() => createScrapshotPelletVisuals(effect), [effect]);
+  const impactVisuals = useMemo(
+    () => pelletVisuals.filter((pellet) => pellet.kind !== 'miss'),
+    [pelletVisuals],
+  );
+  const forward = useMemo(() => {
+    const average = new THREE.Vector3();
+    pelletVisuals.forEach((pellet) => average.add(pellet.direction));
+    return average.lengthSq() > 0.0001 ? average.normalize() : EFFECT_FORWARD.clone();
+  }, [pelletVisuals]);
+  const muzzleQuaternion = useMemo(
+    () => new THREE.Quaternion().setFromUnitVectors(EFFECT_FORWARD, forward),
+    [forward],
+  );
+  const muzzleSparks = useMemo(
+    () => createScrapshotMuzzleSparks(effect, pelletVisuals),
+    [effect, pelletVisuals],
+  );
+  const impactSparks = useMemo(
+    () => createScrapshotImpactSparks(effect, pelletVisuals, mode === 'impacts'),
+    [effect, mode, pelletVisuals],
+  );
+  const smoke = useMemo(() => createScrapshotSmoke(effect, forward), [effect, forward]);
+  const showMuzzle = mode !== 'impacts';
+  const showTrails = mode !== 'impacts';
+  const showImpacts = impactVisuals.length > 0;
+  const tracerCoreMaterial = useGlobalEffectMaterial('scrapshotCore');
+  const tracerGlowMaterial = useGlobalEffectMaterial('scrapshotGlow');
+  const muzzleMaterial = useGlobalEffectMaterial('scrapshotMuzzle');
+  const impactMaterial = useGlobalEffectMaterial('scrapshotImpact');
+  const smokeMaterial = useGlobalEffectMaterial('scrapshotSmoke');
+
+  useLayoutEffect(() => {
+    const dynamicMeshes = [
+      tracerGlowRef.current,
+      tracerCoreRef.current,
+      pelletHeadRef.current,
+      muzzleSparkRef.current,
+      smokeRef.current,
+      impactFlareRef.current,
+      impactRingRef.current,
+      impactSparkRef.current,
+    ];
+    dynamicMeshes.forEach((mesh) => hideScrapshotInstances(mesh, effect.position));
+    muzzleCoreRef.current?.scale.setScalar(0.001);
+    muzzleGlowRef.current?.scale.setScalar(0.001);
+    muzzleConeRef.current?.scale.setScalar(0.001);
+    muzzleRingARef.current?.scale.setScalar(0.001);
+    muzzleRingBRef.current?.scale.setScalar(0.001);
+
+    impactVisuals.forEach((pellet, index) => {
+      const color = new THREE.Color(getScrapshotImpactColor(pellet.kind));
+      impactFlareRef.current?.setColorAt(index, color);
+      impactRingRef.current?.setColorAt(index, color);
+    });
+    impactSparks.forEach((spark, index) => {
+      impactSparkRef.current?.setColorAt(index, new THREE.Color(spark.color));
+    });
+    if (impactFlareRef.current?.instanceColor) impactFlareRef.current.instanceColor.needsUpdate = true;
+    if (impactRingRef.current?.instanceColor) impactRingRef.current.instanceColor.needsUpdate = true;
+    if (impactSparkRef.current?.instanceColor) impactSparkRef.current.instanceColor.needsUpdate = true;
+  }, [effect.position, impactSparks, impactVisuals]);
+
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
+    elapsedSeconds.current += delta;
+    const elapsed = elapsedSeconds.current;
+    const flashT = clamp01(elapsed / muzzleFlashDuration);
+    const flashFade = 1 - flashT;
+    const trailEnvelope = 1 - clamp01((elapsed - 0.08) / 0.22);
+
+    if (showTrails) {
+      pelletVisuals.forEach((pellet, index) => {
+        const travelT = clamp01(elapsed / pellet.travelSeconds);
+        const headDistance = pellet.length * travelT;
+        const arrivalFade = 1 - clamp01((elapsed - pellet.travelSeconds) / 0.12);
+        const visibleTailLength = Math.max(0.001, Math.min(headDistance, 2.7 + index * 0.14));
+        const tailCenterDistance = Math.max(0, headDistance - visibleTailLength * 0.5);
+        const radiusFade = Math.max(0.001, arrivalFade * trailEnvelope);
+
+        SCRAPSHOT_INSTANCE_DUMMY.position.copy(effect.position)
+          .addScaledVector(pellet.direction, tailCenterDistance);
+        writeScrapshotInstance(
+          tracerGlowRef.current,
+          index,
+          SCRAPSHOT_INSTANCE_DUMMY.position,
+          pellet.tracerQuaternion,
+          0.17 * radiusFade,
+          visibleTailLength,
+          0.17 * radiusFade,
+        );
+        writeScrapshotInstance(
+          tracerCoreRef.current,
+          index,
+          SCRAPSHOT_INSTANCE_DUMMY.position,
+          pellet.tracerQuaternion,
+          0.052 * radiusFade,
+          visibleTailLength,
+          0.052 * radiusFade,
+        );
+
+        SCRAPSHOT_INSTANCE_DUMMY.position.copy(effect.position)
+          .addScaledVector(pellet.direction, headDistance);
+        const headScale = 0.105 * radiusFade;
+        writeScrapshotInstance(
+          pelletHeadRef.current,
+          index,
+          SCRAPSHOT_INSTANCE_DUMMY.position,
+          pellet.impactQuaternion,
+          headScale,
+          headScale,
+          headScale * 1.55,
+        );
+      });
+      tracerCoreMaterial.opacity = 0.98 * trailEnvelope;
+      tracerGlowMaterial.opacity = 0.68 * trailEnvelope;
+      commitScrapshotInstances(tracerGlowRef.current);
+      commitScrapshotInstances(tracerCoreRef.current);
+      commitScrapshotInstances(pelletHeadRef.current);
+    }
+
+    if (showMuzzle) {
+      muzzleMaterial.opacity = muzzleOpacity * flashFade;
+      if (muzzleCoreRef.current) {
+        muzzleCoreRef.current.scale.setScalar(
+          compactMuzzle ? 0.08 + flashT * 0.12 : 0.12 + flashT * 0.2,
+        );
+      }
+      if (muzzleGlowRef.current) {
+        muzzleGlowRef.current.scale.setScalar(
+          compactMuzzle ? 0.14 + flashT * 0.18 : 0.22 + flashT * 0.3,
+        );
+      }
+      if (muzzleConeRef.current) {
+        muzzleConeRef.current.position.z = compactMuzzle
+          ? 0.12 + flashT * 0.18
+          : 0.2 + flashT * 0.3;
+        const coneRadius = (compactMuzzle ? 0.12 : 0.2) * flashFade;
+        muzzleConeRef.current.scale.set(
+          coneRadius,
+          compactMuzzle ? 0.42 + flashT * 0.34 : 0.85 + flashT * 0.6,
+          coneRadius,
+        );
+      }
+      if (muzzleRingARef.current) {
+        muzzleRingARef.current.scale.setScalar(
+          compactMuzzle ? 0.12 + flashT * 0.28 : 0.2 + flashT * 0.55,
+        );
+        muzzleRingARef.current.rotation.z += delta * 8;
+      }
+      if (muzzleRingBRef.current) {
+        muzzleRingBRef.current.scale.setScalar(
+          compactMuzzle ? 0.08 + flashT * 0.2 : 0.14 + flashT * 0.4,
+        );
+        muzzleRingBRef.current.rotation.z -= delta * 11;
+      }
+
+      const sparkT = clamp01(elapsed / 0.23);
+      muzzleSparks.forEach((spark, index) => {
+        const localT = clamp01((elapsed - spark.delay) / 0.2);
+        SCRAPSHOT_INSTANCE_DUMMY.position.copy(spark.origin)
+          .addScaledVector(spark.direction, spark.speed * localT * 0.19);
+        SCRAPSHOT_INSTANCE_DUMMY.position.y += localT * localT * 0.14;
+        const scale = spark.scale
+          * (compactMuzzle ? 0.55 : 0.8)
+          * (1 - localT)
+          * Math.max(0.001, flashFade + 0.18);
+        writeScrapshotInstance(
+          muzzleSparkRef.current,
+          index,
+          SCRAPSHOT_INSTANCE_DUMMY.position,
+          spark.quaternion,
+          scale,
+          scale * 5.2,
+          scale,
+        );
+      });
+      commitScrapshotInstances(muzzleSparkRef.current);
+
+      const smokeT = clamp01((elapsed - 0.035) / 0.39);
+      smokeMaterial.opacity = 0.28 * (1 - smokeT);
+      smoke.forEach((puff, index) => {
+        SCRAPSHOT_INSTANCE_DUMMY.position.copy(effect.position)
+          .addScaledVector(puff.direction, puff.speed * smokeT);
+        const scale = puff.scale * (0.72 + smokeT * 2.15);
+        writeScrapshotInstance(
+          smokeRef.current,
+          index,
+          SCRAPSHOT_INSTANCE_DUMMY.position,
+          muzzleQuaternion,
+          scale * (1 + index * 0.05),
+          scale,
+          scale * 0.86,
+        );
+      });
+      commitScrapshotInstances(smokeRef.current);
+
+      if (lightRef.current) {
+        lightRef.current.intensity = muzzleLightIntensity * flashFade * flashFade;
+      }
+      if (sparkT >= 1 && lightRef.current) lightRef.current.intensity = 0;
+    }
+
+    if (showImpacts) {
+      const impactFade = 1 - clamp01((elapsed - 0.1) / 0.3);
+      impactMaterial.opacity = 0.92 * impactFade;
+      impactVisuals.forEach((pellet, index) => {
+        const impactDelay = mode === 'impacts' ? 0 : pellet.travelSeconds;
+        const impactT = clamp01((elapsed - impactDelay) / 0.27);
+        const burst = Math.sin(Math.min(1, impactT * 1.2) * Math.PI);
+        const flareScale = Math.max(0.001, (0.14 + impactT * 0.38) * burst);
+        const ringScale = Math.max(0.001, (0.22 + impactT * 0.92) * burst);
+        writeScrapshotInstance(
+          impactFlareRef.current,
+          index,
+          pellet.end,
+          pellet.impactQuaternion,
+          flareScale,
+          flareScale,
+          flareScale,
+        );
+        writeScrapshotInstance(
+          impactRingRef.current,
+          index,
+          pellet.end,
+          pellet.impactQuaternion,
+          ringScale,
+          ringScale,
+          ringScale,
+        );
+      });
+      impactSparks.forEach((spark, index) => {
+        const sparkT = clamp01((elapsed - spark.delay) / 0.28);
+        SCRAPSHOT_INSTANCE_DUMMY.position.copy(spark.origin)
+          .addScaledVector(spark.direction, spark.speed * sparkT * 0.22);
+        SCRAPSHOT_INSTANCE_DUMMY.position.y -= sparkT * sparkT * 0.22;
+        const scale = Math.max(0.001, spark.scale * (1 - sparkT));
+        writeScrapshotInstance(
+          impactSparkRef.current,
+          index,
+          SCRAPSHOT_INSTANCE_DUMMY.position,
+          spark.quaternion,
+          scale,
+          scale * 6.5,
+          scale,
+        );
+      });
+      commitScrapshotInstances(impactFlareRef.current);
+      commitScrapshotInstances(impactRingRef.current);
+      commitScrapshotInstances(impactSparkRef.current);
+    }
+  });
+
+  if (pelletVisuals.length === 0) return null;
+
+  return (
+    <group frustumCulled={false}>
+      {showTrails && (
+        <>
+          <instancedMesh
+            ref={tracerGlowRef}
+            args={[SHARED_GEOMETRIES.cylinder8, tracerGlowMaterial, pelletVisuals.length]}
+            frustumCulled={false}
+          />
+          <instancedMesh
+            ref={tracerCoreRef}
+            args={[SHARED_GEOMETRIES.cylinder8, tracerCoreMaterial, pelletVisuals.length]}
+            frustumCulled={false}
+          />
+          <instancedMesh
+            ref={pelletHeadRef}
+            args={[SHARED_GEOMETRIES.sphere8, tracerCoreMaterial, pelletVisuals.length]}
+            frustumCulled={false}
+          />
+        </>
+      )}
+
+      {showMuzzle && (
+        <>
+          <group position={effect.position} quaternion={muzzleQuaternion} frustumCulled={false}>
+            <mesh ref={muzzleGlowRef} geometry={SHARED_GEOMETRIES.sphere8} material={muzzleMaterial} />
+            <mesh ref={muzzleCoreRef} geometry={SHARED_GEOMETRIES.sphere8} material={muzzleMaterial} />
+            <mesh
+              ref={muzzleConeRef}
+              geometry={SHARED_GEOMETRIES.cone8}
+              material={muzzleMaterial}
+              rotation={[Math.PI / 2, 0, 0]}
+            />
+            <mesh ref={muzzleRingARef} geometry={SHARED_GEOMETRIES.ring16} material={muzzleMaterial} />
+            <mesh
+              ref={muzzleRingBRef}
+              geometry={SHARED_GEOMETRIES.ring8}
+              material={muzzleMaterial}
+              rotation={[0, 0, Math.PI / 8]}
+            />
+            <BudgetedPointLight
+              ref={lightRef}
+              budgetPriority={5}
+              budgetRadius={muzzleLightDistance}
+              color="#ff7a00"
+              intensity={0}
+              distance={muzzleLightDistance}
+              decay={2}
+            />
+          </group>
+          <instancedMesh
+            ref={muzzleSparkRef}
+            args={[SHARED_GEOMETRIES.box, muzzleMaterial, muzzleSparks.length]}
+            frustumCulled={false}
+          />
+          <instancedMesh
+            ref={smokeRef}
+            args={[SHARED_GEOMETRIES.sphere8, smokeMaterial, smoke.length]}
+            frustumCulled={false}
+          />
+        </>
+      )}
+
+      {showImpacts && impactVisuals.length > 0 && (
+        <>
+          <instancedMesh
+            ref={impactFlareRef}
+            args={[SHARED_GEOMETRIES.sphere8, impactMaterial, impactVisuals.length]}
+            frustumCulled={false}
+          />
+          <instancedMesh
+            ref={impactRingRef}
+            args={[SHARED_GEOMETRIES.ring16, impactMaterial, impactVisuals.length]}
+            frustumCulled={false}
+          />
+          <instancedMesh
+            ref={impactSparkRef}
+            args={[SHARED_GEOMETRIES.box, impactMaterial, impactSparks.length]}
+            frustumCulled={false}
+          />
+        </>
+      )}
+    </group>
+  );
 }
 
 function BlinkEffect({ effect }: EffectProps) {
