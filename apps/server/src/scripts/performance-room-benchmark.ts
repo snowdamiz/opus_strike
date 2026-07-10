@@ -485,7 +485,7 @@ function runBotAiBenchmark(botCount = 8): Record<string, number | string> {
         flags,
         visibleEnemyIds,
         enemyLineOfSightIds: visibleEnemyIds,
-        recentDamageSources: [],
+        recentDamageSource: null,
         teamTactics: tactics[bot.team],
         enemyMemory: new Map(),
         skill,
@@ -1200,6 +1200,8 @@ function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<
   let now = 1_800_000_000_000;
   Date.now = () => now;
   const samples: number[] = [];
+  let firstTickMs = 0;
+  let warmupMaxMs = 0;
   let room: GameRoom | null = null;
   let lastP99SpikeSpanName = '';
   let lastP99SpikeSpanMs = 0;
@@ -1241,6 +1243,10 @@ function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<
       const startedAt = performance.now();
       (room as unknown as { tick(): void }).tick();
       const durationMs = performance.now() - startedAt;
+      if (iteration === 0) firstTickMs = durationMs;
+      if (iteration < ROOM_TICK_WARMUP_ITERATIONS) {
+        warmupMaxMs = Math.max(warmupMaxMs, durationMs);
+      }
       if (iteration >= ROOM_TICK_WARMUP_ITERATIONS) {
         samples.push(durationMs);
       }
@@ -1274,6 +1280,8 @@ function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<
   const maxMs = typeof summary.maxMs === 'number' ? summary.maxMs : 0;
   summary.budgetP99Ms = ROOM_TICK_BUDGET_P99_MS;
   summary.budgetMaxMs = ROOM_TICK_BUDGET_MAX_MS;
+  summary.firstTickMs = firstTickMs;
+  summary.warmupMaxMs = warmupMaxMs;
   summary.budgetExceeded = p99Ms > ROOM_TICK_BUDGET_P99_MS || maxMs > ROOM_TICK_BUDGET_MAX_MS;
   summary.lastP99SpikeSpanName = lastP99SpikeSpanName;
   summary.lastP99SpikeSpanMs = lastP99SpikeSpanMs;

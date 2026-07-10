@@ -15,8 +15,10 @@ import {
   buildBattleRoyalDropSnapshot,
   createBattleRoyalDropState,
   forceLandBattleRoyalDropState,
+  getBattleRoyalDeploymentCompletionReason,
   isBattleRoyalDropTeamLeader,
   isBattleRoyalDropShipDroppable,
+  releaseAboardBattleRoyalBotPods,
   removeBattleRoyalDropParticipant,
   setBattleRoyalDropPlayerInput,
   shouldAutoDropBattleRoyalTeam,
@@ -303,6 +305,7 @@ const humanLandedBotAboardState = createBattleRoyalDropState(
   ],
   startedAt
 );
+humanLandedBotAboardState.teamAutoDropAt.set('blue', humanLandedBotAboardState.dropEndsAt);
 startBattleRoyalTeamDrop(humanLandedBotAboardState, 'red', humanLandedBotAboardState.dropStartsAt + 100);
 let humanLandedAt = humanLandedBotAboardState.dropStartsAt + 200;
 for (let step = 0; step < 160; step++) {
@@ -320,6 +323,25 @@ assert.equal(humanLandedBotAboardState.players.get('human-red')?.status, 'landed
 assert.notEqual(humanLandedBotAboardState.players.get('bot-blue')?.status, 'landed');
 assert.equal(areAllBattleRoyalHumanDropPlayersLanded(humanLandedBotAboardState), true);
 assert.equal(areAllBattleRoyalDropPlayersLanded(humanLandedBotAboardState), false);
+assert.equal(getBattleRoyalDeploymentCompletionReason(humanLandedBotAboardState, false), null);
+assert.equal(releaseAboardBattleRoyalBotPods(humanLandedBotAboardState, humanLandedAt), 1);
+assert.equal(humanLandedBotAboardState.players.get('bot-blue')?.status, 'dropping');
+for (let step = 0; step < 160; step++) {
+  if (areAllBattleRoyalDropPlayersLanded(humanLandedBotAboardState)) break;
+  humanLandedAt += 100;
+  advanceBattleRoyalDropState({
+    state: humanLandedBotAboardState,
+    now: humanLandedAt,
+    dt: 0.1,
+    getGroundY: flatGroundY,
+    clampToPlayableMap: unclamped,
+  });
+}
+assert.equal(areAllBattleRoyalDropPlayersLanded(humanLandedBotAboardState), true);
+assert.equal(
+  getBattleRoyalDeploymentCompletionReason(humanLandedBotAboardState, false),
+  'all_players_landed'
+);
 
 const botOnlyState = createBattleRoyalDropState(
   manifest,
@@ -340,6 +362,88 @@ advanceBattleRoyalDropState({
 const botDropPlayer = botOnlyState.players.get('bot-blue');
 assert.equal(botDropPlayer?.status, 'dropping');
 assert.equal(Math.hypot(botDropPlayer?.velocity.x ?? 0, botDropPlayer?.velocity.z ?? 0) > 1, true);
+
+const botSquadState = createBattleRoyalDropState(
+  manifest,
+  [
+    { playerId: 'bot-red-1', team: 'red', isBot: true },
+    { playerId: 'bot-red-2', team: 'red', isBot: true },
+    { playerId: 'bot-red-3', team: 'red', isBot: true },
+  ],
+  startedAt
+);
+const botSquad = Array.from(botSquadState.players.values());
+assert.equal(botSquad[0].attachedToPlayerId, null);
+assert.equal(botSquad[1].attachedToPlayerId, botSquad[0].playerId);
+assert.equal(botSquad[2].attachedToPlayerId, botSquad[0].playerId);
+startBattleRoyalTeamDrop(botSquadState, 'red', botSquadState.dropStartsAt + 100);
+advanceBattleRoyalDropState({
+  state: botSquadState,
+  now: botSquadState.dropStartsAt + 600,
+  dt: 0.5,
+  getGroundY: flatGroundY,
+  clampToPlayableMap: unclamped,
+});
+for (const squadmate of botSquad.slice(1)) {
+  assert.equal(squadmate.position.x, botSquad[0].position.x);
+  assert.equal(squadmate.position.y, botSquad[0].position.y);
+  assert.equal(squadmate.position.z, botSquad[0].position.z);
+}
+
+const fullBotRosterTeams = Array.from(
+  { length: 9 },
+  (_, index) => `br_${String(index + 1).padStart(2, '0')}`
+);
+const fullBotRosterState = createBattleRoyalDropState(
+  manifest,
+  fullBotRosterTeams.flatMap((team) => Array.from(
+    { length: 3 },
+    (_, index) => ({ playerId: `${team}-bot-${index}`, team, isBot: true })
+  )),
+  startedAt
+);
+let fullBotRosterNow = fullBotRosterState.dropStartsAt;
+for (let step = 0; step < 600; step++) {
+  if (areAllBattleRoyalDropPlayersLanded(fullBotRosterState)) break;
+  fullBotRosterNow += 100;
+  advanceBattleRoyalDropState({
+    state: fullBotRosterState,
+    now: fullBotRosterNow,
+    dt: 0.1,
+    getGroundY: flatGroundY,
+    clampToPlayableMap: clampToBoundary,
+  });
+}
+assert.equal(areAllBattleRoyalDropPlayersLanded(fullBotRosterState), true);
+const fullBotRoster = Array.from(fullBotRosterState.players.values());
+const fullBotRosterLeaders = fullBotRosterTeams.map((team) => {
+  const teamPlayers = fullBotRoster.filter((player) => player.team === team);
+  const leaderId = fullBotRosterState.teamLeaderIds.get(team);
+  const leader = teamPlayers.find((player) => player.playerId === leaderId);
+  assert.ok(leader);
+  for (const squadmate of teamPlayers) {
+    assert.equal(Math.hypot(
+      leader.position.x - squadmate.position.x,
+      leader.position.z - squadmate.position.z
+    ) <= 1.5, true);
+  }
+  return leader;
+});
+const fullBotRosterX = fullBotRosterLeaders.map((player) => player.position.x);
+const fullBotRosterZ = fullBotRosterLeaders.map((player) => player.position.z);
+assert.equal(Math.max(...fullBotRosterX) - Math.min(...fullBotRosterX) > 80, true);
+assert.equal(Math.max(...fullBotRosterZ) - Math.min(...fullBotRosterZ) > 80, true);
+for (let first = 0; first < fullBotRosterLeaders.length; first++) {
+  for (let second = first + 1; second < fullBotRosterLeaders.length; second++) {
+    assert.equal(
+      Math.hypot(
+        fullBotRosterLeaders[first].position.x - fullBotRosterLeaders[second].position.x,
+        fullBotRosterLeaders[first].position.z - fullBotRosterLeaders[second].position.z
+      ) > 8,
+      true
+    );
+  }
+}
 
 const removalState = createBattleRoyalDropState(
   manifest,

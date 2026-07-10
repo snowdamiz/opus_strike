@@ -3,6 +3,7 @@ import {
   applyDamage as resolveSharedDamage,
   type ApplyDamageResult,
   type DamageEngineAdapter,
+  type DamageHistoryEntry,
   type DamageHistoryStore,
   type DamageCapWindowStore,
   type PlayerDamagedEvent,
@@ -173,23 +174,38 @@ export class RoomDamageRuntime {
     }
   }
 
-  getBotRecentDamageSources(botId: string, now: number): BotRecentDamageSource[] {
+  getBotMostRecentDamageSource(
+    botId: string,
+    now: number,
+    maxAgeMs = DAMAGE_HISTORY_WINDOW_MS
+  ): BotRecentDamageSource | null {
     const history = this.damageHistory.get(botId);
-    if (!history) return [];
-    const sources: BotRecentDamageSource[] = [];
+    if (!history) return null;
+
+    let bestSourceId = '';
+    let bestEntry: DamageHistoryEntry | null = null;
     for (const [sourceId, entry] of history) {
-      if (now - entry.timestamp > DAMAGE_HISTORY_WINDOW_MS) continue;
-      sources.push({
-        sourceId,
-        damage: entry.damage,
-        timestamp: entry.timestamp,
-        sourcePosition: entry.sourcePosition ? { ...entry.sourcePosition } : null,
-        sourceDirection: entry.sourceDirection ? { ...entry.sourceDirection } : null,
-        damageType: entry.damageType,
-      });
+      if (now - entry.timestamp > maxAgeMs) continue;
+      if (
+        bestEntry &&
+        (entry.timestamp < bestEntry.timestamp ||
+          (entry.timestamp === bestEntry.timestamp && entry.damage <= bestEntry.damage))
+      ) {
+        continue;
+      }
+      bestSourceId = sourceId;
+      bestEntry = entry;
     }
-    sources.sort((a, b) => b.timestamp - a.timestamp || b.damage - a.damage);
-    return sources;
+
+    if (!bestEntry) return null;
+    return {
+      sourceId: bestSourceId,
+      damage: bestEntry.damage,
+      timestamp: bestEntry.timestamp,
+      sourcePosition: bestEntry.sourcePosition ? { ...bestEntry.sourcePosition } : null,
+      sourceDirection: bestEntry.sourceDirection ? { ...bestEntry.sourceDirection } : null,
+      damageType: bestEntry.damageType,
+    };
   }
 
   applyPlayerDamage(

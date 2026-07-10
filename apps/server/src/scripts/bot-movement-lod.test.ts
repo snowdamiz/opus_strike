@@ -63,7 +63,8 @@ type BotMovementLodRoom = {
   shouldServerOwnedBotMovementReasonBypassBudget(
     reason: string,
     tier: 'critical' | 'near' | 'background',
-    input: PlayerInput
+    input: PlayerInput,
+    botId?: string
   ): boolean;
   isBattleRoyalPriorityBot(bot: Player, now: number): boolean;
   isServerOwnedBotNearBattleRoyalEnemy(bot: Player, distanceSq: number): boolean;
@@ -96,6 +97,11 @@ type BotMovementLodRoom = {
   botSimulationHumanScratch: Player[];
   botSimulationTierTick: number;
   botSimulationTierById: Map<string, 'critical' | 'near' | 'background'>;
+  botNearBattleRoyalEnemyById: Map<string, boolean>;
+  battleRoyalHumanTeams: Set<Team>;
+  battleRoyalContestantHumanTeams: Set<Team>;
+  battleRoyalHumanSquadSurvivorTeams: Set<Team>;
+  hasBattleRoyalDownedPlayer: boolean;
   streamerManagedBotGame?: boolean;
   streamerFeedMode?: string | null;
   botMovementFullStepBudgetTick: number;
@@ -134,6 +140,11 @@ function createRoom(): BotMovementLodRoom {
   room.botSimulationHumanScratch = [];
   room.botSimulationTierTick = -1;
   room.botSimulationTierById = new Map();
+  room.botNearBattleRoyalEnemyById = new Map();
+  room.battleRoyalHumanTeams = new Set();
+  room.battleRoyalContestantHumanTeams = new Set();
+  room.battleRoyalHumanSquadSurvivorTeams = new Set();
+  room.hasBattleRoyalDownedPlayer = false;
   room.botMovementFullStepBudgetTick = -1;
   room.botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
   room.clampToPlayableMap = (position) => ({ ...position });
@@ -782,6 +793,26 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const room = createRoom();
   room.gameplayMode = 'battle_royal';
   const bot = createBot(room, { team: 'br_01', x: 0, z: 0 });
+  createBot(room, { id: 'cached-enemy-bot', team: 'br_02', x: 10, z: 0 });
+  const queryPlayersRadiusInto = room.queryPlayersRadiusInto;
+  let totalQueryCount = 0;
+  let downedQueryCount = 0;
+  room.queryPlayersRadiusInto = (position, radius, results, options = {}) => {
+    totalQueryCount++;
+    if (options.includeDowned) downedQueryCount++;
+    queryPlayersRadiusInto(position, radius, results, options);
+  };
+
+  assert.equal(room.isBattleRoyalPriorityBot(bot, 1_800_000_000_000), true);
+  assert.equal(room.isBattleRoyalPriorityBot(bot, 1_800_000_000_000), true);
+  assert.equal(totalQueryCount, 1, 'expected the dense enemy proximity result to be cached for the tick');
+  assert.equal(downedQueryCount, 0, 'expected no downed-player radius query when the room has no downed players');
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room, { team: 'br_01', x: 0, z: 0 });
   createBot(room, { id: 'downed-enemy-bot', team: 'br_02', x: 8, z: 0, state: 'downed' });
 
   assert.equal(room.isServerOwnedBotNearBattleRoyalDownedPlayer(bot, 18 * 18), true);
@@ -822,6 +853,40 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
       botInput(bot)
     ),
     false
+  );
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room, { id: 'reused-critical-bot', team: 'br_01' });
+  for (let index = 1; index < 16; index++) {
+    createBot(room, {
+      id: `dense-bot-${index}`,
+      team: index % 2 === 0 ? 'br_01' : 'br_02',
+    });
+  }
+  room.botsWithReusedInputThisTick.add(bot.id);
+
+  assert.equal(
+    room.shouldServerOwnedBotMovementReasonBypassBudget(
+      'movement_bot_lod_full_enemy_battle_royal',
+      'critical',
+      botInput(bot),
+      bot.id
+    ),
+    false,
+    'expected deferred critical bots in a dense room to use the capped movement budget'
+  );
+  assert.equal(
+    room.shouldServerOwnedBotMovementReasonBypassBudget(
+      'movement_bot_lod_full_input',
+      'critical',
+      botInput(bot, { interact: true }),
+      bot.id
+    ),
+    true,
+    'expected critical revive/soul interactions to stay responsive'
   );
 }
 

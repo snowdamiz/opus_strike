@@ -607,7 +607,7 @@ export interface BotPlanningStateInput {
   mapPings?: readonly BotMapPingSnapshot[];
   visibleEnemyIds: Set<string>;
   enemyLineOfSightIds: Set<string>;
-  recentDamageSources: BotRecentDamageSource[];
+  recentDamageSource: BotRecentDamageSource | null;
   teamTactics: BotTeamTactics;
   routeGraph: BotRouteGraphAdapter | null;
   skill: BotSkillProfile;
@@ -682,7 +682,7 @@ export interface BotBlackboardInput {
   mapPings?: readonly BotMapPingSnapshot[];
   visibleEnemyIds: Set<string>;
   enemyLineOfSightIds: Set<string>;
-  recentDamageSources: BotRecentDamageSource[];
+  recentDamageSource: BotRecentDamageSource | null;
   teamTactics: BotTeamTactics;
   enemyMemory: Map<string, BotEnemyMemory>;
   skill: BotSkillProfile;
@@ -725,6 +725,7 @@ const ROUTE_START_NODE_SKIP_DISTANCE = 14;
 export const BOT_AWARENESS_RANGE = 58;
 export const BOT_BATTLE_ROYAL_AWARENESS_RANGE = 76;
 export const BOT_CLOSE_REVEAL_RANGE = 8;
+export const BOT_RECENT_DAMAGE_MEMORY_MS = 2600;
 export const BOT_LOS_SAMPLE_STEP = 0.55;
 export const BOT_THINK_INTERVAL_MS = 200;
 export const BOT_TACTICS_INTERVAL_MS = 420;
@@ -1302,7 +1303,7 @@ export function updateBotPlanningState(input: BotPlanningStateInput): BotPlannin
       mapPings: input.mapPings,
       visibleEnemyIds: input.visibleEnemyIds,
       enemyLineOfSightIds: input.enemyLineOfSightIds,
-      recentDamageSources: input.recentDamageSources,
+      recentDamageSource: input.recentDamageSource,
       teamTactics: input.teamTactics,
       enemyMemory: brain.enemyMemory,
       skill,
@@ -1880,9 +1881,11 @@ function isStreamerDeathmatchTactics(gameplayMode: GameplayMode, bots: readonly 
     bots.some((bot) => isStreamerDeathmatchBotProfile(bot.botProfileId));
 }
 
-function scoreEliminationFocusTarget(enemy: BotPlayerSnapshot, threatClusters: readonly BotThreatCluster[]): number {
+function scoreEliminationFocusTargetWithCluster(
+  enemy: BotPlayerSnapshot,
+  cluster: BotThreatCluster | undefined
+): number {
   const healthRatio = enemy.health / Math.max(1, enemy.maxHealth);
-  const cluster = threatClusters.find((candidate) => candidate.playerIds.includes(enemy.id));
   const clusterPressure = cluster
     ? cluster.count * 80 + cluster.threat * 28
     : 0;
@@ -1890,12 +1893,32 @@ function scoreEliminationFocusTarget(enemy: BotPlayerSnapshot, threatClusters: r
   return (1 - healthRatio) * 260 + clusterPressure + rolePressure;
 }
 
+function scoreEliminationFocusTarget(enemy: BotPlayerSnapshot, threatClusters: readonly BotThreatCluster[]): number {
+  const cluster = threatClusters.find((candidate) => candidate.playerIds.includes(enemy.id));
+  return scoreEliminationFocusTargetWithCluster(enemy, cluster);
+}
+
 function rankEliminationFocusTargets(
   enemies: readonly BotPlayerSnapshot[],
   threatClusters: readonly BotThreatCluster[]
 ): BotPlayerSnapshot[] {
+  const clusterByPlayerId = new Map<string, BotThreatCluster>();
+  for (const cluster of threatClusters) {
+    for (const playerId of cluster.playerIds) {
+      if (!clusterByPlayerId.has(playerId)) {
+        clusterByPlayerId.set(playerId, cluster);
+      }
+    }
+  }
+  const scoreByPlayerId = new Map<string, number>();
+  for (const enemy of enemies) {
+    scoreByPlayerId.set(
+      enemy.id,
+      scoreEliminationFocusTargetWithCluster(enemy, clusterByPlayerId.get(enemy.id))
+    );
+  }
   return [...enemies].sort((a, b) => (
-    scoreEliminationFocusTarget(b, threatClusters) - scoreEliminationFocusTarget(a, threatClusters) ||
+    (scoreByPlayerId.get(b.id) ?? 0) - (scoreByPlayerId.get(a.id) ?? 0) ||
     a.id.localeCompare(b.id)
   ));
 }
@@ -2492,17 +2515,6 @@ function pruneEnemyMemory(memory: Map<string, BotEnemyMemory>, now: number, skil
   }
 }
 
-function recentDamageSource(sources: readonly BotRecentDamageSource[], now: number): BotRecentDamageSource | null {
-  let best: BotRecentDamageSource | null = null;
-  for (const source of sources) {
-    if (now - source.timestamp > 2600) continue;
-    if (!best || source.timestamp > best.timestamp || (source.timestamp === best.timestamp && source.damage > best.damage)) {
-      best = source;
-    }
-  }
-  return best;
-}
-
 function buildAllyHealthDebts(
   bot: BotPlayerSnapshot,
   allies: readonly BotPlayerSnapshot[],
@@ -2713,7 +2725,10 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     if (visible) visibleEnemies.push(known);
   }
 
-  const recentDamage = recentDamageSource(input.recentDamageSources, input.now);
+  const recentDamage = input.recentDamageSource &&
+    input.now - input.recentDamageSource.timestamp <= BOT_RECENT_DAMAGE_MEMORY_MS
+    ? input.recentDamageSource
+    : null;
   if (recentDamage?.sourcePosition) {
     const existing = input.enemyMemory.get(recentDamage.sourceId);
     if (!existing || recentDamage.timestamp >= existing.lastSeenAt) {

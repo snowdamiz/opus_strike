@@ -26,6 +26,7 @@ export const ROOM_TICK_COUNTER_NAMES = [
   'bot_deferred_processed',
   'bot_deferred_skipped',
   'bot_input_reuse',
+  'bot_tactics_deployment_prewarm',
   'bot_sim_tier_critical',
   'bot_sim_tier_near',
   'bot_sim_tier_background',
@@ -79,6 +80,7 @@ export const ROOM_TICK_COUNTER_NAMES = [
   'movement_bot_lod_full_airborne',
   'movement_bot_lod_full_enemy_human',
   'movement_bot_lod_full_enemy_battle_royal',
+  'movement_bot_lod_reused_critical_bypass_suppressed',
   'movement_npc_commands_processed',
 ] as const;
 

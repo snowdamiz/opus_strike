@@ -112,6 +112,7 @@ import {
   type UnpackedPlayerTransform,
 } from './playerTransformCodec';
 import type {
+  AbilityUsedMessage,
   BotDifficulty,
   ChronosAegisDamagedEvent,
   ChronosAegisBrokenEvent,
@@ -1741,48 +1742,6 @@ export function setupVoidZoneHandlers(room: GameMessageBus, sessionId: string) {
   }));
 }
 
-interface AbilityUsedMessage {
-  playerId: string;
-  abilityId: string;
-  success?: boolean;
-  castId?: string;
-  position?: { x: number; y: number; z: number };
-  startPosition?: { x: number; y: number; z: number };
-  targetPosition?: { x: number; y: number; z: number };
-  interceptPosition?: { x: number; y: number; z: number };
-  impactPosition?: { x: number; y: number; z: number };
-  interceptedByChronosAegis?: boolean;
-  targetIds?: string[];
-  targets?: Array<{
-    targetId: string;
-    position: { x: number; y: number; z: number };
-    rootUntil: number;
-  }>;
-  rootUntil?: number;
-  mode?: 'allies' | 'self';
-  aimDirection?: { x: number; y: number; z: number };
-  velocity?: { x: number; y: number; z: number };
-  maxDistance?: number;
-  direction?: { yaw?: number; pitch?: number; x?: number; y?: number; z?: number };
-  ownerTeam?: Team;
-  launchSide?: -1 | 1;
-  launchYaw?: number;
-  serverTime?: number;
-  durationMs?: number;
-  ammoRemaining?: number;
-  reloadStartedAt?: number;
-  reloadUntil?: number;
-  shockwaveDirection?: { x: number; y: number; z: number };
-  releaseAt?: number;
-  radius?: number;
-  duration?: number;
-  meteorStartTime?: number;
-  impactTime?: number;
-  active?: boolean;
-  fuel?: number;
-  supercharged?: boolean;
-}
-
 function normalizeAimDirection(data: AbilityUsedMessage): { x: number; y: number; z: number } {
   if (data.aimDirection) return data.aimDirection;
   if (
@@ -3341,6 +3300,15 @@ function handlePlayerKilledMessage(data: PlayerDeathEvent): void {
   });
 }
 
+function handleAbilityUsedMessage(data: AbilityUsedMessage): void {
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  if (handlePhantomAbilityUsed(data, localPlayerId)) return;
+  if (handleHookshotAbilityUsed(data, localPlayerId)) return;
+  if (handleBlazeAbilityUsed(data, localPlayerId)) return;
+  handleChronosAbilityUsed(data, localPlayerId);
+}
+
 function handlePlayerEventBatchMessage(data: PlayerEventBatchMessage): void {
   if (!data || !Array.isArray(data.events)) return;
 
@@ -3348,6 +3316,9 @@ function handlePlayerEventBatchMessage(data: PlayerEventBatchMessage): void {
     switch (event.type) {
       case 'powerupCollected':
         handlePowerupCollectedMessage(event.payload);
+        break;
+      case 'abilityUsed':
+        handleAbilityUsedMessage(event.payload);
         break;
       case 'chronosAegisDamaged':
         handleChronosAegisDamagedMessage(event.payload);
@@ -3470,13 +3441,7 @@ export function setupCombatHandlers(room: GameMessageBus) {
   }));
 
   room.onMessage('abilityUsed', measureNetworkMessage('abilityUsed', (data: AbilityUsedMessage) => {
-    const store = useGameStore.getState();
-    const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    if (handlePhantomAbilityUsed(data, localPlayerId)) return;
-    if (handleHookshotAbilityUsed(data, localPlayerId)) return;
-    if (handleBlazeAbilityUsed(data, localPlayerId)) return;
-    if (handleChronosAbilityUsed(data, localPlayerId)) return;
-
+    handleAbilityUsedMessage(data);
   }));
 
   room.onMessage('chronosTimebreakImpulse', measureNetworkMessage('chronosTimebreakImpulse', (data: {
