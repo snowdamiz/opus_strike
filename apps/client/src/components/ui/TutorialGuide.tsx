@@ -12,6 +12,7 @@ import { useAudio } from '../../hooks/useAudio';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind } from '../../utils/keybindings';
+import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { isTutorialOfflineTrainingHeroId } from '../../utils/tutorialOfflineCombatRuntime';
 import { visualStore } from '../../store/visualStore';
 import { BLAZE_UI_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
@@ -47,6 +48,8 @@ interface TutorialTask {
   stage: TutorialStageId;
   title: string;
   detail: string;
+  /** Instruction shown when on-screen touch controls are active (references buttons, not keys). */
+  detailTouch?: string;
   icon: TutorialIconId;
 }
 
@@ -300,6 +303,7 @@ export function TutorialGuide() {
       ultimate: formatKeybind(state.settings.keybindings.ultimate),
     }))
   );
+  const touchControls = useTouchControlsAvailable();
   const { playSound } = useAudio();
   const { leaveGame } = useNetwork();
   const { completeTutorial } = useWallet();
@@ -328,6 +332,7 @@ export function TutorialGuide() {
       stage: 'movement',
       title: 'Move Forward',
       detail: `Press ${keybinds.forward} and leave the red spawn pad.`,
+      detailTouch: 'Push the move stick to leave the red spawn pad.',
       icon: 'move',
     },
     {
@@ -335,6 +340,7 @@ export function TutorialGuide() {
       stage: 'movement',
       title: 'Run',
       detail: `Hold ${keybinds.sprint} while moving to build speed.`,
+      detailTouch: 'Push the move stick all the way to sprint and build speed.',
       icon: 'run',
     },
     {
@@ -342,6 +348,7 @@ export function TutorialGuide() {
       stage: 'movement',
       title: 'Crouch',
       detail: `Use ${keybinds.crouch} to drop your profile before the low cover.`,
+      detailTouch: 'Tap SLIDE to drop your profile before the low cover.',
       icon: 'crouch',
     },
     {
@@ -349,6 +356,7 @@ export function TutorialGuide() {
       stage: 'movement',
       title: 'Slide',
       detail: `Run first, then hit ${keybinds.crouch} to slide through the lane.`,
+      detailTouch: 'Sprint first, then tap SLIDE to slide through the lane.',
       icon: 'slide',
     },
     {
@@ -356,6 +364,7 @@ export function TutorialGuide() {
       stage: 'movement',
       title: 'Bunny Hop',
       detail: `CS-style: tap ${keybinds.jump} on landing; air-strafe ${keybinds.left}/${keybinds.right} with mouse; release ${keybinds.forward}.`,
+      detailTouch: 'Tap JUMP the instant you land and steer with the move stick to keep speed.',
       icon: 'hop',
     },
     {
@@ -370,6 +379,7 @@ export function TutorialGuide() {
       stage: 'skills',
       title: 'Skills',
       detail: `Cast any skill at the gate: ${keybinds.ability1}, ${keybinds.ability2}, or ${keybinds.ultimate}.`,
+      detailTouch: 'Tap E, Q, or F to cast a skill at the gate.',
       icon: 'skill',
     },
     {
@@ -391,6 +401,7 @@ export function TutorialGuide() {
       stage: 'combat',
       title: 'Target Practice',
       detail: 'Down a moving training hero in the range bay.',
+      detailTouch: 'Drag to aim, then tap FIRE to down a moving training hero.',
       icon: 'target',
     },
     {
@@ -425,6 +436,9 @@ export function TutorialGuide() {
   const activeTaskIndex = tutorialTasks.findIndex((task) => !completedTasks[task.id]);
   const activeTask = activeTaskIndex >= 0 ? tutorialTasks[activeTaskIndex] : null;
   const activeStageLabel = activeTask ? STAGE_LABELS[activeTask.stage] : 'Training Complete';
+  const activeDetail = touchControls
+    ? activeTask?.detailTouch ?? activeTask?.detail
+    : activeTask?.detail;
 
   useEffect(() => {
     if (!isTutorialMode || gamePhase !== 'playing') return;
@@ -639,11 +653,15 @@ export function TutorialGuide() {
 
   return (
     <div
-      className="pointer-events-none absolute left-[max(1.5rem,env(safe-area-inset-left))] top-[max(1.5rem,env(safe-area-inset-top))] z-[80] w-[min(24rem,calc(100vw-3rem))] select-none text-white"
+      className={`pointer-events-none absolute select-none text-white ${
+        touchControls
+          ? 'z-[116] left-[max(0.75rem,env(safe-area-inset-left))] top-[calc(env(safe-area-inset-top,0px)+14vh)] w-[min(17rem,calc(100vw-1.5rem))]'
+          : 'z-[80] left-[max(1.5rem,env(safe-area-inset-left))] top-[max(1.5rem,env(safe-area-inset-top))] w-[min(24rem,calc(100vw-3rem))]'
+      }`}
       style={FLOATING_TEXT_STYLE}
     >
-      <div className="flex items-start gap-3" aria-live="polite">
-        <TutorialIcon icon={activeTask?.icon ?? 'complete'} />
+      <div className={`flex items-start ${touchControls ? 'gap-2.5' : 'gap-3'}`} aria-live="polite">
+        <TutorialIcon icon={activeTask?.icon ?? 'complete'} className={touchControls ? 'h-6 w-6' : 'h-8 w-8'} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 font-display text-[0.7rem] uppercase leading-none text-white/70">
             <span>Tutorial</span>
@@ -653,11 +671,11 @@ export function TutorialGuide() {
               {completedCount}/{totalTaskCount}
             </span>
           </div>
-          <h2 className="mt-2 text-balance font-display text-2xl leading-none text-white">
+          <h2 className={`mt-2 text-balance font-display leading-none text-white ${touchControls ? 'text-lg' : 'text-2xl'}`}>
             {activeTask?.title}
           </h2>
-          <p className="mt-1 max-w-[22rem] text-sm leading-snug text-white/90">
-            {activeTask?.detail}
+          <p className={`mt-1 max-w-[22rem] leading-snug text-white/90 ${touchControls ? 'text-xs' : 'text-sm'}`}>
+            {activeDetail}
           </p>
           {saveError && (
             <p className="mt-3 max-w-[22rem] text-xs font-bold leading-snug text-red-200" role="status">
@@ -668,7 +686,7 @@ export function TutorialGuide() {
             type="button"
             onClick={handleSkipTutorial}
             disabled={isSaving}
-            className="play-secondary-cta pointer-events-auto mt-4 max-w-[11rem]"
+            className={`play-secondary-cta pointer-events-auto max-w-[11rem] ${touchControls ? 'mt-3' : 'mt-4'}`}
           >
             {isSaving ? 'SKIPPING...' : 'SKIP TUTORIAL'}
           </button>

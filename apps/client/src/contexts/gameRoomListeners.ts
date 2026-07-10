@@ -142,6 +142,13 @@ interface StreamerObserverJoinedMessage {
 
 const STREAMER_MAP_TRANSITION_LEAD_MS = 360;
 
+export function shouldPreserveMatchSummaryAfterRoomLeave(state: {
+  gamePhase: string;
+  matchSummary: GameEndEvent | null;
+}): boolean {
+  return state.gamePhase === 'game_end' && state.matchSummary !== null;
+}
+
 export function setupGameRoomListeners<TRoom extends GameMessageBus>(
   room: TRoom,
   {
@@ -538,11 +545,13 @@ export function setupGameRoomListeners<TRoom extends GameMessageBus>(
       return;
     }
     isJoiningGameRef.current = false;
+    const preserveMatchSummary = shouldPreserveMatchSummaryAfterRoomLeave(useGameStore.getState());
     setLoading(false);
     setConnected(false);
     setRoomId(null);
     setPracticeMode(false);
     setMatchStartGateKey(null);
+    if (preserveMatchSummary) return;
     setGamePhase('waiting');
     resetLobby();
     setAppPhase('menu');
