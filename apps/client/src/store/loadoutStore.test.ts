@@ -105,7 +105,23 @@ assert.equal(
   physicalEInput,
 );
 
+useLoadoutStore.getState().assignHeroAbility('blaze', 'ability1', 'blaze_afterburner');
+const blazeBindings = resolveHeroAbilityBindings(
+  'blaze',
+  useLoadoutStore.getState().heroAbilityBindings,
+);
+assert.deepEqual(blazeBindings, {
+  ability1: 'blaze_afterburner',
+  ability2: 'blaze_rocketjump',
+});
+assert.equal(
+  applyHeroAbilityBindings(physicalEInput, 'blaze', useLoadoutStore.getState().heroAbilityBindings),
+  physicalEInput,
+  'Afterburner loadouts keep physical E/Q slots for server-side ability resolution',
+);
+
 const {
+  BLAZE_AFTERBURNER_OPTION_ID,
   BLAZE_PHOSPHOR_FLARE_OPTION_ID,
   BLAZE_SCRAPSHOT_OPTION_ID,
   HERO_LOADOUT_POOL,
@@ -118,6 +134,11 @@ const phosphorFlareOption = HERO_LOADOUT_POOL.blaze.secondaryFire.find((option) 
   option.id === BLAZE_PHOSPHOR_FLARE_OPTION_ID
 ));
 assert.equal(phosphorFlareOption?.ownership, 'owned');
+const afterburnerOption = HERO_LOADOUT_POOL.blaze.ability1.find((option) => (
+  option.id === BLAZE_AFTERBURNER_OPTION_ID
+));
+assert.equal(afterburnerOption?.abilityId, 'blaze_afterburner');
+assert.equal(afterburnerOption?.ownership, 'owned');
 
 const { getHeroSkillItems } = await import('../components/ui/HeroSkillKit');
 assert.equal(getHeroSkillItems('blaze', 'scrapshot')[0]?.name, 'Scrapshot');
@@ -125,6 +146,10 @@ assert.equal(getHeroSkillItems('blaze', 'fireball_rockets')[0]?.name, 'Fireball 
 assert.equal(
   getHeroSkillItems('blaze', 'fireball_rockets', undefined, 'phosphor_flare')[1]?.name,
   'Phosphor Flare',
+);
+assert.equal(
+  getHeroSkillItems('blaze', 'fireball_rockets', blazeBindings)[2]?.name,
+  'Afterburner Dash',
 );
 const phantomSkills = getHeroSkillItems('phantom', 'fireball_rockets', phantomBindings);
 assert.equal(phantomSkills.find((skill) => skill.input === 'E')?.abilityId, 'phantom_personal_shield');

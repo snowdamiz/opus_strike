@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  BLAZE_AFTERBURNER_DASH_SPEED,
   DEFAULT_GAME_CONFIG,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_SUBSTEP_SECONDS,
@@ -20,6 +21,7 @@ import {
   deactivateActiveAbility,
   executeAbility,
   initializePlayerAbilities,
+  reconcilePlayerAbilities,
   tryUseAbility,
   updateActiveAbilities,
 } from '../rooms/abilityHandlers';
@@ -371,6 +373,45 @@ function runAbilityBarrierTests(): void {
   fallingRocketPlayer.velocity.y = -6;
   executeAbility(fallingRocketPlayer, 'blaze_rocketjump', new AbilityStateSchema(), {}, context);
   assert.equal(fallingRocketPlayer.velocity.y, BLAZE_ROCKET_JUMP_VERTICAL_FORCE);
+
+  const afterburnerPlayer = createAbilityHarnessPlayer('blaze');
+  afterburnerPlayer.lookYaw = -Math.PI / 2;
+  afterburnerPlayer.velocity.y = 3;
+  executeAbility(afterburnerPlayer, 'blaze_afterburner', new AbilityStateSchema(), {}, context);
+  assert.deepEqual(
+    { x: afterburnerPlayer.position.x, y: afterburnerPlayer.position.y, z: afterburnerPlayer.position.z },
+    { x: 1, y: 5, z: 2 },
+  );
+  assert.ok(Math.abs(afterburnerPlayer.velocity.x - BLAZE_AFTERBURNER_DASH_SPEED) < 1e-9);
+  assert.equal(afterburnerPlayer.velocity.y, 3);
+  assert.equal(marks[marks.length - 1]?.reason, 'knockback');
+  assert.equal(afterburnerPlayer.movement.isSliding, false);
+
+  const selectedAfterburnerPlayer = createAbilityHarnessPlayer('blaze');
+  initializePlayerAbilities(selectedAfterburnerPlayer, 'blaze', {
+    ability1: 'blaze_afterburner',
+    ability2: 'blaze_rocketjump',
+  });
+  assert.equal(selectedAfterburnerPlayer.abilities.has('blaze_afterburner'), true);
+  assert.equal(selectedAfterburnerPlayer.abilities.has('blaze_flamethrower'), false);
+  const selectedAbility = tryUseAbility(
+    selectedAfterburnerPlayer,
+    'ability1',
+    'blaze_afterburner',
+  );
+  assert.equal(selectedAbility.success, true);
+  assert.equal(selectedAbility.abilityId, 'blaze_afterburner');
+
+  const reconciledPlayer = createAbilityHarnessPlayer('blaze');
+  initializePlayerAbilities(reconciledPlayer, 'blaze');
+  reconciledPlayer.abilities.get('blaze_rocketjump')!.cooldownRemaining = 4;
+  reconcilePlayerAbilities(reconciledPlayer, 'blaze', {
+    ability1: 'blaze_afterburner',
+    ability2: 'blaze_rocketjump',
+  });
+  assert.equal(reconciledPlayer.abilities.has('blaze_flamethrower'), false);
+  assert.equal(reconciledPlayer.abilities.has('blaze_afterburner'), true);
+  assert.equal(reconciledPlayer.abilities.get('blaze_rocketjump')?.cooldownRemaining, 4);
 }
 
 function runPhantomShieldCooldownTests(): void {

@@ -23,6 +23,8 @@ import {
   BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
   BLAZE_PHOSPHOR_FLARE_MIN_RANGE,
   BLAZE_PHOSPHOR_FLARE_RADIUS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
   BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_ROCKET_STAFF_SOCKET,
   BLAZE_SCRAPSHOT_RANGE,
@@ -73,6 +75,8 @@ import {
   addScrapshotEffects,
   type ScrapshotEffectImpactInput,
 } from '../../../components/game/Effects';
+import { triggerAfterburnerTrail } from '../../../components/game/blaze';
+import { startLocalBlazeAfterburnerDash } from '../../../movement/localPrediction';
 import { applyTutorialOfflineTrainingScrapshot } from '../../../utils/tutorialOfflineCombatRuntime';
 import {
   checkGroundWithNormal,
@@ -207,10 +211,12 @@ export interface UseBlazeAbilitiesReturn {
   handleFlamethrower: (
     ctx: AbilityContext,
     sounds: PlayerSounds,
+    isTryingToFire: boolean,
     setFlamethrowerActive: (active: boolean) => void,
     setFlamethrowerFuel: (fuel: number) => void
   ) => void;
   executeRocketJump: (ctx: AbilityContext) => void;
+  executeAfterburner: (ctx: AbilityContext) => void;
   updateRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   resetRocketJump: () => void;
   executeAirStrike: (
@@ -624,6 +630,7 @@ export function useBlazeAbilities(
   const handleFlamethrower = useCallback((
     ctx: AbilityContext,
     sounds: PlayerSounds,
+    isTryingToFire: boolean,
     setFlamethrowerActive: (active: boolean) => void,
     setFlamethrowerFuel: (fuel: number) => void
   ) => {
@@ -646,10 +653,10 @@ export function useBlazeAbilities(
       lastAuthoritativeFlamethrowerFuelRef.current = authoritativeFuel;
     }
 
-    const isTryingToFire = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
+    const canFire = isTryingToFire && flamethrowerFuelRef.current > 0;
 
     if (canUsePracticeFuel) {
-      const fuelDelta = (isTryingToFire ? -BLAZE_FLAMETHROWER_FUEL_DRAIN : BLAZE_FLAMETHROWER_FUEL_REGEN) *
+      const fuelDelta = (canFire ? -BLAZE_FLAMETHROWER_FUEL_DRAIN : BLAZE_FLAMETHROWER_FUEL_REGEN) *
         fuelStepSeconds *
         tempoMultiplier;
       fuel = clampFlamethrowerFuel(flamethrowerFuelRef.current + fuelDelta);
@@ -659,14 +666,14 @@ export function useBlazeAbilities(
         currentFuel: flamethrowerFuelRef.current,
         authoritativeFuel,
         lastAuthoritativeFuel: lastAuthoritativeFlamethrowerFuelRef.current,
-        isTryingToFire,
+        isTryingToFire: canFire,
         deltaSeconds: fuelStepSeconds,
         tempoMultiplier,
       });
       fuel = projectedFuel.fuel;
       lastAuthoritativeFlamethrowerFuelRef.current = projectedFuel.lastAuthoritativeFuel;
     }
-    const isHoldingFlamethrower = ctx.inputState.ability1 && fuel > 0;
+    const isHoldingFlamethrower = canFire && fuel > 0;
     const serverActive = Boolean(
       localPlayer?.heroId === 'blaze' &&
       localPlayer.state === 'alive' &&
@@ -723,6 +730,22 @@ export function useBlazeAbilities(
     });
     pendingRocketJumpRef.current = null;
   }, []);
+
+  const executeAfterburner = useCallback((ctx: AbilityContext) => {
+    const now = Date.now();
+    const startPosition = vectorToPlainPosition(ctx.position);
+    const visualId = `predicted_blaze_afterburner_${ctx.localPlayer.id}_${now}`;
+    startLocalBlazeAfterburnerDash(ctx.localPlayer.id, ctx.yaw, now);
+    triggerAfterburnerTrail({
+      id: visualId,
+      playerId: ctx.localPlayer.id,
+      startPosition,
+      dashDurationMs: BLAZE_AFTERBURNER_DASH_DURATION_MS,
+      trailDurationMs: BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+    });
+    markPredictedLocalAbilityVisual('blaze_afterburner', ctx.localPlayer.id, visualId, { now });
+    lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, now);
+  }, [lockActions]);
 
   const updateRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const pendingRocketJump = pendingRocketJumpRef.current;
@@ -793,6 +816,7 @@ export function useBlazeAbilities(
     executeBombDrop,
     handleFlamethrower,
     executeRocketJump,
+    executeAfterburner,
     updateRocketJump,
     resetRocketJump,
     executeAirStrike,

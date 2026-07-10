@@ -1,5 +1,8 @@
 import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
   CHRONOS_LIFELINE_ALLY_HEAL,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_LIFELINE_SELF_HEAL,
@@ -260,7 +263,7 @@ export function buildStandardAbilityCastPlan(input: {
   const shockwaveDirection = input.abilityId === 'chronos_timebreak'
     ? getForwardVector(input.caster.lookYaw, 0)
     : undefined;
-  const velocity = input.abilityId === 'blaze_rocketjump'
+  const velocity = input.abilityId === 'blaze_rocketjump' || input.abilityId === 'blaze_afterburner'
     ? input.caster.velocity
     : input.abilityId === 'chronos_ascendant_paradox'
       ? input.caster.velocity
@@ -284,18 +287,26 @@ export function buildStandardAbilityCastPlan(input: {
       releaseAt: input.abilityId === 'chronos_timebreak'
         ? input.abilityActivatedAt
         : undefined,
-      radius: input.abilityId === 'chronos_timebreak'
-        ? CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE
-        : undefined,
       duration: input.abilityId === 'chronos_timebreak'
         ? input.abilityDef.duration
         : input.abilityId === 'chronos_ascendant_paradox'
           ? input.abilityDef.duration
           : undefined,
-      durationMs: input.abilityId === 'chronos_ascendant_paradox'
-        ? CHRONOS_ASCENDANT_PARADOX_DURATION_MS
-        : undefined,
       shockwaveDirection,
+      trailStartPosition: input.abilityId === 'blaze_afterburner' ? input.startedAt : undefined,
+      durationMs: input.abilityId === 'blaze_afterburner'
+        ? BLAZE_AFTERBURNER_TRAIL_DURATION_MS
+        : input.abilityId === 'chronos_ascendant_paradox'
+          ? CHRONOS_ASCENDANT_PARADOX_DURATION_MS
+          : undefined,
+      dashDurationMs: input.abilityId === 'blaze_afterburner'
+        ? BLAZE_AFTERBURNER_DASH_DURATION_MS
+        : undefined,
+      radius: input.abilityId === 'blaze_afterburner'
+        ? BLAZE_AFTERBURNER_TRAIL_RADIUS
+        : input.abilityId === 'chronos_timebreak'
+          ? CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE
+          : undefined,
     },
     timebreakShockwave: shockwaveDirection
       ? {

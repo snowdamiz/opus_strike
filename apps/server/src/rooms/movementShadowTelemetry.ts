@@ -20,6 +20,7 @@ interface MovementSnapshotPlayer {
 interface MovementShadowClassPlayer {
   hasFlag: boolean;
   heroId: string;
+  afterburnerActive?: boolean;
   movement: {
     isGrounded: boolean;
     isGrappling: boolean;
@@ -94,6 +95,7 @@ export function getMovementShadowClass(
   if (player.movement.isSliding) return input.jump ? 'slide_jump' : 'slide';
   if (player.movement.isGliding) return 'glide';
   if (player.movement.isWallRunning) return 'wallrun';
+  if (player.heroId === 'blaze' && player.afterburnerActive) return 'afterburner_dash';
   if (player.heroId === 'blaze' && input.ability2) return 'rocket_jump';
   if (player.heroId === 'phantom' && (input.ability1 || input.ability2)) return 'teleport_ability';
   if (player.heroId === 'chronos' && input.ability1) {

@@ -13,6 +13,7 @@ import {
   getBlazePrimaryAbilityId,
 } from '@voxel-strike/shared';
 import { playSharedBlazeAirstrikeSound, playSharedSound } from '../useAudio';
+import { resolveRuntimeHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
 import { resetPredictedLocalAbilityVisuals } from './useLocalAbilityVisualPrediction';
 import {
   BLAZE_ROCKET_FIRE_INTERVAL,
@@ -317,6 +318,21 @@ export function useLocalAbilityAudioPrediction() {
         confirmedCharges: getAbilityCharges?.(abilityId),
       })
     );
+    const blazeRuntimeBindings = heroId === 'blaze'
+      ? resolveRuntimeHeroAbilityBindings('blaze', useLoadoutStore.getState().heroAbilityBindings)
+      : null;
+    const playPredictedBlazeMovementAbility = (abilityId: string | undefined): void => {
+      if (
+        (abilityId !== 'blaze_rocketjump' && abilityId !== 'blaze_afterburner') ||
+        !canReservePredictedSkillSound(abilityId)
+      ) {
+        return;
+      }
+      markPredictedLocalAbilitySound(abilityId, now);
+      void playSharedSound('blazeRocketJump', abilityId === 'blaze_afterburner'
+        ? { pitch: 1.28, volume: 0.72 }
+        : undefined);
+    };
 
     const primaryPressed = inputState.primaryFire;
     if (primaryPressed && !previousInput.primaryFire) {
@@ -410,7 +426,9 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ability1 && !previousInput.ability1) {
-      if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_blink')) {
+      if (heroId === 'blaze') {
+        playPredictedBlazeMovementAbility(blazeRuntimeBindings?.ability1);
+      } else if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_blink')) {
         markPredictedLocalAbilitySound('phantom_blink', now);
         void playSharedSound('phantomBlink', { durationMs: 900, volume: 1.1 });
       } else if (
@@ -431,9 +449,8 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ability2 && !previousInput.ability2) {
-      if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_rocketjump')) {
-        markPredictedLocalAbilitySound('blaze_rocketjump', now);
-        void playSharedSound('blazeRocketJump');
+      if (heroId === 'blaze') {
+        playPredictedBlazeMovementAbility(blazeRuntimeBindings?.ability2);
       } else if (heroId === 'chronos' && canReservePredictedSkillSound('chronos_timebreak')) {
         playPredictedChronosTimebreak(now);
       }

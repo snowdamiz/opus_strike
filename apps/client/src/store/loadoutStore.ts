@@ -1,13 +1,16 @@
 import { create } from 'zustand';
 import {
   ALL_HERO_IDS,
+  BLAZE_ABILITY_SKILLS,
   DEFAULT_BLAZE_PRIMARY_SKILL,
   DEFAULT_BLAZE_SECONDARY_SKILL,
   HERO_DEFINITIONS,
+  hasBlazeAfterburner,
   isBlazePrimarySkill,
   isBlazeSecondarySkill,
   type BlazePrimarySkill,
   type BlazeSecondarySkill,
+  type BlazeAbilityBindings,
   type HeroId,
   type InputState,
 } from '@voxel-strike/shared';
@@ -51,7 +54,11 @@ function isValidHeroAbilityBindings(
 
   const candidate = value as Partial<HeroAbilityBindings>;
   const defaults = getDefaultHeroAbilityBindings(heroId);
-  const supportedAbilityIds = new Set([defaults.ability1, defaults.ability2]);
+  const supportedAbilityIds = new Set(
+    heroId === 'blaze'
+      ? BLAZE_ABILITY_SKILLS
+      : [defaults.ability1, defaults.ability2]
+  );
 
   return (
     typeof candidate.ability1 === 'string' &&
@@ -88,13 +95,40 @@ export function resolveHeroAbilityBindings(
     : getDefaultHeroAbilityBindings(heroId);
 }
 
+export function resolveRuntimeHeroAbilityBindings(
+  heroId: HeroId,
+  bindingsByHero: HeroAbilityBindingsMap,
+): HeroAbilityBindings {
+  const bindings = resolveHeroAbilityBindings(heroId, bindingsByHero);
+  if (heroId === 'blaze' && hasBlazeAfterburner(bindings as BlazeAbilityBindings)) {
+    return bindings;
+  }
+  return getDefaultHeroAbilityBindings(heroId);
+}
+
+export function isHeroAbilityInputActive(
+  input: Pick<InputState, 'ability1' | 'ability2'>,
+  heroId: HeroId,
+  bindingsByHero: HeroAbilityBindingsMap,
+  abilityId: string,
+): boolean {
+  const bindings = resolveRuntimeHeroAbilityBindings(heroId, bindingsByHero);
+  if (bindings.ability1 === abilityId) return input.ability1;
+  if (bindings.ability2 === abilityId) return input.ability2;
+  return false;
+}
+
 export function applyHeroAbilityBindings(
   input: InputState,
   heroId: HeroId,
   bindingsByHero: HeroAbilityBindingsMap,
 ): InputState {
   const defaults = getDefaultHeroAbilityBindings(heroId);
-  const bindings = resolveHeroAbilityBindings(heroId, bindingsByHero);
+  const selectedBindings = resolveHeroAbilityBindings(heroId, bindingsByHero);
+  if (heroId === 'blaze' && hasBlazeAfterburner(selectedBindings as BlazeAbilityBindings)) {
+    return input;
+  }
+  const bindings = selectedBindings;
   if (bindings.ability1 === defaults.ability1 && bindings.ability2 === defaults.ability2) {
     return input;
   }
@@ -177,7 +211,12 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
   assignHeroAbility: (heroId, slot, abilityId) => {
     set((state) => {
       const current = resolveHeroAbilityBindings(heroId, state.heroAbilityBindings);
-      const supportedAbilityIds = new Set([current.ability1, current.ability2]);
+      const defaults = getDefaultHeroAbilityBindings(heroId);
+      const supportedAbilityIds = new Set(
+        heroId === 'blaze'
+          ? BLAZE_ABILITY_SKILLS
+          : [defaults.ability1, defaults.ability2]
+      );
       if (!supportedAbilityIds.has(abilityId)) return state;
 
       const otherSlot: HeroAbilitySlot = slot === 'ability1' ? 'ability2' : 'ability1';
@@ -187,7 +226,6 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
       }
       nextBindings[slot] = abilityId;
 
-      const defaults = getDefaultHeroAbilityBindings(heroId);
       const nextByHero = { ...state.heroAbilityBindings };
       if (
         nextBindings.ability1 === defaults.ability1 &&

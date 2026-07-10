@@ -30,6 +30,11 @@ export {
   prewarmPhosphorFlareResources,
 } from './phosphorFlare';
 
+export {
+  AfterburnerTrails,
+  triggerAfterburnerTrail,
+} from './afterburnerTrail';
+
 export { 
   FlamethrowerEffect,
   RemoteFlamethrowerInstancedVisuals,

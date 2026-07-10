@@ -22,7 +22,7 @@ import {
 import { offsetResolvedChronosOrbVisualOrigin } from '../../model-system/chronosOrbVisualOrigin';
 import { resolveAbilityAimDirection } from './abilityAim';
 import type { AbilityContext } from './types';
-import { useLoadoutStore } from '../../store/loadoutStore';
+import { isHeroAbilityInputActive, useLoadoutStore } from '../../store/loadoutStore';
 
 interface BuildAbilityCastOriginHintOptions {
   bombTargeting?: boolean;
@@ -308,6 +308,7 @@ export function buildAbilityCastOriginHints(
   }
 
   if (ctx.heroId === 'blaze') {
+    const heroAbilityBindings = useLoadoutStore.getState().heroAbilityBindings;
     if (input.primaryFire) {
       const primaryAbilityId = useLoadoutStore.getState().blazePrimarySkill === 'scrapshot'
         ? 'blaze_scrapshot'
@@ -323,7 +324,7 @@ export function buildAbilityCastOriginHints(
       );
     }
 
-    if (input.ability1) {
+    if (isHeroAbilityInputActive(input, 'blaze', heroAbilityBindings, 'blaze_flamethrower')) {
       pushHint(
         hints,
         seen,
@@ -355,7 +356,7 @@ export function buildAbilityCastOriginHints(
       );
     }
 
-    if (input.ability2) {
+    if (isHeroAbilityInputActive(input, 'blaze', heroAbilityBindings, 'blaze_rocketjump')) {
       pushHint(
         hints,
         seen,

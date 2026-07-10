@@ -111,6 +111,7 @@ function player(overrides: Record<string, unknown> = {}) {
   assert.equal(getMovementShadowClass(player({ movement: movement({ isSliding: true }) }), {}), 'slide');
   assert.equal(getMovementShadowClass(player({ movement: movement({ isGliding: true }) }), {}), 'glide');
   assert.equal(getMovementShadowClass(player({ movement: movement({ isWallRunning: true }) }), {}), 'wallrun');
+  assert.equal(getMovementShadowClass(player({ heroId: 'blaze', afterburnerActive: true }), {}), 'afterburner_dash');
   assert.equal(getMovementShadowClass(player({ heroId: 'blaze' }), { ability2: true }), 'rocket_jump');
   assert.equal(getMovementShadowClass(player({ heroId: 'phantom' }), { ability1: true }), 'teleport_ability');
   assert.equal(getMovementShadowClass(player({ heroId: 'phantom' }), { ability2: true }), 'teleport_ability');

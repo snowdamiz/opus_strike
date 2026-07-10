@@ -16,7 +16,12 @@ import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type ObserverFlightSpeed } from '../../store/gameStore';
 import { useSettingsStore } from '../../store/settingsStore';
-import { applyHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
+import {
+  applyHeroAbilityBindings,
+  isHeroAbilityInputActive,
+  resolveRuntimeHeroAbilityBindings,
+  useLoadoutStore,
+} from '../../store/loadoutStore';
 import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
 import {
   consumeLocalPlayerImpulses,
@@ -164,6 +169,7 @@ import {
   getPendingSelfMovementAuthorityCount,
   movementStateFromPlayer,
   predictLocalBattleRoyalDrop,
+  predictLocalBlazeAfterburner,
   predictLocalBlazeRocketJump,
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
@@ -1207,8 +1213,12 @@ function runTracePhase(input: {
   const storeForTrace = useGameStore.getState();
   const isTraceFlagCarrier = storeForTrace.gameplayMode === 'capture_the_flag' && localPlayer.hasFlag;
   const traceAbilityIds = writeActiveAbilityIdsForTrace(localPlayer.abilities, refs.traceAbilityIdsRef.current);
-  if (frameInput.ability1) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability1.abilityId);
-  if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability2.abilityId);
+  const traceBindings = resolveRuntimeHeroAbilityBindings(
+    heroId,
+    useLoadoutStore.getState().heroAbilityBindings
+  );
+  if (frameInput.ability1) pushUniqueTraceAbilityId(traceAbilityIds, traceBindings.ability1);
+  if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, traceBindings.ability2);
   if (frameInput.ultimate) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ultimate.abilityId);
   if (bombTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'blaze_bomb_targeting');
   traceAbilityIds.sort();
@@ -1221,9 +1231,19 @@ function runTracePhase(input: {
     inputState: commandInput,
     flagCarrier: isTraceFlagCarrier,
   });
+  const afterburnerPressed = heroId === 'blaze' && (
+    (frameInput.ability1 && traceBindings.ability1 === 'blaze_afterburner') ||
+    (frameInput.ability2 && traceBindings.ability2 === 'blaze_afterburner')
+  );
+  const rocketJumpPressed = heroId === 'blaze' && (
+    (frameInput.ability1 && traceBindings.ability1 === 'blaze_rocketjump') ||
+    (frameInput.ability2 && traceBindings.ability2 === 'blaze_rocketjump')
+  );
   const traceMovementBarrier = heroId === 'phantom' && frameInput.ability1
     ? 'teleport'
-    : heroId === 'blaze' && frameInput.ability2
+    : afterburnerPressed
+      ? 'knockback'
+      : rocketJumpPressed
       ? 'knockback'
       : null;
   recordMovementTraceFrame({
@@ -1481,6 +1501,9 @@ export function runInputPhase(
   if (previousHoldInput.ability1 && !rawFrameInput.ability1) {
     lockHeroActions(heroId, getAbility1ReleaseLockMs(heroId), now);
   }
+  if (previousHoldInput.ability2 && !rawFrameInput.ability2) {
+    lockHeroActions(heroId, getAbility1ReleaseLockMs(heroId), now);
+  }
 
   const continuingHoldInput = getContinuingHeroHoldInput(heroId, rawFrameInput, previousHoldInput);
   const lockedAllowedInput = heroId === 'chronos' && previousHoldInput.secondaryFire && rawFrameInput.secondaryFire
@@ -1571,8 +1594,11 @@ export function runInputPhase(
   });
   const requestedCommandScheduleReasons: CommandScheduleReason[] = [];
   const movementBarrierInputPressed = (
-    // Blaze Q stays on normal command cadence; forced flushes can bundle the rocket impulse with a movement burst.
     (heroId === 'phantom' && frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
+    (heroId === 'blaze' && (
+      (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
+      (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2)
+    )) ||
     (heroId === 'chronos' && frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate)
   );
   if (movementBarrierInputPressed) {
@@ -3069,6 +3095,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
     // Get hero stats (cached)
     const heroId = localPlayer.heroId as HeroId;
+    const runtimeAbilityBindings = resolveRuntimeHeroAbilityBindings(heroId, heroAbilityBindings);
     rawFrameInput = applyHeroAbilityBindings(rawFrameInput, heroId, heroAbilityBindings);
     frameInput = applyHeroAbilityBindings(frameInput, heroId, heroAbilityBindings);
     defaultViewmodelPoseRuntime.heroId = heroId;
@@ -3376,6 +3403,41 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       updatePredictedAbilitySounds(soundFrameArg);
 
       // Handle ability input
+      const executeBlazeSlottedAbility = (abilityId: string) => {
+        if (!abilitySystem.canUseAbility(abilityId, false)) return;
+
+        if (abilityId === 'blaze_rocketjump') {
+          blazeAbilities.executeRocketJump(abilityCtx);
+          useGameStore.getState().recordSkillCast(now);
+          if (isPracticeMode) {
+            const startPosition = { x: position.x, y: position.y, z: position.z };
+            const nextState = predictLocalBlazeRocketJump(localPlayer!, abilityCtx.yaw);
+            applyPracticePredictedState(nextState);
+            triggerRocketJumpExplosion(startPosition);
+            abilitySystem.startClientCooldown(abilityId);
+          }
+          return;
+        }
+
+        if (abilityId === 'blaze_afterburner') {
+          blazeAbilities.executeAfterburner(abilityCtx);
+          useGameStore.getState().recordSkillCast(now);
+          if (isPracticeMode) {
+            const nextState = predictLocalBlazeAfterburner(localPlayer!, abilityCtx.yaw);
+            applyPracticePredictedState(nextState);
+            abilitySystem.startClientCooldown(abilityId);
+          }
+        }
+      };
+
+      if (
+        heroId === 'blaze' &&
+        localAbilityInput.ability1 &&
+        !abilitySystem.abilityPressedRef.current.ability1
+      ) {
+        executeBlazeSlottedAbility(runtimeAbilityBindings.ability1);
+      }
+
       if (heroId !== 'blaze') {
         const ability1Id = heroDef.ability1.abilityId;
         const chronosQueuePressed = heroId === 'chronos' &&
@@ -3509,11 +3571,16 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         abilitySystem.abilityPressedRef.current.ability1 = heroId === 'chronos'
           ? rawFrameInput.ability1
           : frameInput.ability1;
+      } else {
+        abilitySystem.abilityPressedRef.current.ability1 = localAbilityInput.ability1;
       }
 
       // Ability 2 (Q)
       if (localAbilityInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
-        if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false)) {
+        const ability2Id = heroId === 'blaze'
+          ? runtimeAbilityBindings.ability2
+          : heroDef.ability2.abilityId;
+        if (abilitySystem.canUseAbility(ability2Id, false)) {
           if (heroId === 'phantom') {
             const abilityId = heroDef.ability2.abilityId;
             const playLocalShieldCast = () => {
@@ -3549,15 +3616,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
               lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             }
           } else if (heroId === 'blaze') {
-            blazeAbilities.executeRocketJump(abilityCtx);
-            useGameStore.getState().recordSkillCast(now);
-            if (isPracticeMode) {
-              const startPosition = { x: position.x, y: position.y, z: position.z };
-              const nextState = predictLocalBlazeRocketJump(localPlayer, abilityCtx.yaw);
-              applyPracticePredictedState(nextState);
-              triggerRocketJumpExplosion(startPosition);
-              abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
-            }
+            executeBlazeSlottedAbility(ability2Id);
           } else if (heroId === 'hookshot') {
             if (hookshotAbilities.executeEarthWall(abilityCtx)) {
               useGameStore.getState().recordSkillCast(now);
@@ -3697,6 +3756,12 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         blazeAbilities.handleFlamethrower(
           abilityCtx,
           playerSounds,
+          isHeroAbilityInputActive(
+            localAbilityInput,
+            'blaze',
+            heroAbilityBindings,
+            'blaze_flamethrower'
+          ),
           setFlamethrowerActive,
           setFlamethrowerFuel
         );

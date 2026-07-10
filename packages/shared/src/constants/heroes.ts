@@ -153,6 +153,13 @@ export const BLAZE_PHOSPHOR_FLARE_RADIUS = 3.4;
 export const BLAZE_PHOSPHOR_FLARE_MAX_RANGE = 32;
 export const BLAZE_PHOSPHOR_FLARE_MIN_RANGE = 2.5;
 export const BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS = 0.2;
+export const BLAZE_AFTERBURNER_COOLDOWN_SECONDS = 7;
+export const BLAZE_AFTERBURNER_TRAIL_DAMAGE = 6;
+export const BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS = 600;
+export const BLAZE_AFTERBURNER_TRAIL_DURATION_SECONDS = 2.4;
+export const BLAZE_AFTERBURNER_TRAIL_DURATION_MS = BLAZE_AFTERBURNER_TRAIL_DURATION_SECONDS * 1000;
+export const BLAZE_AFTERBURNER_TRAIL_RADIUS = 1.35;
+export const BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING = 0.45;
 export const BLAZE_FLAMETHROWER_COLLISION_RADIUS = 0.42;
 export const BLAZE_GEARSTORM_DAMAGE = 14;
 export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 400;
@@ -222,6 +229,11 @@ export const ABILITY_CARD_STATS = {
     { value: BLAZE_FLAMETHROWER_BURN_INTERVAL_MS / 1000, label: 'burn interval', suffix: 's' },
     { value: BLAZE_FLAMETHROWER_FUEL_DRAIN, label: 'drain', suffix: '/s' },
     { value: BLAZE_FLAMETHROWER_FUEL_REGEN, label: 'regen', suffix: '/s' },
+  ],
+  blaze_afterburner: [
+    { value: BLAZE_AFTERBURNER_TRAIL_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_AFTERBURNER_TRAIL_RADIUS, label: 'trail radius' },
+    { value: BLAZE_AFTERBURNER_TRAIL_DURATION_SECONDS, label: 'trail duration', format: 'seconds' },
   ],
   blaze_airstrike: [
     { value: BLAZE_GEARSTORM_DAMAGE, label: 'dmg/tick' },
@@ -446,6 +458,14 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     targeting: 'instant',
     cooldown: 8,
     description: 'Launch yourself upward and forward with an explosion.',
+  },
+  blaze_afterburner: {
+    id: 'blaze_afterburner',
+    name: 'Afterburner Dash',
+    type: 'movement',
+    targeting: 'direction',
+    cooldown: BLAZE_AFTERBURNER_COOLDOWN_SECONDS,
+    description: 'Dash horizontally in your facing direction, leaving a damaging fire trail behind you.',
   },
   blaze_airstrike: {
     id: 'blaze_airstrike',

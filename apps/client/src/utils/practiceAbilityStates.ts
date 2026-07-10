@@ -1,5 +1,6 @@
 import {
   ABILITY_DEFINITIONS,
+  BLAZE_ABILITY_SKILLS,
   HERO_DEFINITIONS,
   type AbilityState,
   type HeroId,
@@ -9,12 +10,16 @@ export function createPracticeAbilityStates(heroId: HeroId): Record<string, Abil
   const heroDef = HERO_DEFINITIONS[heroId];
   const states: Record<string, AbilityState> = {};
 
-  for (const slot of [heroDef.ability1, heroDef.ability2, heroDef.ultimate]) {
-    const abilityDef = ABILITY_DEFINITIONS[slot.abilityId];
+  const abilityIds = heroId === 'blaze'
+    ? [...BLAZE_ABILITY_SKILLS, heroDef.ultimate.abilityId]
+    : [heroDef.ability1.abilityId, heroDef.ability2.abilityId, heroDef.ultimate.abilityId];
+
+  for (const abilityId of abilityIds) {
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
     if (!abilityDef) continue;
 
-    states[slot.abilityId] = {
-      abilityId: slot.abilityId,
+    states[abilityId] = {
+      abilityId,
       cooldownRemaining: 0,
       cooldownUntil: 0,
       charges: abilityDef.charges ?? 1,

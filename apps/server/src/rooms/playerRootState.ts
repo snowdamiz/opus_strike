@@ -4,6 +4,7 @@ const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
   'phantom_blink',
   'hookshot_grapple',
   'blaze_rocketjump',
+  'blaze_afterburner',
   'chronos_ascendant_paradox',
 ]);
 

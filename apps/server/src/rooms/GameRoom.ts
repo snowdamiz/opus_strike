@@ -206,6 +206,7 @@ import {
   shouldStartCountdownAfterSceneReady,
 } from './matchStartReadiness';
 import {
+  BlazeAfterburnerTrailTracker,
   BlazeLingeringAreaTracker,
   PendingAreaDamageQueue,
   VoidZoneTracker,
@@ -273,6 +274,7 @@ import {
   BHOP_GROUND_ACCEL,
   BHOP_GROUND_FRICTION,
   BHOP_GROUND_STOP_THRESHOLD,
+  BHOP_MAX_VELOCITY,
   BHOP_NO_INPUT_FRICTION_MULTIPLIER,
   BHOP_STOP_SPEED,
   CROUCH_MULTIPLIER,
@@ -308,6 +310,13 @@ import {
   BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
   BLAZE_PHOSPHOR_FLARE_MIN_RANGE,
   BLAZE_PHOSPHOR_FLARE_RADIUS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_DASH_SPEED,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
+  BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING,
   BLAZE_FLAMETHROWER_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
@@ -377,6 +386,7 @@ import {
   getBlazeMeteorPath,
   getBlazePhosphorFlareFlightDurationMs,
   getBlazePhosphorFlarePoint,
+  getBlazeAfterburnerDirection,
   BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS,
   getDefaultHeroSkinId,
   getHeroSkinDefinition,
@@ -388,6 +398,8 @@ import {
   getBlazeScrapshotPelletDirections,
   isBlazePrimarySkill,
   isBlazeSecondarySkill,
+  isBlazeAbilityBindings,
+  hasBlazeAfterburner,
   getSegmentHitAgainstChronosAegis,
   calculateFalloffDamage,
   calculateBlazeScrapshotPelletDamage,
@@ -406,6 +418,7 @@ import type {
   AbilityCastOriginHint,
   BlazePrimarySkill,
   BlazeSecondarySkill,
+  BlazeAbilityBindings,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -716,6 +729,7 @@ import {
   VOID_ZONE_DAMAGE,
   VOID_ZONE_DURATION,
   initializePlayerAbilities,
+  reconcilePlayerAbilities,
   resetAbilityCooldowns,
   tryUseAbility,
   executeAbility,
@@ -893,6 +907,14 @@ interface MovementPhysicsFrameEntry {
   grantedExtraSubsteps: number;
   skippedExtraSubsteps: number;
   serverOwnedInput?: PlayerInput;
+}
+
+interface BlazeAfterburnerDashRuntime {
+  playerId: string;
+  trailId: string;
+  direction: PlainVec3;
+  expiresAt: number;
+  lastSamplePosition: PlainVec3;
 }
 
 interface StateStreamBroadcastOptions {
@@ -1151,6 +1173,7 @@ export class GameRoom extends Room<GameState> {
   });
   private readonly blazePrimarySkills = new Map<string, BlazePrimarySkill>();
   private readonly blazeSecondarySkills = new Map<string, BlazeSecondarySkill>();
+  private readonly blazeAbilityBindings = new Map<string, BlazeAbilityBindings>();
   private readonly chronosPrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
     reloadMs: CHRONOS_PRIMARY_RELOAD_MS,
@@ -1168,6 +1191,8 @@ export class GameRoom extends Room<GameState> {
   private readonly pendingAreaDamage = new PendingAreaDamageQueue();
   private readonly pendingAreaDamageReady: PendingAreaDamageInstance[] = [];
   private readonly blazeLingeringAreas = new BlazeLingeringAreaTracker();
+  private readonly blazeAfterburnerTrails = new BlazeAfterburnerTrailTracker();
+  private readonly blazeAfterburnerDashes = new Map<string, BlazeAfterburnerDashRuntime>();
   private readonly blazeFlamethrowers = new BlazeFlamethrowerRuntimeTracker();
   private readonly blazeBurns = new BlazeBurnEffectTracker();
   private readonly npcs = new RoomNpcRegistry();
@@ -1905,6 +1930,11 @@ export class GameRoom extends Room<GameState> {
       this.handleSetBlazeSecondarySkill(client, data.skill);
     });
 
+    this.onRateLimitedMessage('setBlazeAbilityBindings', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isBlazeAbilityBindings(data)) return;
+      this.handleSetBlazeAbilityBindings(client, data);
+    });
+
     this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
       this.handleMatchSceneReady(client, data);
     });
@@ -1987,6 +2017,19 @@ export class GameRoom extends Room<GameState> {
     if (!player || player.isBot || this.blazeSecondarySkills.has(player.id)) return;
 
     this.blazeSecondarySkills.set(player.id, skill);
+  }
+
+  private handleSetBlazeAbilityBindings(client: Client, bindings: BlazeAbilityBindings): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazeAbilityBindings.has(player.id)) return;
+
+    const runtimeBindings = hasBlazeAfterburner(bindings) ? bindings : null;
+    if (!runtimeBindings) return;
+
+    this.blazeAbilityBindings.set(player.id, { ...runtimeBindings });
+    if (player.heroId === 'blaze') {
+      reconcilePlayerAbilities(player, 'blaze', runtimeBindings);
+    }
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -2367,6 +2410,8 @@ export class GameRoom extends Room<GameState> {
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
     this.blazeSecondarySkills.delete(playerId);
+    this.blazeAbilityBindings.delete(playerId);
+    this.stopBlazeAfterburnerDash(playerId);
     this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
@@ -2412,6 +2457,8 @@ export class GameRoom extends Room<GameState> {
     });
     this.stopTickLoop();
     this.blazeLingeringAreas.clear();
+    this.blazeAfterburnerTrails.clear();
+    this.blazeAfterburnerDashes.clear();
     this.blazeFlamethrowers.clearDamageTicks();
   }
 
@@ -2786,6 +2833,7 @@ export class GameRoom extends Room<GameState> {
 
     this.updatePendingAreaDamage(now);
     this.updateBlazeLingeringAreas(now);
+    this.updateBlazeAfterburnerTrails(now);
     this.cleanupDamageWindows(now);
 
     this.updateBlazeFlamethrowers(now, dt);
@@ -2794,6 +2842,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updatePostMovementGameplaySystems(now: number): void {
+    this.updateBlazeAfterburnerDashEmitters(now);
     this.updatePowerupPickups(now);
 
     if (isCaptureTheFlagMode(this.gameplayMode)) {
@@ -5473,6 +5522,7 @@ export class GameRoom extends Room<GameState> {
 
   private stopRootedMovement(player: Player): void {
     this.clearHookshotGrapple(player.id);
+    this.stopBlazeAfterburnerDash(player.id);
     stopRootedMovementState(player);
   }
 
@@ -5968,9 +6018,12 @@ export class GameRoom extends Room<GameState> {
       input: movementInput,
       terrain: this.mapRuntime.terrain,
       flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
-      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player, movementInput.timestamp) *
         (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
-      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player),
+      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player, movementInput.timestamp),
+      forcedHorizontalVelocity: player.state === 'alive'
+        ? this.getBlazeAfterburnerForcedVelocity(player.id, movementInput.timestamp)
+        : undefined,
       proposedPosition: clientState.position,
       proposedVelocity: clientState.velocity,
       proposedMovement: clientState.movement,
@@ -5999,6 +6052,10 @@ export class GameRoom extends Room<GameState> {
       movementClass: getMovementShadowClass({
         hasFlag: player.hasFlag,
         heroId: heroId ?? 'unknown',
+        afterburnerActive: Boolean(
+          this.getActiveBlazeAfterburnerDash(player.id, movementInput.timestamp) ||
+          (player.heroId === 'blaze' && this.isBlazeAbilityInputActive(player, 'blaze_afterburner'))
+        ),
         movement: {
           isGrounded: clientState.movement.isGrounded,
           isGrappling: previousMovement.isGrappling,
@@ -6249,9 +6306,12 @@ export class GameRoom extends Room<GameState> {
       terrain: this.mapRuntime.terrain,
       collisionWorld,
       flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
-      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player, now) *
         (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
-      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player),
+      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player, now),
+      forcedHorizontalVelocity: player.state === 'alive'
+        ? this.getBlazeAfterburnerForcedVelocity(player.id, now)
+        : undefined,
     });
 
     this.applyMovementSimulationResult(player, result);
@@ -6816,6 +6876,138 @@ export class GameRoom extends Room<GameState> {
             sourcePosition: area.position,
           }
         );
+      },
+    });
+  }
+
+  private getBlazeAfterburnerGroundPoint(position: PlainVec3): PlainVec3 | null {
+    const groundY = this.getProceduralGroundY({
+      x: position.x,
+      y: position.y + 0.25,
+      z: position.z,
+    });
+    return groundY === null ? null : {
+      x: position.x,
+      y: groundY,
+      z: position.z,
+    };
+  }
+
+  private startBlazeAfterburnerDash(player: Player, now: number): void {
+    const startPosition = vec3SchemaToPlain(player.position);
+    const groundedStart = this.getBlazeAfterburnerGroundPoint(startPosition);
+    const trailId = this.abilityIds.nextSharedCastId(player.id, 'blaze_afterburner_trail');
+    this.blazeAfterburnerTrails.add({
+      id: trailId,
+      ownerId: player.id,
+      ownerTeam: player.team as Team,
+      points: groundedStart ? [groundedStart] : [],
+      radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+      damage: BLAZE_AFTERBURNER_TRAIL_DAMAGE,
+      damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+      startTime: now,
+      endTime: now + BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+    });
+    this.blazeAfterburnerDashes.set(player.id, {
+      playerId: player.id,
+      trailId,
+      direction: getBlazeAfterburnerDirection(player.lookYaw),
+      expiresAt: now + BLAZE_AFTERBURNER_DASH_DURATION_MS,
+      lastSamplePosition: startPosition,
+    });
+  }
+
+  private stopBlazeAfterburnerDash(playerId: string): void {
+    this.blazeAfterburnerDashes.delete(playerId);
+  }
+
+  private getActiveBlazeAfterburnerDash(playerId: string, now: number): BlazeAfterburnerDashRuntime | null {
+    const dash = this.blazeAfterburnerDashes.get(playerId);
+    return dash && now < dash.expiresAt ? dash : null;
+  }
+
+  private getBlazeAfterburnerForcedVelocity(playerId: string, now: number): { x: number; z: number } | undefined {
+    const dash = this.getActiveBlazeAfterburnerDash(playerId, now);
+    return dash
+      ? {
+        x: dash.direction.x * BLAZE_AFTERBURNER_DASH_SPEED,
+        z: dash.direction.z * BLAZE_AFTERBURNER_DASH_SPEED,
+      }
+      : undefined;
+  }
+
+  private appendBlazeAfterburnerTrailSamples(dash: BlazeAfterburnerDashRuntime, position: PlainVec3): void {
+    const dx = position.x - dash.lastSamplePosition.x;
+    const dy = position.y - dash.lastSamplePosition.y;
+    const dz = position.z - dash.lastSamplePosition.z;
+    const horizontalDistance = Math.hypot(dx, dz);
+    if (horizontalDistance <= 0.02) return;
+    const sampleCount = Math.max(1, Math.ceil(horizontalDistance / BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING));
+    for (let sampleIndex = 1; sampleIndex <= sampleCount; sampleIndex++) {
+      const alpha = sampleIndex / sampleCount;
+      const groundedPoint = this.getBlazeAfterburnerGroundPoint({
+        x: dash.lastSamplePosition.x + dx * alpha,
+        y: dash.lastSamplePosition.y + dy * alpha,
+        z: dash.lastSamplePosition.z + dz * alpha,
+      });
+      if (groundedPoint) {
+        this.blazeAfterburnerTrails.appendPoint(dash.trailId, groundedPoint);
+      }
+    }
+    dash.lastSamplePosition = position;
+  }
+
+  private updateBlazeAfterburnerDashEmitters(now: number): void {
+    for (const [playerId, dash] of this.blazeAfterburnerDashes) {
+      const player = this.state.players.get(playerId);
+      if (!player || player.state !== 'alive') {
+        this.blazeAfterburnerDashes.delete(playerId);
+        continue;
+      }
+      this.appendBlazeAfterburnerTrailSamples(dash, vec3SchemaToPlain(player.position));
+      if (now >= dash.expiresAt) {
+        this.blazeAfterburnerDashes.delete(playerId);
+      }
+    }
+  }
+
+  private updateBlazeAfterburnerTrails(now: number): void {
+    this.blazeAfterburnerTrails.update(now, {
+      hasOwner: (ownerId) => this.state.players.has(ownerId),
+      getTargets: (trail) => {
+        if (trail.points.length === 0) return [];
+        let minX = trail.points[0]?.x ?? 0;
+        let maxX = minX;
+        let minY = trail.points[0]?.y ?? 0;
+        let maxY = minY;
+        let minZ = trail.points[0]?.z ?? 0;
+        let maxZ = minZ;
+        for (let index = 1; index < trail.points.length; index++) {
+          const point = trail.points[index];
+          minX = Math.min(minX, point.x);
+          maxX = Math.max(maxX, point.x);
+          minY = Math.min(minY, point.y);
+          maxY = Math.max(maxY, point.y);
+          minZ = Math.min(minZ, point.z);
+          maxZ = Math.max(maxZ, point.z);
+        }
+        const center = {
+          x: (minX + maxX) * 0.5,
+          y: (minY + maxY) * 0.5,
+          z: (minZ + maxZ) * 0.5,
+        };
+        const halfLength = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5;
+        return this.queryPlayersRadius(
+          center,
+          halfLength + trail.radius,
+          { excludeTeam: trail.ownerTeam, excludeId: trail.ownerId, includeDowned: true }
+        );
+      },
+      applyDamage: (trail, target) => {
+        this.applyDamage(target, trail.damage, trail.ownerId, 'afterburner', {
+          abilityId: 'blaze_afterburner',
+          sourcePosition: trail.points[0],
+        });
       },
     });
   }
@@ -7528,6 +7720,33 @@ export class GameRoom extends Room<GameState> {
     );
   }
 
+  private getBlazeRuntimeAbilityBindings(playerId: string): BlazeAbilityBindings | null {
+    return this.blazeAbilityBindings.get(playerId) ?? null;
+  }
+
+  private resolvePlayerAbilityId(
+    player: Player,
+    slot: 'ability1' | 'ability2' | 'ultimate'
+  ): string | undefined {
+    if (slot !== 'ultimate' && player.heroId === 'blaze') {
+      const bindings = this.getBlazeRuntimeAbilityBindings(player.id);
+      if (bindings) return bindings[slot];
+    }
+    return isHeroId(player.heroId) ? HERO_DEFINITIONS[player.heroId][slot].abilityId : undefined;
+  }
+
+  private isBlazeAbilityInputActive(player: Player, abilityId: BlazeAbilityBindings[keyof BlazeAbilityBindings]): boolean {
+    const input = player.lastInput;
+    if (!input) return false;
+    const bindings = this.getBlazeRuntimeAbilityBindings(player.id);
+    if (!bindings) {
+      return abilityId === 'blaze_flamethrower' ? Boolean(input.ability1) : Boolean(input.ability2);
+    }
+    if (bindings.ability1 === abilityId) return Boolean(input.ability1);
+    if (bindings.ability2 === abilityId) return Boolean(input.ability2);
+    return false;
+  }
+
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
     const wasCharging = this.phantomVoidRayCharges.isCharging(player.id);
 
@@ -7599,7 +7818,7 @@ export class GameRoom extends Room<GameState> {
     const hookshotGrappleTarget = player.heroId === 'hookshot' && slot === 'ability1'
       ? this.resolveHookshotGrappleTarget(player)
       : null;
-    const abilityId = HERO_DEFINITIONS[player.heroId as HeroId]?.[slot]?.abilityId;
+    const abilityId = this.resolvePlayerAbilityId(player, slot);
     const preflightRejection = getAbilityUsePreflightRejection({
       playerState: player.state,
       heroId: player.heroId,
@@ -7625,7 +7844,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const result = tryUseAbility(player, slot);
+    const result = tryUseAbility(player, slot, abilityId);
     if (!result.success || !result.abilityId || !result.abilityState || !result.abilityDef) {
       this.rejectAbilityOrCombat(player, `ability_unavailable:${slot}`, false);
       return;
@@ -7644,6 +7863,10 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.executeRoomAbilityEffect(player, ability);
+
+    if (ability.abilityId === 'blaze_afterburner') {
+      this.startBlazeAfterburnerDash(player, usedAt);
+    }
 
     if (ability.abilityId === 'blaze_flamethrower') {
       return;
@@ -8984,6 +9207,30 @@ export class GameRoom extends Room<GameState> {
     return moved;
   }
 
+  private stepBlazeAfterburnerWithoutCommand(
+    player: Player,
+    tickTime: number,
+    collisionWorld = this.getMovementCollisionWorld(tickTime)
+  ): boolean {
+    if (!this.getActiveBlazeAfterburnerDash(player.id, tickTime)) return false;
+
+    let moved = false;
+    const authority = this.getMovementAuthority(player.id);
+    for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+      const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+      if (!this.getActiveBlazeAfterburnerDash(player.id, stepNow)) break;
+      const before = vec3SchemaToPlain(player.position);
+      const input = suppressLocomotionInput(
+        player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)
+      );
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+      if (distance3D(before, player.position) <= 0.001) continue;
+      moved = true;
+      this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
+    }
+    return moved;
+  }
+
   private scheduleChronosTimebreakShockwave(
     casterId: string,
     castDirection: PlainVec3,
@@ -9058,8 +9305,7 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private getActiveSpeedMultiplier(player: Player): number {
-    const now = Date.now();
+  private getActiveSpeedMultiplier(player: Player, now = Date.now()): number {
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     if (this.isChronosAscendantActive(player, now)) {
@@ -9067,6 +9313,9 @@ export class GameRoom extends Room<GameState> {
     }
     if (this.powerupBoosts.has(player.id, now)) {
       multiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+    }
+    if (this.getActiveBlazeAfterburnerDash(player.id, now)) {
+      multiplier *= Math.max(1, BLAZE_AFTERBURNER_DASH_SPEED / BHOP_MAX_VELOCITY);
     }
     multiplier *= this.getChronosTimebreakTempoMultiplier(player);
     return multiplier;
@@ -10678,6 +10927,7 @@ export class GameRoom extends Room<GameState> {
     resetPlayerMovementRuntime(player);
     this.blazeBurns.clearTarget(player.id);
     this.blazeFlamethrowers.clearDamageTicksForPlayer(player.id);
+    this.stopBlazeAfterburnerDash(player.id);
     this.playerRoots.clear(player.id);
     this.powerupBoosts.clear(player.id);
     this.clearHookshotDragPullsInvolving(player.id);
@@ -10914,7 +11164,11 @@ export class GameRoom extends Room<GameState> {
     }
 
     // Initialize abilities for this hero
-    initializePlayerAbilities(player, heroId);
+    initializePlayerAbilities(
+      player,
+      heroId,
+      heroId === 'blaze' ? this.getBlazeRuntimeAbilityBindings(player.id) ?? undefined : undefined
+    );
     this.syncMatchParticipant(player);
     this.syncReconnectParticipantFromPlayer(player);
 
@@ -12039,6 +12293,8 @@ export class GameRoom extends Room<GameState> {
     if (!preserveBattleRoyalDeploymentGameplay) {
       this.blazeBurns.clearAll();
       this.blazeLingeringAreas.clear();
+      this.blazeAfterburnerTrails.clear();
+      this.blazeAfterburnerDashes.clear();
     }
 
     this.state.players.forEach(player => {
@@ -12719,7 +12975,7 @@ export class GameRoom extends Room<GameState> {
 
       const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
       const frameState = resolveBlazeFlamethrowerFrameState({
-        isFiring: Boolean(player.lastInput?.ability1),
+        isFiring: this.isBlazeAbilityInputActive(player, 'blaze_flamethrower'),
         fuel: player.movement.jetpackFuel,
         dt,
         tempoMultiplier,
@@ -13127,6 +13383,7 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
       const grappleMoved = this.stepHookshotGrappleWithoutCommand(player, tickTime, collisionWorld);
       const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime, collisionWorld);
+      const afterburnerMoved = this.stepBlazeAfterburnerWithoutCommand(player, tickTime, collisionWorld);
       authority.metrics.queueLength = authority.pendingCommands.length;
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
       if (player.position.y < -10) {
@@ -13134,7 +13391,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       const client = this.clientRegistry.getClient(player.id);
-      if (client && (authority.correctionReason || grappleMoved || dragPullMoved)) {
+      if (client && (authority.correctionReason || grappleMoved || dragPullMoved || afterburnerMoved)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
       return;

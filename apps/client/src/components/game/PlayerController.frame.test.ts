@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
+  BLAZE_ABILITY_SKILLS,
   createEmptyInputState,
   HERO_DEFINITIONS,
   MOVEMENT_MAX_PACKET_COMMANDS,
@@ -354,8 +355,9 @@ useGameStore.setState({
 for (const heroId of ['phantom', 'hookshot', 'blaze', 'chronos'] as const satisfies readonly HeroId[]) {
   const practiceAbilities = createPracticeAbilityStates(heroId);
   const expectedAbilityIds = [
-    HERO_DEFINITIONS[heroId].ability1.abilityId,
-    HERO_DEFINITIONS[heroId].ability2.abilityId,
+    ...(heroId === 'blaze'
+      ? BLAZE_ABILITY_SKILLS
+      : [HERO_DEFINITIONS[heroId].ability1.abilityId, HERO_DEFINITIONS[heroId].ability2.abilityId]),
     HERO_DEFINITIONS[heroId].ultimate.abilityId,
   ];
 
@@ -377,7 +379,7 @@ assert.equal(primaryOnly.ability1, false);
 const continuedSecondary = getContinuingHeroHoldInput(
   'phantom',
   input({ secondaryFire: true, primaryFire: true }),
-  { primaryFire: false, secondaryFire: true, ability1: false }
+  { primaryFire: false, secondaryFire: true, ability1: false, ability2: false }
 );
 assert.deepEqual(continuedSecondary, { secondaryFire: true });
 

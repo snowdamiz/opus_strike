@@ -197,6 +197,13 @@ export const BLAZE_PHOSPHOR_FLARE_SKILL: HeroClickSkill = {
   rarity: 'epic',
 };
 
+export const BLAZE_AFTERBURNER_SKILL: HeroSkillItem = fromAbility(
+  'E',
+  'blaze_afterburner',
+  undefined,
+  { iconType: 'afterburner', rarity: 'epic' },
+);
+
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   phantom: [
     fromAbility('E', 'phantom_blink'),
@@ -251,6 +258,9 @@ export function getHeroSkillItems(
   const stockAbilityById = new Map(
     stockAbilitySkills.slice(0, 2).map((skill) => [skill.abilityId, skill]),
   );
+  if (heroId === 'blaze') {
+    stockAbilityById.set('blaze_afterburner', BLAZE_AFTERBURNER_SKILL);
+  }
   const slottedAbilitySkills: HeroSkillItem[] = [
     {
       ...(stockAbilityById.get(abilityBindings.ability1) ?? stockAbilitySkills[0]),
@@ -275,7 +285,7 @@ export function getHeroSkillItems(
     })),
     ...slottedAbilitySkills.map((skill) => ({
       ...skill,
-      rarity: 'common' as const,
+      rarity: skill.rarity ?? 'common' as const,
       meta: [
         ...getAbilityCardMeta(skill.statKey),
         ...(skill.meta ?? []),

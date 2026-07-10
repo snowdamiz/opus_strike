@@ -11,6 +11,9 @@ import {
   MOVEMENT_PROTOCOL_VERSION,
   ABILITY_DEFINITIONS,
   BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
+  BHOP_MAX_VELOCITY,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_DASH_SPEED,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
@@ -23,6 +26,8 @@ import {
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
   advanceBattleRoyalDropPodMotion,
   calculateBlazeRocketJumpVelocity,
+  calculateBlazeAfterburnerVelocity,
+  getBlazeAfterburnerDirection,
   calculateLookDirection,
   inputStateToMovementButtons,
   compareMovementSeq,
@@ -68,6 +73,11 @@ let latestServerCollisionRevision = 0;
 const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
 let pendingSelfMovementAuthoritiesOutOfOrder = false;
 let localRootedUntil = 0;
+let localBlazeAfterburnerDash: {
+  playerId: string;
+  direction: { x: number; z: number };
+  expiresAt: number;
+} | null = null;
 const EMPTY_MOVEMENT_AABBS: readonly MovementAabb[] = [];
 const clientAnchorWallAabbCache = new AnchorWallAabbCache();
 
@@ -91,7 +101,38 @@ export function setLocalMovementRootedUntil(rootedUntil: number, nowMs = Date.no
   localRootedUntil = Math.max(localRootedUntil, rootedUntil);
   if (localRootedUntil <= nowMs) {
     localRootedUntil = 0;
+  } else {
+    localBlazeAfterburnerDash = null;
   }
+}
+
+export function startLocalBlazeAfterburnerDash(
+  playerId: string,
+  lookYaw: number,
+  nowMs = Date.now()
+): void {
+  const direction = getBlazeAfterburnerDirection(lookYaw);
+  const existingExpiresAt = localBlazeAfterburnerDash?.playerId === playerId &&
+    localBlazeAfterburnerDash.expiresAt > nowMs
+    ? localBlazeAfterburnerDash.expiresAt
+    : null;
+  localBlazeAfterburnerDash = {
+    playerId,
+    direction: { x: direction.x, z: direction.z },
+    expiresAt: existingExpiresAt ?? nowMs + BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  };
+}
+
+function getActiveLocalBlazeAfterburnerDash(playerId: string, nowMs: number) {
+  if (
+    !localBlazeAfterburnerDash ||
+    localBlazeAfterburnerDash.playerId !== playerId ||
+    nowMs >= localBlazeAfterburnerDash.expiresAt
+  ) {
+    localBlazeAfterburnerDash = null;
+    return null;
+  }
+  return localBlazeAfterburnerDash;
 }
 
 function isLocalMovementRooted(nowMs: number): boolean {
@@ -161,6 +202,7 @@ export function resetLocalMovementPrediction(
   pendingSelfMovementAuthorities.length = 0;
   pendingSelfMovementAuthoritiesOutOfOrder = false;
   localRootedUntil = 0;
+  localBlazeAfterburnerDash = null;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, lastAckSeq);
     advanceNextCommandSeqPastAck(lastAckSeq);
@@ -294,12 +336,13 @@ function clampClientPosition(position: Vec3): { position: Vec3; clampedY: boolea
 }
 
 export function getLocalPredictionContext(player: Player): MovementPredictionContext {
+  const now = Date.now();
   let activeSpeedMultiplier = 1;
   const phantomVeil = player.heroId === 'phantom' ? player.abilities?.['phantom_veil'] : undefined;
   if (phantomVeil?.isActive) {
-    const activatedAt = phantomVeil.activatedAt ?? Date.now();
+    const activatedAt = phantomVeil.activatedAt ?? now;
     const durationMs = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 0) * 1000;
-    if (durationMs <= 0 || Date.now() - activatedAt < durationMs) {
+    if (durationMs <= 0 || now - activatedAt < durationMs) {
       activeSpeedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
   }
@@ -312,8 +355,14 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
   if (isDowned) {
     activeSpeedMultiplier *= BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER;
   }
-  if ((player.powerupBoostUntil ?? 0) > Date.now()) {
+  if ((player.powerupBoostUntil ?? 0) > now) {
     activeSpeedMultiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+  }
+  const afterburnerDash = player.state === 'alive'
+    ? getActiveLocalBlazeAfterburnerDash(player.id, now)
+    : null;
+  if (afterburnerDash) {
+    activeSpeedMultiplier *= Math.max(1, BLAZE_AFTERBURNER_DASH_SPEED / BHOP_MAX_VELOCITY);
   }
 
   const terrain = getClientTerrainAdapter();
@@ -324,6 +373,12 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     flagCarrier: player.hasFlag,
     activeSpeedMultiplier,
     chronosAscendantActive,
+    forcedHorizontalVelocity: afterburnerDash
+      ? {
+        x: afterburnerDash.direction.x * BLAZE_AFTERBURNER_DASH_SPEED,
+        z: afterburnerDash.direction.z * BLAZE_AFTERBURNER_DASH_SPEED,
+      }
+      : undefined,
   };
 }
 
@@ -478,6 +533,23 @@ export function predictLocalBlazeRocketJump(player: Player, lookYaw: number): Mo
     movement: {
       ...current.movement,
       isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+    },
+  }, lookYaw);
+}
+
+export function predictLocalBlazeAfterburner(player: Player, lookYaw: number): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  const velocity = calculateBlazeAfterburnerVelocity(current.velocity, lookYaw);
+  startLocalBlazeAfterburnerDash(player.id, lookYaw);
+
+  return applyLocalPredictedState(player.id, {
+    position: current.position,
+    velocity,
+    movement: {
+      ...current.movement,
       isSliding: false,
       slideTimeRemaining: 0,
     },

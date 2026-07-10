@@ -17,3 +17,34 @@ export const DEFAULT_BLAZE_SECONDARY_SKILL: BlazeSecondarySkill = 'meteor_strike
 export function isBlazeSecondarySkill(value: unknown): value is BlazeSecondarySkill {
   return typeof value === 'string' && BLAZE_SECONDARY_SKILLS.includes(value as BlazeSecondarySkill);
 }
+
+export const BLAZE_ABILITY_SKILLS = [
+  'blaze_flamethrower',
+  'blaze_rocketjump',
+  'blaze_afterburner',
+] as const;
+
+export type BlazeAbilitySkill = (typeof BLAZE_ABILITY_SKILLS)[number];
+
+export interface BlazeAbilityBindings {
+  ability1: BlazeAbilitySkill;
+  ability2: BlazeAbilitySkill;
+}
+
+export function isBlazeAbilitySkill(value: unknown): value is BlazeAbilitySkill {
+  return typeof value === 'string' && BLAZE_ABILITY_SKILLS.includes(value as BlazeAbilitySkill);
+}
+
+export function isBlazeAbilityBindings(value: unknown): value is BlazeAbilityBindings {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<BlazeAbilityBindings>;
+  return (
+    isBlazeAbilitySkill(candidate.ability1) &&
+    isBlazeAbilitySkill(candidate.ability2) &&
+    candidate.ability1 !== candidate.ability2
+  );
+}
+
+export function hasBlazeAfterburner(bindings: BlazeAbilityBindings): boolean {
+  return bindings.ability1 === 'blaze_afterburner' || bindings.ability2 === 'blaze_afterburner';
+}

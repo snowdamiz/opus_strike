@@ -6,6 +6,7 @@ import {
   BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  BLAZE_AFTERBURNER_DASH_SPEED,
   PITCH_LIMIT,
   createEmptyInputState,
   movementButtonsToInputState,
@@ -21,9 +22,11 @@ import {
   getLocalPredictionContext,
   getLocalMovementCollisionRevision,
   predictLocalBattleRoyalDrop,
+  predictLocalBlazeAfterburner,
   predictLocalBlazeRocketJump,
   resetLocalMovementPrediction,
   setLocalMovementRootedUntil,
+  stepLocalMovementPrediction,
   suppressDownedMovementInput,
 } from './localPrediction';
 
@@ -294,6 +297,22 @@ assert.equal(
   airborneBlazeState.velocity.z - BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE
 );
 assert.equal(rocketJumpFromAirborneState.movement.isGrounded, false);
+
+resetLocalMovementPrediction(airborneBlazeState, 0, blazePlayer.id);
+const afterburnerFromAirborneState = predictLocalBlazeAfterburner(blazePlayer, 0);
+assert.equal(afterburnerFromAirborneState.position.x, airborneBlazeState.position.x);
+assert.equal(afterburnerFromAirborneState.position.z, airborneBlazeState.position.z);
+assert.equal(afterburnerFromAirborneState.velocity.y, airborneBlazeState.velocity.y);
+assert.equal(afterburnerFromAirborneState.velocity.z, -BLAZE_AFTERBURNER_DASH_SPEED);
+assert.equal(afterburnerFromAirborneState.movement.isGrounded, false);
+assert.equal(afterburnerFromAirborneState.movement.isSliding, false);
+const afterburnerStep = stepLocalMovementPrediction(blazePlayer, createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0,
+  lookPitch: 0,
+  clientTimeMs: Date.now(),
+}));
+assert.ok(afterburnerStep.position.z < airborneBlazeState.position.z);
+assert.ok(afterburnerStep.position.z > airborneBlazeState.position.z - 1);
 
 const dropStartState: MovementSimulationState = {
   position: { x: 0, y: 20, z: 0 },

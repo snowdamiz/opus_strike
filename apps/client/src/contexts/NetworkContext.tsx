@@ -77,7 +77,7 @@ import { createPracticeAbilityStates } from '../utils/practiceAbilityStates';
 import { usePartyStore } from '../store/partyStore';
 import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 import { useStreamerStore } from '../store/streamerStore';
-import { useLoadoutStore } from '../store/loadoutStore';
+import { resolveHeroAbilityBindings, useLoadoutStore } from '../store/loadoutStore';
 import {
   getStreamerMapTransitionKey,
   preloadStreamerMapTransitionTarget,
@@ -1153,6 +1153,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       gameRoomRef.current.send('setBlazeSecondarySkill', {
         skill: useLoadoutStore.getState().blazeSecondarySkill,
       });
+      gameRoomRef.current.send(
+        'setBlazeAbilityBindings',
+        resolveHeroAbilityBindings('blaze', useLoadoutStore.getState().heroAbilityBindings)
+      );
 
       setRoomId(gameRoomRef.current.id);
       setPlayerId(gameRoomRef.current.sessionId);

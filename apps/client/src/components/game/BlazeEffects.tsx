@@ -22,6 +22,7 @@ import {
   AirStrikeEffects,
   BombEffect,
   PhosphorFlareEffect,
+  AfterburnerTrails,
   FlamethrowerEffect,
   RemoteFlamethrowerInstancedVisuals,
   type FlamethrowerPose,
@@ -30,6 +31,7 @@ import {
 // Re-export trigger functions and targeting indicators for external use
 export { 
   triggerRocketJumpExplosion,
+  triggerAfterburnerTrail,
   triggerAirStrike,
   BombTargetingIndicator,
 } from './blaze';
@@ -543,6 +545,8 @@ export function BlazeEffectsManager({ config }: { config: BlazeEffectsConfig }) 
       
       {/* Rocket jump explosions */}
       <RocketJumpExplosions />
+
+      <AfterburnerTrails />
       
       {/* Infernal Gearstorm ultimate */}
       <AirStrikeEffects />

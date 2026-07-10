@@ -53,6 +53,7 @@ function createInput(): PlayerInput {
 {
   assert.equal(isRootBlockedAbility('hookshot_grapple'), true);
   assert.equal(isRootBlockedAbility('blaze_rocketjump'), true);
+  assert.equal(isRootBlockedAbility('blaze_afterburner'), true);
   assert.equal(isRootBlockedAbility('phantom_void_ray'), false);
   assert.equal(isRootBlockedAbility(undefined), false);
 }

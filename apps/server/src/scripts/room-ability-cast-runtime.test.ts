@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import {
   BLAZE_GEARSTORM_DURATION_SECONDS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
 } from '@voxel-strike/shared';
@@ -267,6 +270,29 @@ function caster(overrides: Partial<AbilityCasterSnapshot> = {}): AbilityCasterSn
   });
   assert.equal(plan.timebreakShockwave, null);
   assert.equal(plan.payload.abilityId, 'blaze_airstrike');
+}
+
+{
+  const plan = buildStandardAbilityCastPlan({
+    caster: caster({
+      heroId: 'blaze',
+      position: { x: 8.5, y: 2, z: 3 },
+      velocity: { x: 8, y: 0, z: 0 },
+    }),
+    abilityId: 'blaze_afterburner',
+    abilityDef: {},
+    castId: 'blaze_afterburner_player-a_1',
+    startedAt: { x: 1, y: 2, z: 3 },
+    abilityStartPosition: { x: 1, y: 2, z: 3 },
+    abilityActivatedAt: NOW,
+    usedAt: NOW,
+  });
+
+  assert.deepEqual(plan.payload.velocity, { x: 8, y: 0, z: 0 });
+  assert.deepEqual(plan.payload.trailStartPosition, { x: 1, y: 2, z: 3 });
+  assert.equal(plan.payload.durationMs, BLAZE_AFTERBURNER_TRAIL_DURATION_MS);
+  assert.equal(plan.payload.dashDurationMs, BLAZE_AFTERBURNER_DASH_DURATION_MS);
+  assert.equal(plan.payload.radius, BLAZE_AFTERBURNER_TRAIL_RADIUS);
 }
 
 console.log('room ability cast runtime tests passed');

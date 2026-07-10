@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import {
   BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
   BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
 } from '@voxel-strike/shared';
 import {
+  BlazeAfterburnerTrailTracker,
   BlazeLingeringAreaTracker,
   PendingAreaDamageQueue,
   VoidZoneTracker,
@@ -65,6 +68,50 @@ function createTarget(
   state = 'alive'
 ) {
   return { id, position, state };
+}
+
+{
+  const tracker = new BlazeAfterburnerTrailTracker();
+  const startPosition = { x: 0, y: 2, z: 0 };
+  const endPosition = { x: 8, y: 2, z: 0 };
+  tracker.add({
+    id: 'afterburner-trail',
+    ownerId: 'owner',
+    ownerTeam: 'red',
+    points: [startPosition],
+    radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+    damage: 6,
+    damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+    startTime: 1_000,
+    endTime: 3_400,
+  });
+  startPosition.x = 99;
+  assert.equal(tracker.appendPoint('afterburner-trail', endPosition), true);
+  endPosition.x = 99;
+
+  const targets = [
+    createTarget('middle', { x: 4, y: 2.5, z: 0 }),
+    createTarget('endpoint', { x: 8.5, y: 2, z: 0 }),
+    createTarget('outside', { x: 4, y: 4, z: 0 }),
+  ];
+  const hits: Array<{ targetId: string; distance: number }> = [];
+  const update = (now: number) => tracker.update(now, {
+    hasOwner: () => true,
+    getTargets: () => targets,
+    applyDamage: (_trail, target, distance) => hits.push({ targetId: target.id, distance }),
+  });
+
+  update(1_000);
+  assert.deepEqual(hits, [
+    { targetId: 'middle', distance: 0.5 },
+    { targetId: 'endpoint', distance: 0.5 },
+  ]);
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS - 1);
+  assert.equal(hits.length, 2);
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS);
+  assert.equal(hits.length, 4);
+  update(3_400);
+  assert.equal(tracker.size, 0);
 }
 
 {

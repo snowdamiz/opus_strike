@@ -4,6 +4,8 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_PHOSPHOR_FLARE_DURATION_MS,
   BLAZE_PHOSPHOR_FLARE_RADIUS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_PRIMARY_RELOAD_MS,
@@ -43,7 +45,7 @@ import {
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
-import { acknowledgeSelfMovementAck, confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
+import { acknowledgeSelfMovementAck, confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil, startLocalBlazeAfterburnerDash } from '../movement/localPrediction';
 import {
   recordAuthorityAckReceived,
   recordLocalReactiveUpdate,
@@ -51,7 +53,11 @@ import {
 } from '../movement/networkDiagnostics';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect, addScrapshotEffects } from '../components/game/Effects';
-import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
+import {
+  triggerAfterburnerTrail,
+  triggerAirStrike,
+  triggerRocketJumpExplosion,
+} from '../components/game/BlazeEffects';
 import { triggerBlinkEffect } from '../components/game/PhantomEffects';
 import { triggerPhantomShieldBreakEffect, triggerPhantomShieldCastEffect } from '../components/game/phantom';
 import {
@@ -2776,6 +2782,43 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
           volume: intercepted ? 0.56 : 0.72,
         });
       }, impactDelay);
+      return true;
+    }
+
+    case 'blaze_afterburner': {
+      const trailStart = data.trailStartPosition ?? data.startPosition ?? fallbackStartPosition;
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('blaze_afterburner', data.playerId)
+        : null;
+      if (trailStart) {
+        triggerAfterburnerTrail({
+          id: predictedVisualId ?? data.castId,
+          playerId: data.playerId,
+          startPosition: trailStart,
+          dashDurationMs: data.dashDurationMs ?? BLAZE_AFTERBURNER_DASH_DURATION_MS,
+          trailDurationMs: data.durationMs ?? BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+        });
+      }
+      if (trailStart && (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_afterburner'))) {
+        playBlazeWorldSound('blazeRocketJump', trailStart, { pitch: 1.28, volume: 0.72 });
+      }
+      if (isLocalPlayer && data.velocity && store.localPlayer) {
+        const lookYaw = typeof data.direction?.yaw === 'number'
+          ? data.direction.yaw
+          : store.localPlayer.lookYaw;
+        startLocalBlazeAfterburnerDash(store.localPlayer.id, lookYaw, now);
+        const movement = {
+          ...store.localPlayer.movement,
+          isSliding: false,
+          slideTimeRemaining: 0,
+        };
+        confirmLocalMovementTransform(store.localPlayer, {
+          velocity: data.velocity,
+          movement,
+        }, store.localPlayer.lookYaw);
+        pushLocalPlayerImpulse({ ...data.velocity, mode: 'set' });
+        store.updateLocalPlayer({ velocity: data.velocity, movement });
+      }
       return true;
     }
 

@@ -103,57 +103,31 @@ services:
     ports:
       - "${SERVER_US_1_PORT:-2567}:2567"
 
-  server-us-2:
-    <<: *server-common
-    container_name: voxel-strike-server-us-2
-    environment:
-      <<: *server-env
-      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_US_2_PORT:-2568}"
-      COLYSEUS_FLY_MACHINE_ID: "dev-us-2"
-      FLY_MACHINE_ID: "dev-us-2"
-      COLYSEUS_FLY_REGION: "iad"
-      FLY_REGION: "iad"
-    ports:
-      - "${SERVER_US_2_PORT:-2568}:2567"
-
-  server-us-3:
-    <<: *server-common
-    container_name: voxel-strike-server-us-3
-    environment:
-      <<: *server-env
-      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_US_3_PORT:-2569}"
-      COLYSEUS_FLY_MACHINE_ID: "dev-us-3"
-      FLY_MACHINE_ID: "dev-us-3"
-      COLYSEUS_FLY_REGION: "iad"
-      FLY_REGION: "iad"
-    ports:
-      - "${SERVER_US_3_PORT:-2569}:2567"
-
   server-eu-1:
     <<: *server-common
     container_name: voxel-strike-server-eu-1
     environment:
       <<: *server-env
-      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_EU_1_PORT:-2570}"
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_EU_1_PORT:-2568}"
       COLYSEUS_FLY_MACHINE_ID: "dev-eu-1"
       FLY_MACHINE_ID: "dev-eu-1"
       COLYSEUS_FLY_REGION: "ams"
       FLY_REGION: "ams"
     ports:
-      - "${SERVER_EU_1_PORT:-2570}:2567"
+      - "${SERVER_EU_1_PORT:-2568}:2567"
 
   server-asia-1:
     <<: *server-common
     container_name: voxel-strike-server-asia-1
     environment:
       <<: *server-env
-      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_ASIA_1_PORT:-2571}"
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_ASIA_1_PORT:-2569}"
       COLYSEUS_FLY_MACHINE_ID: "dev-asia-1"
       FLY_MACHINE_ID: "dev-asia-1"
       COLYSEUS_FLY_REGION: "nrt"
       FLY_REGION: "nrt"
     ports:
-      - "${SERVER_ASIA_1_PORT:-2571}:2567"
+      - "${SERVER_ASIA_1_PORT:-2569}:2567"
 
 volumes:
   postgres_data:

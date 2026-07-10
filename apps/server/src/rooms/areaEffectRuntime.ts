@@ -1,5 +1,6 @@
 import {
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
+  getDistanceToBlazeAfterburnerTrail,
   isPlayerAliveOrDowned,
   type Team,
 } from '@voxel-strike/shared';
@@ -138,6 +139,100 @@ export class BlazeLingeringAreaTracker {
       this.areas[writeIndex++] = area;
     }
     this.areas.length = writeIndex;
+  }
+}
+
+export interface BlazeAfterburnerTrailInstance {
+  id: string;
+  ownerId: string;
+  ownerTeam: Team;
+  points: PlainVec3[];
+  radius: number;
+  damage: number;
+  damageIntervalMs: number;
+  startTime: number;
+  endTime: number;
+  lastDamageTick: Map<string, number>;
+}
+
+export class BlazeAfterburnerTrailTracker {
+  private readonly trails: BlazeAfterburnerTrailInstance[] = [];
+
+  get size(): number {
+    return this.trails.length;
+  }
+
+  add(input: Omit<BlazeAfterburnerTrailInstance, 'lastDamageTick'>): void {
+    this.trails.push({
+      ...input,
+      points: input.points.map((point) => ({ ...point })),
+      lastDamageTick: new Map(),
+    });
+  }
+
+  appendPoint(trailId: string, point: PlainVec3): boolean {
+    const trail = this.trails.find((candidate) => candidate.id === trailId);
+    if (!trail) return false;
+    trail.points.push({ ...point });
+    return true;
+  }
+
+  clear(): void {
+    this.trails.length = 0;
+  }
+
+  update<TTarget extends BlazeLingeringAreaTarget>(
+    now: number,
+    options: {
+      hasOwner: (ownerId: string) => boolean;
+      getTargets: (trail: BlazeAfterburnerTrailInstance) => Iterable<TTarget>;
+      applyDamage: (
+        trail: BlazeAfterburnerTrailInstance,
+        target: TTarget,
+        distance: number
+      ) => void;
+    }
+  ): void {
+    let writeIndex = 0;
+    for (let readIndex = 0; readIndex < this.trails.length; readIndex++) {
+      const trail = this.trails[readIndex];
+      if (now >= trail.endTime) continue;
+      if (now < trail.startTime || !options.hasOwner(trail.ownerId)) {
+        this.trails[writeIndex++] = trail;
+        continue;
+      }
+
+      for (const target of options.getTargets(trail)) {
+        if (!isPlayerAliveOrDowned(target)) continue;
+        let distance = Number.POSITIVE_INFINITY;
+        for (let pointIndex = 1; pointIndex < trail.points.length; pointIndex++) {
+          distance = Math.min(
+            distance,
+            getDistanceToBlazeAfterburnerTrail(
+              target.position,
+              trail.points[pointIndex - 1],
+              trail.points[pointIndex]
+            )
+          );
+        }
+        if (trail.points.length === 1) {
+          distance = getDistanceToBlazeAfterburnerTrail(
+            target.position,
+            trail.points[0],
+            trail.points[0]
+          );
+        }
+        if (distance > trail.radius) continue;
+
+        const lastDamage = trail.lastDamageTick.get(target.id) || 0;
+        if (now - lastDamage < trail.damageIntervalMs) continue;
+        trail.lastDamageTick.set(target.id, now);
+        options.applyDamage(trail, target, distance);
+      }
+
+      this.trails[writeIndex++] = trail;
+    }
+    this.trails.length = writeIndex;
   }
 }
 

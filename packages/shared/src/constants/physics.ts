@@ -124,6 +124,10 @@ export const BLAZE_GEARSTORM_RADIUS = 16;
 export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 13.5;
 export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
 
+// Afterburner Dash
+export const BLAZE_AFTERBURNER_DASH_SPEED = 24;
+export const BLAZE_AFTERBURNER_DASH_DURATION_MS = 360;
+
 // Glide
 export const GLIDE_FALL_SPEED = -4;
 export const GLIDE_FORWARD_BOOST = 1.3;
