@@ -58,7 +58,11 @@ import {
   type MobileWalletDeepLinkState,
   type MobileWalletHandoffSessionKind,
 } from './mobileWalletDeepLinkStore';
-import { renderMobileWalletHandoffPage } from './mobileWalletHandoffPage';
+import {
+  buildMobileWalletHandoffResponse,
+  renderMobileWalletHandoffPage,
+  type MobileWalletHandoffResponse,
+} from './mobileWalletHandoffPage';
 
 const router: RouterType = Router();
 
@@ -176,7 +180,8 @@ interface WalletAuthResponsePayload {
 type MobileWalletJsonResponse =
   | { action: 'redirect'; url: string; stateId?: string }
   | { action: 'complete'; returnTo: string }
-  | { action: 'error'; returnTo: string };
+  | { action: 'error'; returnTo: string }
+  | MobileWalletHandoffResponse;
 
 interface WalletAuthCompletion {
   payload: WalletAuthResponsePayload;
@@ -441,7 +446,11 @@ async function failMobileWalletCallback(
     await deleteMobileWalletDeepLinkState(state.id);
 
     if (wantsMobileWalletJsonResponse(req)) {
-      sendMobileWalletAuthError(req, res, state.returnTo, errorCode);
+      res.json(buildMobileWalletHandoffResponse({
+        success: false,
+        providerId: state.providerId,
+        errorCode,
+      }));
       return;
     }
 
@@ -1383,11 +1392,17 @@ router.get('/mobile-wallet/:providerId/sign', async (req: Request, res: Response
       });
       await deleteMobileWalletDeepLinkState(state.id);
 
-      if (storedResult && !wantsMobileWalletJsonResponse(req)) {
-        renderMobileWalletHandoffPage(res, {
+      if (storedResult) {
+        const handoffPageInput = {
           success: true,
           providerId: state.providerId,
-        });
+        } as const;
+
+        if (wantsMobileWalletJsonResponse(req)) {
+          res.json(buildMobileWalletHandoffResponse(handoffPageInput));
+        } else {
+          renderMobileWalletHandoffPage(res, handoffPageInput);
+        }
         return;
       }
     } else {

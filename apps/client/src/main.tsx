@@ -5,8 +5,10 @@ import { WalletProvider } from './contexts/WalletContext';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { VoiceProvider } from './contexts/VoiceContext';
 import { GlobalNotificationBanner } from './components/ui/GlobalNotificationBanner';
+import { MobileWalletHandoffScreen } from './components/ui/MobileWalletHandoffScreen';
 import { unregisterServiceWorkers } from './serviceWorkerCleanup';
 import { config } from './config/environment';
+import { parseMobileWalletCallbackBridgeResponse } from './utils/mobileWalletCallbackBridge';
 import './styles/index.css';
 
 const App = lazy(() => import('./App').then((module) => ({ default: module.App })));
@@ -23,11 +25,6 @@ const isModelLabRoute = getIsModelLabRoute(window.location.pathname);
 const mobileWalletCallbackBridgeUrl = getMobileWalletCallbackBridgeUrl(window.location);
 const DYNAMIC_IMPORT_RELOAD_STORAGE_KEY = 'slop:dynamicImportReloadAt';
 const DYNAMIC_IMPORT_RELOAD_COOLDOWN_MS = 60_000;
-
-type MobileWalletCallbackBridgeResponse =
-  | { action: 'redirect'; url: string }
-  | { action: 'complete'; returnTo: string }
-  | { action: 'error'; returnTo: string };
 
 function getLegalPageKind(pathname: string) {
   if (pathname === '/terms-of-service') return 'terms';
@@ -66,17 +63,30 @@ async function handleMobileWalletCallbackBridge(apiUrl: string): Promise<void> {
       throw new Error(`Wallet callback failed (${response.status})`);
     }
 
-    const result = await response.json() as Partial<MobileWalletCallbackBridgeResponse>;
-    if (result.action === 'redirect' && typeof result.url === 'string') {
+    const result = parseMobileWalletCallbackBridgeResponse(await response.json());
+    if (!result) {
+      throw new Error('Wallet callback returned an invalid response');
+    }
+
+    if (result.action === 'redirect') {
       window.location.replace(result.url);
       return;
     }
-    if ((result.action === 'complete' || result.action === 'error') && typeof result.returnTo === 'string') {
+
+    if (result.action === 'complete' || result.action === 'error') {
       window.location.replace(result.returnTo);
       return;
     }
 
-    throw new Error('Wallet callback returned an invalid response');
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <MobileWalletHandoffScreen
+          status={result.status}
+          providerId={result.providerId}
+          errorCode={result.errorCode}
+        />
+      </React.StrictMode>
+    );
   } catch {
     window.location.replace('/?auth=error&provider=wallet&error=wallet_failed');
   }
