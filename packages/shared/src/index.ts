@@ -35,6 +35,7 @@ export * from './utils/blazeRocketJump.js';
 export * from './utils/blazeScrapshot.js';
 export * from './utils/blazePhosphorFlare.js';
 export * from './utils/blazeAfterburner.js';
+export * from './utils/blazePhoenixDive.js';
 export * from './utils/battleRoyalDropMovement.js';
 export * from './utils/movementDirection.js';
 export * from './utils/teamHeroLocks.js';

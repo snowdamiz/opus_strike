@@ -192,6 +192,8 @@ export interface UseBlazeAbilitiesReturn {
   blazePrimaryReloadStartRef: React.MutableRefObject<number>;
   bombTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   bombValidRef: React.MutableRefObject<boolean>;
+  phoenixDiveTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
+  phoenixDiveValidRef: React.MutableRefObject<boolean>;
   flamethrowerFuelRef: React.MutableRefObject<number>;
   flamethrowerActiveRef: React.MutableRefObject<boolean>;
   secondaryFirePressedRef: React.MutableRefObject<boolean>;
@@ -219,12 +221,8 @@ export interface UseBlazeAbilitiesReturn {
   executeAfterburner: (ctx: AbilityContext) => void;
   updateRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   resetRocketJump: () => void;
-  executeAirStrike: (
-    ctx: AbilityContext,
-    sounds: PlayerSounds,
-    updateLocalPlayer: (data: any) => void
-  ) => void;
   handleBombTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
+  handlePhoenixDiveTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
 interface PendingRocketJump {
@@ -249,6 +247,8 @@ export function useBlazeAbilities(
   const lastBombTimeRef = useRef(0);
   const bombTargetRef = useRef<THREE.Vector3 | null>(null);
   const bombValidRef = useRef(false);
+  const phoenixDiveTargetRef = useRef<THREE.Vector3 | null>(null);
+  const phoenixDiveValidRef = useRef(false);
   const secondaryFirePressedRef = useRef(false);
 
   // Flamethrower state
@@ -768,18 +768,6 @@ export function useBlazeAbilities(
     clearBlazeRocketJumpStaffSlam();
   }, []);
 
-  // Execute Infernal Gearstorm (Ultimate)
-  const executeAirStrike = useCallback((
-    ctx: AbilityContext,
-    _sounds: PlayerSounds,
-    _updateLocalPlayer: (data: any) => void
-  ) => {
-    const localPlayer = useGameStore.getState().localPlayer;
-    if (!localPlayer || (localPlayer.ultimateCharge ?? 0) < 100) return;
-
-    lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, ctx.viewmodelNowMs ?? Date.now());
-  }, []);
-
   // Handle bomb target updates
   const handleBombTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
     bombTargetRef.current = position;
@@ -788,6 +776,16 @@ export function useBlazeAbilities(
     const store = useGameStore.getState();
     if (store.bombTargeting && store.bombTargetValid !== isValid) {
       store.setBombTargeting(true, isValid);
+    }
+  }, []);
+
+  const handlePhoenixDiveTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
+    phoenixDiveTargetRef.current = position;
+    phoenixDiveValidRef.current = isValid;
+
+    const store = useGameStore.getState();
+    if (store.phoenixDiveTargeting && store.phoenixDiveTargetValid !== isValid) {
+      store.setPhoenixDiveTargeting(true, isValid);
     }
   }, []);
 
@@ -800,6 +798,8 @@ export function useBlazeAbilities(
     lastBombTimeRef,
     bombTargetRef,
     bombValidRef,
+    phoenixDiveTargetRef,
+    phoenixDiveValidRef,
     flamethrowerFuelRef,
     flamethrowerActiveRef,
     secondaryFirePressedRef,
@@ -819,7 +819,7 @@ export function useBlazeAbilities(
     executeAfterburner,
     updateRocketJump,
     resetRocketJump,
-    executeAirStrike,
     handleBombTargetUpdate,
+    handlePhoenixDiveTargetUpdate,
   };
 }

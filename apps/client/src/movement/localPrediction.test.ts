@@ -25,6 +25,7 @@ import {
   predictLocalBlazeAfterburner,
   predictLocalBlazeRocketJump,
   resetLocalMovementPrediction,
+  setLocalBlazePhoenixHovering,
   setLocalMovementRootedUntil,
   stepLocalMovementPrediction,
   suppressDownedMovementInput,
@@ -313,6 +314,31 @@ const afterburnerStep = stepLocalMovementPrediction(blazePlayer, createLocalMove
 }));
 assert.ok(afterburnerStep.position.z < airborneBlazeState.position.z);
 assert.ok(afterburnerStep.position.z > airborneBlazeState.position.z - 1);
+
+const phoenixHoverPosition = { x: 6, y: 14, z: -9 };
+const phoenixHoverStartState: MovementSimulationState = {
+  position: phoenixHoverPosition,
+  velocity: { x: 0, y: 3, z: -6 },
+  movement: { ...airborneBlazeState.movement, isGrounded: false },
+};
+resetLocalMovementPrediction(phoenixHoverStartState, 0, blazePlayer.id);
+setLocalBlazePhoenixHovering(blazePlayer.id, {
+  velocity: phoenixHoverStartState.velocity,
+  lookYaw: 0,
+  startedAtMs: 10_000,
+});
+const phoenixHoverStep = stepLocalMovementPrediction(blazePlayer, createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0.4,
+  lookPitch: -0.2,
+  clientTimeMs: 10_500,
+}));
+assert.equal(phoenixHoverStep.position.x, phoenixHoverPosition.x);
+assert.ok(phoenixHoverStep.position.z < phoenixHoverPosition.z, 'Phoenix hover should keep drifting forward');
+assert.ok(phoenixHoverStep.velocity.z < -1.25);
+assert.ok(phoenixHoverStep.velocity.z > -6, 'Phoenix hover forward speed should quickly decay');
+assert.ok(phoenixHoverStep.velocity.y < 3, 'Phoenix hover ascent should ease near the top of the arc');
+assert.equal(phoenixHoverStep.movement.isGrounded, false);
+setLocalBlazePhoenixHovering(blazePlayer.id, null);
 
 const dropStartState: MovementSimulationState = {
   position: { x: 0, y: 20, z: 0 },

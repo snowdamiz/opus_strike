@@ -430,7 +430,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           )
           : practiceHeroStats.maxHealth;
         player.ultimateCharge = 100;
-        player.abilities = createPracticeAbilityStates(practiceHeroId);
+        player.abilities = createPracticeAbilityStates(
+          practiceHeroId,
+          useLoadoutStore.getState().blazeUltimateSkill,
+        );
         player.hasFlag = false;
 
         useGameStore.setState({
@@ -1152,6 +1155,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       });
       gameRoomRef.current.send('setBlazeSecondarySkill', {
         skill: useLoadoutStore.getState().blazeSecondarySkill,
+      });
+      gameRoomRef.current.send('setBlazeUltimateSkill', {
+        skill: useLoadoutStore.getState().blazeUltimateSkill,
       });
       gameRoomRef.current.send(
         'setBlazeAbilityBindings',

@@ -217,6 +217,7 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
     },
     ultimate: {
       key: 'phoenixdive',
+      abilityId: 'blaze_phoenix_dive',
       iconType: 'phoenixdive',
       input: 'F',
       name: 'Phoenix Dive',
@@ -335,7 +336,8 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     ownership: heroId === 'blaze' && (
       (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
       (slot.key === 'secondaryFire' && def.key === 'phosphorflare') ||
-      (slot.key === 'ability1' && def.key === 'afterburner')
+      (slot.key === 'ability1' && def.key === 'afterburner') ||
+      (slot.key === 'ultimate' && def.key === 'phoenixdive')
     )
       ? 'owned'
       : 'locked',
@@ -378,6 +380,7 @@ export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
 export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
 export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
 export const BLAZE_AFTERBURNER_OPTION_ID = 'blaze-ability1-afterburner';
+export const BLAZE_PHOENIX_DIVE_OPTION_ID = 'blaze-ultimate-phoenixdive';
 
 // E (ability1) and Q (ability2) draw from one shared, interchangeable pool —
 // any ability can occupy either slot.

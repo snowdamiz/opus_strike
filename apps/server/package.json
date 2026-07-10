@@ -17,6 +17,7 @@
     "test:bot-movement-lod": "tsx src/scripts/bot-movement-lod.test.ts",
     "test:blaze-burns": "tsx src/scripts/blaze-burn-effects.test.ts",
     "test:blaze-flamethrower": "tsx src/scripts/blaze-flamethrower-runtime.test.ts",
+    "test:blaze-phoenix-dive": "tsx src/scripts/blaze-phoenix-dive-runtime.test.ts",
     "test:chronos-aegis": "tsx src/scripts/chronos-aegis-shield.test.ts",
     "test:client-join-hints": "tsx src/scripts/client-join-hints-runtime.test.ts",
     "test:dev-bot-commands": "tsx src/scripts/dev-bot-commands.test.ts",

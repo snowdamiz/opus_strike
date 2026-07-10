@@ -48,6 +48,8 @@ export interface ProjectileState {
   phosphorFlares: PhosphorFlareData[];
   bombTargeting: boolean;
   bombTargetValid: boolean;
+  phoenixDiveTargeting: boolean;
+  phoenixDiveTargetValid: boolean;
   flamethrowerActive: boolean;
   flamethrowerFuel: number;
 
@@ -101,6 +103,7 @@ export interface ProjectileActions {
   removeBomb: (id: string) => void;
   clearExpiredBombs: () => void;
   setBombTargeting: (targeting: boolean, valid?: boolean) => void;
+  setPhoenixDiveTargeting: (targeting: boolean, valid?: boolean) => void;
 
   // Blaze phosphor flare actions
   addPhosphorFlare: (flare: PhosphorFlareData) => void;
@@ -179,6 +182,8 @@ export const projectileInitialState: ProjectileState = {
   phosphorFlares: [],
   bombTargeting: false,
   bombTargetValid: false,
+  phoenixDiveTargeting: false,
+  phoenixDiveTargetValid: false,
   flamethrowerActive: false,
   flamethrowerFuel: 100,
   chronosPulses: [],
@@ -576,6 +581,14 @@ export const createProjectileSlice: StateCreator<
     return {
       bombTargeting: targeting,
       bombTargetValid: valid,
+    };
+  }),
+
+  setPhoenixDiveTargeting: (targeting, valid = false) => set((state) => {
+    if (state.phoenixDiveTargeting === targeting && state.phoenixDiveTargetValid === valid) return state;
+    return {
+      phoenixDiveTargeting: targeting,
+      phoenixDiveTargetValid: valid,
     };
   }),
 

@@ -5,6 +5,7 @@ const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
   'hookshot_grapple',
   'blaze_rocketjump',
   'blaze_afterburner',
+  'blaze_phoenix_dive',
   'chronos_ascendant_paradox',
 ]);
 

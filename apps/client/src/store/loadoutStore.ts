@@ -4,12 +4,15 @@ import {
   BLAZE_ABILITY_SKILLS,
   DEFAULT_BLAZE_PRIMARY_SKILL,
   DEFAULT_BLAZE_SECONDARY_SKILL,
+  DEFAULT_BLAZE_ULTIMATE_SKILL,
   HERO_DEFINITIONS,
   hasBlazeAfterburner,
   isBlazePrimarySkill,
   isBlazeSecondarySkill,
+  isBlazeUltimateSkill,
   type BlazePrimarySkill,
   type BlazeSecondarySkill,
+  type BlazeUltimateSkill,
   type BlazeAbilityBindings,
   type HeroId,
   type InputState,
@@ -29,12 +32,14 @@ export type HeroAbilityBindingsMap = Partial<Record<HeroId, HeroAbilityBindings>
 interface StoredLoadout {
   blazePrimarySkill: BlazePrimarySkill;
   blazeSecondarySkill: BlazeSecondarySkill;
+  blazeUltimateSkill: BlazeUltimateSkill;
   heroAbilityBindings: HeroAbilityBindingsMap;
 }
 
 interface LoadoutState extends StoredLoadout {
   setBlazePrimarySkill: (skill: BlazePrimarySkill) => void;
   setBlazeSecondarySkill: (skill: BlazeSecondarySkill) => void;
+  setBlazeUltimateSkill: (skill: BlazeUltimateSkill) => void;
   assignHeroAbility: (heroId: HeroId, slot: HeroAbilitySlot, abilityId: string) => void;
 }
 
@@ -149,6 +154,7 @@ export function loadStoredLoadout(): StoredLoadout {
     return {
       blazePrimarySkill: DEFAULT_BLAZE_PRIMARY_SKILL,
       blazeSecondarySkill: DEFAULT_BLAZE_SECONDARY_SKILL,
+      blazeUltimateSkill: DEFAULT_BLAZE_ULTIMATE_SKILL,
       heroAbilityBindings: {},
     };
   }
@@ -157,6 +163,7 @@ export function loadStoredLoadout(): StoredLoadout {
     const raw = JSON.parse(window.localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}') as {
       blazePrimarySkill?: unknown;
       blazeSecondarySkill?: unknown;
+      blazeUltimateSkill?: unknown;
       heroAbilityBindings?: unknown;
     };
     return {
@@ -166,12 +173,16 @@ export function loadStoredLoadout(): StoredLoadout {
       blazeSecondarySkill: isBlazeSecondarySkill(raw.blazeSecondarySkill)
         ? raw.blazeSecondarySkill
         : DEFAULT_BLAZE_SECONDARY_SKILL,
+      blazeUltimateSkill: isBlazeUltimateSkill(raw.blazeUltimateSkill)
+        ? raw.blazeUltimateSkill
+        : DEFAULT_BLAZE_ULTIMATE_SKILL,
       heroAbilityBindings: sanitizeHeroAbilityBindings(raw.heroAbilityBindings),
     };
   } catch {
     return {
       blazePrimarySkill: DEFAULT_BLAZE_PRIMARY_SKILL,
       blazeSecondarySkill: DEFAULT_BLAZE_SECONDARY_SKILL,
+      blazeUltimateSkill: DEFAULT_BLAZE_ULTIMATE_SKILL,
       heroAbilityBindings: {},
     };
   }
@@ -191,6 +202,7 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
       const stored = {
         blazePrimarySkill,
         blazeSecondarySkill: state.blazeSecondarySkill,
+        blazeUltimateSkill: state.blazeUltimateSkill,
         heroAbilityBindings: state.heroAbilityBindings,
       };
       persistLoadout(stored);
@@ -202,6 +214,19 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
       const stored = {
         blazePrimarySkill: state.blazePrimarySkill,
         blazeSecondarySkill,
+        blazeUltimateSkill: state.blazeUltimateSkill,
+        heroAbilityBindings: state.heroAbilityBindings,
+      };
+      persistLoadout(stored);
+      return stored;
+    });
+  },
+  setBlazeUltimateSkill: (blazeUltimateSkill) => {
+    set((state) => {
+      const stored = {
+        blazePrimarySkill: state.blazePrimarySkill,
+        blazeSecondarySkill: state.blazeSecondarySkill,
+        blazeUltimateSkill,
         heroAbilityBindings: state.heroAbilityBindings,
       };
       persistLoadout(stored);
@@ -239,6 +264,7 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
       const stored = {
         blazePrimarySkill: state.blazePrimarySkill,
         blazeSecondarySkill: state.blazeSecondarySkill,
+        blazeUltimateSkill: state.blazeUltimateSkill,
         heroAbilityBindings: nextByHero,
       };
       persistLoadout(stored);

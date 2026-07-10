@@ -13,6 +13,7 @@ import {
   PHANTOM_VOID_ZONE_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_RADIUS,
   calculateBlazeAfterburnerVelocity,
+  calculateBlazePhoenixDiveLaunchVelocity,
   calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
 } from '@voxel-strike/shared';
@@ -60,6 +61,7 @@ export interface VoidZone {
 export interface HeroAbilitySelection {
   ability1: string;
   ability2: string;
+  ultimate?: string;
 }
 
 function createAbilityState(abilityId: string): AbilityStateSchema | null {
@@ -82,7 +84,7 @@ function getSelectedAbilityIds(
   return [
     selection?.ability1 ?? heroDef.ability1.abilityId,
     selection?.ability2 ?? heroDef.ability2.abilityId,
-    heroDef.ultimate.abilityId,
+    selection?.ultimate ?? heroDef.ultimate.abilityId,
   ];
 }
 
@@ -369,6 +371,20 @@ export function executeAbility(
     case 'blaze_airstrike': {
       abilityState.isActive = true;
       abilityState.activatedAt = now;
+      break;
+    }
+
+    case 'blaze_phoenix_dive': {
+      const velocity = calculateBlazePhoenixDiveLaunchVelocity(player.velocity, player.lookYaw);
+      player.velocity.x = velocity.x;
+      player.velocity.y = velocity.y;
+      player.velocity.z = velocity.z;
+      player.position.y += 0.5;
+      stopUpwardVelocityAtCeiling(player, clampPlayerPosition(player, context).clampedY);
+      player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+      context.markAuthoritativePosition?.(player.id, 650, 'knockback');
       break;
     }
 

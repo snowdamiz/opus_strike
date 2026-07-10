@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 import {
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   BLAZE_AFTERBURNER_DASH_SPEED,
+  BLAZE_PHOENIX_DIVE_LAUNCH_FORWARD_FORCE,
+  BLAZE_PHOENIX_DIVE_LAUNCH_VERTICAL_FORCE,
+  BLAZE_PHOENIX_DIVE_FALL_SPEED,
+  BLAZE_PHOENIX_DIVE_START_HEIGHT,
   DEFAULT_GAME_CONFIG,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_SUBSTEP_SECONDS,
   parseMovementCommandPayload,
+  getBlazePhoenixDiveStartPosition,
+  getBlazePhoenixDiveVelocity,
 } from '@voxel-strike/shared';
 import type { HeroStats, Team, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
@@ -387,6 +393,23 @@ function runAbilityBarrierTests(): void {
   assert.equal(marks[marks.length - 1]?.reason, 'knockback');
   assert.equal(afterburnerPlayer.movement.isSliding, false);
 
+  const phoenixPlayer = createAbilityHarnessPlayer('blaze');
+  executeAbility(phoenixPlayer, 'blaze_phoenix_dive', new AbilityStateSchema(), {}, context);
+  assert.equal(phoenixPlayer.velocity.y, BLAZE_PHOENIX_DIVE_LAUNCH_VERTICAL_FORCE);
+  assert.equal(phoenixPlayer.velocity.x, 0);
+  assert.equal(phoenixPlayer.velocity.z, -BLAZE_PHOENIX_DIVE_LAUNCH_FORWARD_FORCE);
+  assert.equal(phoenixPlayer.movement.isGrounded, false);
+  assert.equal(phoenixPlayer.movement.isSliding, false);
+  assert.equal(marks[marks.length - 1]?.reason, 'knockback');
+  assert.deepEqual(
+    getBlazePhoenixDiveStartPosition(
+      { x: 1, y: 5, z: 2 },
+      { x: 12, y: 3, z: -8 },
+    ),
+    { x: 12, y: 3 + BLAZE_PHOENIX_DIVE_START_HEIGHT, z: -8 },
+  );
+  assert.deepEqual(getBlazePhoenixDiveVelocity(), { x: 0, y: -BLAZE_PHOENIX_DIVE_FALL_SPEED, z: 0 });
+
   const selectedAfterburnerPlayer = createAbilityHarnessPlayer('blaze');
   initializePlayerAbilities(selectedAfterburnerPlayer, 'blaze', {
     ability1: 'blaze_afterburner',
@@ -401,6 +424,20 @@ function runAbilityBarrierTests(): void {
   );
   assert.equal(selectedAbility.success, true);
   assert.equal(selectedAbility.abilityId, 'blaze_afterburner');
+
+  const selectedPhoenixPlayer = createAbilityHarnessPlayer('blaze');
+  selectedPhoenixPlayer.ultimateCharge = 100;
+  initializePlayerAbilities(selectedPhoenixPlayer, 'blaze', {
+    ability1: 'blaze_flamethrower',
+    ability2: 'blaze_rocketjump',
+    ultimate: 'blaze_phoenix_dive',
+  });
+  assert.equal(selectedPhoenixPlayer.abilities.has('blaze_phoenix_dive'), true);
+  assert.equal(selectedPhoenixPlayer.abilities.has('blaze_airstrike'), false);
+  const selectedUltimate = tryUseAbility(selectedPhoenixPlayer, 'ultimate', 'blaze_phoenix_dive');
+  assert.equal(selectedUltimate.success, true);
+  assert.equal(selectedUltimate.abilityId, 'blaze_phoenix_dive');
+  assert.equal(selectedPhoenixPlayer.ultimateCharge, 0);
 
   const reconciledPlayer = createAbilityHarnessPlayer('blaze');
   initializePlayerAbilities(reconciledPlayer, 'blaze');

@@ -4,12 +4,13 @@ import {
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
   DEFAULT_BLAZE_PRIMARY_SKILL,
   DEFAULT_BLAZE_SECONDARY_SKILL,
+  DEFAULT_BLAZE_ULTIMATE_SKILL,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
-import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, HeroId } from '@voxel-strike/shared';
+import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, HeroId } from '@voxel-strike/shared';
 import {
   DRAG_HOOK_COOLDOWN,
   HOOKSHOT_FIRE_INTERVAL,
@@ -204,6 +205,13 @@ export const BLAZE_AFTERBURNER_SKILL: HeroSkillItem = fromAbility(
   { iconType: 'afterburner', rarity: 'epic' },
 );
 
+export const BLAZE_PHOENIX_DIVE_SKILL: HeroSkillItem = fromAbility(
+  'F',
+  'blaze_phoenix_dive',
+  'ultimate',
+  { iconType: 'phoenixdive', rarity: 'epic' },
+);
+
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   phantom: [
     fromAbility('E', 'phantom_blink'),
@@ -237,11 +245,13 @@ export function getHeroSkillItems(
   blazePrimarySkill: BlazePrimarySkill = DEFAULT_BLAZE_PRIMARY_SKILL,
   abilityBindings: HeroAbilityBindings = getDefaultHeroAbilityBindings(heroId),
   blazeSecondarySkill: BlazeSecondarySkill = DEFAULT_BLAZE_SECONDARY_SKILL,
+  blazeUltimateSkill: BlazeUltimateSkill = DEFAULT_BLAZE_ULTIMATE_SKILL,
 ): HeroSkillItem[] {
   const cacheKey = [
     heroId,
     heroId === 'blaze' ? blazePrimarySkill : DEFAULT_BLAZE_PRIMARY_SKILL,
     heroId === 'blaze' ? blazeSecondarySkill : DEFAULT_BLAZE_SECONDARY_SKILL,
+    heroId === 'blaze' ? blazeUltimateSkill : DEFAULT_BLAZE_ULTIMATE_SKILL,
     abilityBindings.ability1,
     abilityBindings.ability2,
   ].join(':');
@@ -270,7 +280,9 @@ export function getHeroSkillItems(
       ...(stockAbilityById.get(abilityBindings.ability2) ?? stockAbilitySkills[1]),
       input: 'Q',
     },
-    stockAbilitySkills[2],
+    heroId === 'blaze' && blazeUltimateSkill === 'phoenix_dive'
+      ? BLAZE_PHOENIX_DIVE_SKILL
+      : stockAbilitySkills[2],
   ];
 
   const items: HeroSkillItem[] = [

@@ -317,6 +317,12 @@ import {
   BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
   BLAZE_AFTERBURNER_TRAIL_RADIUS,
   BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING,
+  BLAZE_PHOENIX_DIVE_DAMAGE,
+  BLAZE_PHOENIX_DIVE_RADIUS,
+  BLAZE_PHOENIX_DIVE_MAX_RANGE,
+  BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS,
   BLAZE_FLAMETHROWER_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
@@ -387,6 +393,11 @@ import {
   getBlazePhosphorFlareFlightDurationMs,
   getBlazePhosphorFlarePoint,
   getBlazeAfterburnerDirection,
+  createBlazePhoenixDiveHoverMotion,
+  getBlazePhoenixDiveHoverVelocity,
+  getBlazePhoenixDiveStartPosition,
+  getBlazePhoenixDiveVelocity,
+  type BlazePhoenixDiveHoverMotion,
   BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS,
   getDefaultHeroSkinId,
   getHeroSkinDefinition,
@@ -398,6 +409,8 @@ import {
   getBlazeScrapshotPelletDirections,
   isBlazePrimarySkill,
   isBlazeSecondarySkill,
+  isBlazeUltimateSkill,
+  getBlazeUltimateAbilityId,
   isBlazeAbilityBindings,
   hasBlazeAfterburner,
   getSegmentHitAgainstChronosAegis,
@@ -418,6 +431,7 @@ import type {
   AbilityCastOriginHint,
   BlazePrimarySkill,
   BlazeSecondarySkill,
+  BlazeUltimateSkill,
   BlazeAbilityBindings,
   BotDifficulty,
   PlayerCombatHitResult,
@@ -736,6 +750,7 @@ import {
   updateAbilityCooldowns,
   updateActiveAbilities,
   type AbilityUseResult,
+  type HeroAbilitySelection,
 } from './abilityHandlers';
 import { RoomDamageRuntime, type RoomDamageContext as DamageContext } from './roomDamageRuntime';
 import { RoomTickProfiler, type RoomTickCounterName, type RoomTickSpanName } from './roomTickProfiler';
@@ -915,6 +930,18 @@ interface BlazeAfterburnerDashRuntime {
   direction: PlainVec3;
   expiresAt: number;
   lastSamplePosition: PlainVec3;
+}
+
+interface BlazePhoenixDiveRuntime {
+  castId: string;
+  targetPosition: PlainVec3 | null;
+  hoverAt: number;
+  hoverEndsAt: number;
+  impactDeadline: number;
+  fallbackImpactGroundY: number;
+  hoverMotion: BlazePhoenixDiveHoverMotion | null;
+  launchYaw: number;
+  phase: 'launch' | 'hover' | 'dive';
 }
 
 interface StateStreamBroadcastOptions {
@@ -1173,6 +1200,7 @@ export class GameRoom extends Room<GameState> {
   });
   private readonly blazePrimarySkills = new Map<string, BlazePrimarySkill>();
   private readonly blazeSecondarySkills = new Map<string, BlazeSecondarySkill>();
+  private readonly blazeUltimateSkills = new Map<string, BlazeUltimateSkill>();
   private readonly blazeAbilityBindings = new Map<string, BlazeAbilityBindings>();
   private readonly chronosPrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
@@ -1193,6 +1221,7 @@ export class GameRoom extends Room<GameState> {
   private readonly blazeLingeringAreas = new BlazeLingeringAreaTracker();
   private readonly blazeAfterburnerTrails = new BlazeAfterburnerTrailTracker();
   private readonly blazeAfterburnerDashes = new Map<string, BlazeAfterburnerDashRuntime>();
+  private readonly blazePhoenixDives = new Map<string, BlazePhoenixDiveRuntime>();
   private readonly blazeFlamethrowers = new BlazeFlamethrowerRuntimeTracker();
   private readonly blazeBurns = new BlazeBurnEffectTracker();
   private readonly npcs = new RoomNpcRegistry();
@@ -1930,6 +1959,11 @@ export class GameRoom extends Room<GameState> {
       this.handleSetBlazeSecondarySkill(client, data.skill);
     });
 
+    this.onRateLimitedMessage('setBlazeUltimateSkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isBlazeUltimateSkill(data.skill)) return;
+      this.handleSetBlazeUltimateSkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('setBlazeAbilityBindings', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       if (!isBlazeAbilityBindings(data)) return;
       this.handleSetBlazeAbilityBindings(client, data);
@@ -2019,6 +2053,16 @@ export class GameRoom extends Room<GameState> {
     this.blazeSecondarySkills.set(player.id, skill);
   }
 
+  private handleSetBlazeUltimateSkill(client: Client, skill: BlazeUltimateSkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazeUltimateSkills.has(player.id)) return;
+
+    this.blazeUltimateSkills.set(player.id, skill);
+    if (player.heroId === 'blaze') {
+      reconcilePlayerAbilities(player, 'blaze', this.getBlazeAbilitySelection(player.id));
+    }
+  }
+
   private handleSetBlazeAbilityBindings(client: Client, bindings: BlazeAbilityBindings): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.isBot || this.blazeAbilityBindings.has(player.id)) return;
@@ -2028,7 +2072,7 @@ export class GameRoom extends Room<GameState> {
 
     this.blazeAbilityBindings.set(player.id, { ...runtimeBindings });
     if (player.heroId === 'blaze') {
-      reconcilePlayerAbilities(player, 'blaze', runtimeBindings);
+      reconcilePlayerAbilities(player, 'blaze', this.getBlazeAbilitySelection(player.id));
     }
   }
 
@@ -2410,8 +2454,10 @@ export class GameRoom extends Room<GameState> {
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
     this.blazeSecondarySkills.delete(playerId);
+    this.blazeUltimateSkills.delete(playerId);
     this.blazeAbilityBindings.delete(playerId);
     this.stopBlazeAfterburnerDash(playerId);
+    this.blazePhoenixDives.delete(playerId);
     this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
@@ -2458,6 +2504,7 @@ export class GameRoom extends Room<GameState> {
     this.stopTickLoop();
     this.blazeLingeringAreas.clear();
     this.blazeAfterburnerTrails.clear();
+    this.blazePhoenixDives.clear();
     this.blazeAfterburnerDashes.clear();
     this.blazeFlamethrowers.clearDamageTicks();
   }
@@ -2843,6 +2890,7 @@ export class GameRoom extends Room<GameState> {
 
   private updatePostMovementGameplaySystems(now: number): void {
     this.updateBlazeAfterburnerDashEmitters(now);
+    this.updateBlazePhoenixDives(now);
     this.updatePowerupPickups(now);
 
     if (isCaptureTheFlagMode(this.gameplayMode)) {
@@ -5826,14 +5874,20 @@ export class GameRoom extends Room<GameState> {
     player.lookYaw = movementInput.lookYaw;
     player.lookPitch = movementInput.lookPitch;
     const dragPullActive = this.hookshotRuntime.hasDragPull(player.id);
+    const phoenixDive = this.blazePhoenixDives.get(player.id);
+    const phoenixDivePhase = phoenixDive?.phase;
+    const phoenixDiveActive = phoenixDivePhase === 'hover' || phoenixDivePhase === 'dive';
     if (dragPullActive) {
       this.clearHookshotGrapple(player.id);
     } else {
       this.prepareHookshotGrappleForMovement(player, stepNow);
     }
-    const simulationInput = dragPullActive
+    const simulationInput = dragPullActive || phoenixDiveActive
       ? suppressLocomotionInput(movementInput)
       : movementInput;
+    if (phoenixDivePhase === 'hover' && phoenixDive) {
+      this.applyBlazePhoenixDiveHoverVelocity(player, phoenixDive, stepNow);
+    }
     this.simulateAuthoritativeMovementStep(
       player,
       simulationInput,
@@ -6022,7 +6076,7 @@ export class GameRoom extends Room<GameState> {
         (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
       chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player, movementInput.timestamp),
       forcedHorizontalVelocity: player.state === 'alive'
-        ? this.getBlazeAfterburnerForcedVelocity(player.id, movementInput.timestamp)
+        ? this.getBlazeForcedHorizontalVelocity(player.id, movementInput.timestamp)
         : undefined,
       proposedPosition: clientState.position,
       proposedVelocity: clientState.velocity,
@@ -6091,6 +6145,8 @@ export class GameRoom extends Room<GameState> {
     if (
       this.playerRoots.isRooted(player.id, now) ||
       this.hookshotRuntime.hasDragPull(player.id) ||
+      this.blazePhoenixDives.get(player.id)?.phase === 'hover' ||
+      this.blazePhoenixDives.get(player.id)?.phase === 'dive' ||
       player.movement.isGrappling
     ) {
       return false;
@@ -6310,7 +6366,7 @@ export class GameRoom extends Room<GameState> {
         (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
       chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player, now),
       forcedHorizontalVelocity: player.state === 'alive'
-        ? this.getBlazeAfterburnerForcedVelocity(player.id, now)
+        ? this.getBlazeForcedHorizontalVelocity(player.id, now)
         : undefined,
     });
 
@@ -6921,12 +6977,240 @@ export class GameRoom extends Room<GameState> {
     this.blazeAfterburnerDashes.delete(playerId);
   }
 
+  private startBlazePhoenixDive(player: Player, launchPosition: PlainVec3, now: number): void {
+    const castId = this.abilityIds.nextSharedCastId(player.id, 'blaze_phoenix_dive');
+    const hoverAt = now + BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS;
+    const launchGroundY = this.getProceduralGroundY({
+      x: launchPosition.x,
+      y: launchPosition.y + 80,
+      z: launchPosition.z,
+    });
+    this.blazePhoenixDives.set(player.id, {
+      castId,
+      targetPosition: null,
+      hoverAt,
+      hoverEndsAt: hoverAt + BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS,
+      impactDeadline: 0,
+      fallbackImpactGroundY: launchGroundY ?? launchPosition.y - PLAYER_HEIGHT / 2,
+      hoverMotion: null,
+      launchYaw: player.lookYaw,
+      phase: 'launch',
+    });
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId,
+      phase: 'launch',
+      position: vec3SchemaToPlain(player.position),
+      startPosition: launchPosition,
+      velocity: vec3SchemaToPlain(player.velocity),
+      launchYaw: player.lookYaw,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      releaseAt: hoverAt,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private beginBlazePhoenixDiveHover(
+    player: Player,
+    dive: BlazePhoenixDiveRuntime,
+    now: number
+  ): void {
+    dive.hoverMotion = createBlazePhoenixDiveHoverMotion(
+      vec3SchemaToPlain(player.velocity),
+      dive.launchYaw,
+      now,
+    );
+    const hoverVelocity = getBlazePhoenixDiveHoverVelocity(dive.hoverMotion, now);
+    player.velocity.x = hoverVelocity.x;
+    player.velocity.y = hoverVelocity.y;
+    player.velocity.z = hoverVelocity.z;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    dive.phase = 'hover';
+    dive.hoverEndsAt = now + BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS;
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId: dive.castId,
+      phase: 'hover',
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
+      launchYaw: dive.launchYaw,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      releaseAt: dive.hoverEndsAt,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private applyBlazePhoenixDiveHoverVelocity(
+    player: Player,
+    dive: BlazePhoenixDiveRuntime,
+    now: number,
+  ): void {
+    if (!dive.hoverMotion) return;
+    const velocity = getBlazePhoenixDiveHoverVelocity(dive.hoverMotion, now);
+    player.velocity.x = velocity.x;
+    player.velocity.y = velocity.y;
+    player.velocity.z = velocity.z;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+  }
+
+  private confirmBlazePhoenixDive(player: Player, dive: BlazePhoenixDiveRuntime, now: number): void {
+    if (dive.phase !== 'hover') return;
+    dive.targetPosition = this.resolveBlazeGroundTarget(
+      player,
+      'blaze_phoenix_dive',
+      BLAZE_PHOENIX_DIVE_MAX_RANGE,
+      0
+    );
+    this.beginBlazePhoenixDiveDescent(player, dive, now);
+  }
+
+  private beginBlazePhoenixDiveDescent(
+    player: Player,
+    dive: BlazePhoenixDiveRuntime,
+    now: number
+  ): void {
+    if (!dive.targetPosition) {
+      dive.targetPosition = this.resolveBlazeGroundTarget(
+        player,
+        'blaze_phoenix_dive',
+        BLAZE_PHOENIX_DIVE_MAX_RANGE,
+        0
+      );
+    }
+    const targetPosition = dive.targetPosition;
+    const divePosition = getBlazePhoenixDiveStartPosition(
+      vec3SchemaToPlain(player.position),
+      targetPosition
+    );
+    const diveVelocity = getBlazePhoenixDiveVelocity();
+    player.position.x = divePosition.x;
+    player.position.y = divePosition.y;
+    player.position.z = divePosition.z;
+    player.velocity.x = diveVelocity.x;
+    player.velocity.y = diveVelocity.y;
+    player.velocity.z = diveVelocity.z;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    dive.phase = 'dive';
+    dive.impactDeadline = now + BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS;
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId: dive.castId,
+      phase: 'dive',
+      position: divePosition,
+      targetPosition,
+      velocity: diveVelocity,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      impactTime: dive.impactDeadline,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private finishBlazePhoenixDive(player: Player, dive: BlazePhoenixDiveRuntime, now: number): void {
+    if (!dive.targetPosition) return;
+    const refreshedGroundY = this.getProceduralGroundY({
+      x: dive.targetPosition.x,
+      y: Math.max(dive.targetPosition.y + 80, player.position.y + 80),
+      z: dive.targetPosition.z,
+    });
+    const impactPosition = {
+      x: dive.targetPosition.x,
+      y: refreshedGroundY ?? dive.fallbackImpactGroundY,
+      z: dive.targetPosition.z,
+    };
+    player.position.x = impactPosition.x;
+    player.position.y = impactPosition.y + PLAYER_HEIGHT / 2 + 0.06;
+    player.position.z = impactPosition.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = true;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    this.blazePhoenixDives.delete(player.id);
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+    this.applyAreaDamage(
+      player,
+      impactPosition,
+      BLAZE_PHOENIX_DIVE_RADIUS,
+      BLAZE_PHOENIX_DIVE_DAMAGE,
+      'phoenix_dive'
+    );
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId: dive.castId,
+      phase: 'impact',
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
+      targetPosition: dive.targetPosition,
+      impactPosition,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private updateBlazePhoenixDives(now: number): void {
+    for (const [playerId, dive] of this.blazePhoenixDives) {
+      const player = this.state.players.get(playerId);
+      if (!player || player.state !== 'alive') {
+        this.blazePhoenixDives.delete(playerId);
+        continue;
+      }
+      if (dive.phase === 'launch') {
+        if (now >= dive.hoverAt) this.beginBlazePhoenixDiveHover(player, dive, now);
+        continue;
+      }
+      if (dive.phase === 'hover') {
+        if (now >= dive.hoverEndsAt) {
+          this.confirmBlazePhoenixDive(player, dive, now);
+        }
+        continue;
+      }
+      if (player.movement.isGrounded || now >= dive.impactDeadline) {
+        this.finishBlazePhoenixDive(player, dive, now);
+      }
+    }
+  }
+
   private getActiveBlazeAfterburnerDash(playerId: string, now: number): BlazeAfterburnerDashRuntime | null {
     const dash = this.blazeAfterburnerDashes.get(playerId);
     return dash && now < dash.expiresAt ? dash : null;
   }
 
-  private getBlazeAfterburnerForcedVelocity(playerId: string, now: number): { x: number; z: number } | undefined {
+  private getBlazeForcedHorizontalVelocity(playerId: string, now: number): { x: number; z: number } | undefined {
+    const phoenixDive = this.blazePhoenixDives.get(playerId);
+    if (phoenixDive?.phase === 'dive') {
+      return { x: 0, z: 0 };
+    }
+    if (phoenixDive?.phase === 'hover' && phoenixDive.hoverMotion) {
+      const velocity = getBlazePhoenixDiveHoverVelocity(phoenixDive.hoverMotion, now);
+      return { x: velocity.x, z: velocity.z };
+    }
     const dash = this.getActiveBlazeAfterburnerDash(playerId, now);
     return dash
       ? {
@@ -7379,7 +7663,7 @@ export class GameRoom extends Room<GameState> {
 
   private resolveBlazeGroundTarget(
     player: Player,
-    abilityId: 'blaze_bomb' | 'blaze_phosphor_flare',
+    abilityId: 'blaze_bomb' | 'blaze_phosphor_flare' | 'blaze_phoenix_dive',
     maxRange: number,
     minRange: number
   ): PlainVec3 {
@@ -7724,13 +8008,24 @@ export class GameRoom extends Room<GameState> {
     return this.blazeAbilityBindings.get(playerId) ?? null;
   }
 
+  private getBlazeAbilitySelection(playerId: string): HeroAbilitySelection {
+    const bindings = this.getBlazeRuntimeAbilityBindings(playerId) ?? {
+      ability1: HERO_DEFINITIONS.blaze.ability1.abilityId,
+      ability2: HERO_DEFINITIONS.blaze.ability2.abilityId,
+    };
+    return {
+      ...bindings,
+      ultimate: getBlazeUltimateAbilityId(this.getBlazeUltimateSkill(playerId)),
+    };
+  }
+
   private resolvePlayerAbilityId(
     player: Player,
     slot: 'ability1' | 'ability2' | 'ultimate'
   ): string | undefined {
-    if (slot !== 'ultimate' && player.heroId === 'blaze') {
-      const bindings = this.getBlazeRuntimeAbilityBindings(player.id);
-      if (bindings) return bindings[slot];
+    if (player.heroId === 'blaze') {
+      const selection = this.getBlazeAbilitySelection(player.id);
+      return selection[slot];
     }
     return isHeroId(player.heroId) ? HERO_DEFINITIONS[player.heroId][slot].abilityId : undefined;
   }
@@ -7807,6 +8102,14 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    if (player.heroId === 'blaze' && slot === 'ultimate') {
+      const activePhoenixDive = this.blazePhoenixDives.get(player.id);
+      if (activePhoenixDive && activePhoenixDive.phase !== 'dive') {
+        this.confirmBlazePhoenixDive(player, activePhoenixDive, usedAt);
+        return;
+      }
+    }
+
     const chronosLifelineMode = player.heroId === 'chronos' && slot === 'ability1'
       ? options.chronosLifelineMode
       : undefined;
@@ -7866,6 +8169,11 @@ export class GameRoom extends Room<GameState> {
 
     if (ability.abilityId === 'blaze_afterburner') {
       this.startBlazeAfterburnerDash(player, usedAt);
+    }
+
+    if (ability.abilityId === 'blaze_phoenix_dive') {
+      this.startBlazePhoenixDive(player, startedAt, usedAt);
+      return;
     }
 
     if (ability.abilityId === 'blaze_flamethrower') {
@@ -8109,6 +8417,10 @@ export class GameRoom extends Room<GameState> {
 
   private getBlazeSecondarySkill(playerId: string): BlazeSecondarySkill {
     return this.blazeSecondarySkills.get(playerId) ?? 'meteor_strike';
+  }
+
+  private getBlazeUltimateSkill(playerId: string): BlazeUltimateSkill {
+    return this.blazeUltimateSkills.get(playerId) ?? 'infernal_gearstorm';
   }
 
   private getPrimaryMagazineTracker(playerId: string, heroId: string): PrimaryMagazineTracker | null {
@@ -8813,6 +9125,7 @@ export class GameRoom extends Room<GameState> {
   private shouldDamageBypassChronosAegis(damageType: string, context: DamageContext): boolean {
     return (
       damageType === 'airstrike' ||
+      damageType === 'phoenix_dive' ||
       damageType === 'void_zone' ||
       context.abilityId === 'blaze_airstrike' ||
       context.abilityId === 'phantom_void_zone'
@@ -9223,6 +9536,35 @@ export class GameRoom extends Room<GameState> {
       const input = suppressLocomotionInput(
         player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)
       );
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+      if (distance3D(before, player.position) <= 0.001) continue;
+      moved = true;
+      this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
+    }
+    return moved;
+  }
+
+  private stepBlazePhoenixDiveWithoutCommand(
+    player: Player,
+    tickTime: number,
+    collisionWorld = this.getMovementCollisionWorld(tickTime)
+  ): boolean {
+    const initialPhase = this.blazePhoenixDives.get(player.id)?.phase;
+    if (initialPhase !== 'hover' && initialPhase !== 'dive') return false;
+
+    let moved = false;
+    const authority = this.getMovementAuthority(player.id);
+    for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+      const dive = this.blazePhoenixDives.get(player.id);
+      if (!dive || (dive.phase !== 'hover' && dive.phase !== 'dive')) break;
+      const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+      const before = vec3SchemaToPlain(player.position);
+      const input = suppressLocomotionInput(
+        player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)
+      );
+      if (dive.phase === 'hover') {
+        this.applyBlazePhoenixDiveHoverVelocity(player, dive, stepNow);
+      }
       this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
       if (distance3D(before, player.position) <= 0.001) continue;
       moved = true;
@@ -11167,7 +11509,7 @@ export class GameRoom extends Room<GameState> {
     initializePlayerAbilities(
       player,
       heroId,
-      heroId === 'blaze' ? this.getBlazeRuntimeAbilityBindings(player.id) ?? undefined : undefined
+      heroId === 'blaze' ? this.getBlazeAbilitySelection(player.id) : undefined
     );
     this.syncMatchParticipant(player);
     this.syncReconnectParticipantFromPlayer(player);
@@ -12294,6 +12636,7 @@ export class GameRoom extends Room<GameState> {
       this.blazeBurns.clearAll();
       this.blazeLingeringAreas.clear();
       this.blazeAfterburnerTrails.clear();
+      this.blazePhoenixDives.clear();
       this.blazeAfterburnerDashes.clear();
     }
 
@@ -13384,6 +13727,7 @@ export class GameRoom extends Room<GameState> {
       const grappleMoved = this.stepHookshotGrappleWithoutCommand(player, tickTime, collisionWorld);
       const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime, collisionWorld);
       const afterburnerMoved = this.stepBlazeAfterburnerWithoutCommand(player, tickTime, collisionWorld);
+      const phoenixDiveMoved = this.stepBlazePhoenixDiveWithoutCommand(player, tickTime, collisionWorld);
       authority.metrics.queueLength = authority.pendingCommands.length;
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
       if (player.position.y < -10) {
@@ -13391,7 +13735,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       const client = this.clientRegistry.getClient(player.id);
-      if (client && (authority.correctionReason || grappleMoved || dragPullMoved || afterburnerMoved)) {
+      if (client && (authority.correctionReason || grappleMoved || dragPullMoved || afterburnerMoved || phoenixDiveMoved)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
       return;

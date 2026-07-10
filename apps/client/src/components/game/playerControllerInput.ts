@@ -63,7 +63,8 @@ export function getExclusiveHeroInput(
   isActionLocked: boolean,
   isBombTargeting: boolean,
   continuingHoldInput: Partial<CastActionFields> | null = null,
-  lockedAllowedInput: Partial<CastActionFields> | null = null
+  lockedAllowedInput: Partial<CastActionFields> | null = null,
+  isPhoenixDiveTargeting = false
 ): InputState {
   if (isActionLocked) {
     return withCastActionFields(input, lockedAllowedInput ?? {});
@@ -71,6 +72,10 @@ export function getExclusiveHeroInput(
 
   if (isBombTargeting) {
     return withCastActionFields(input, { secondaryFire: input.secondaryFire });
+  }
+
+  if (isPhoenixDiveTargeting) {
+    return withCastActionFields(input, { ultimate: input.ultimate });
   }
 
   if (continuingHoldInput) {

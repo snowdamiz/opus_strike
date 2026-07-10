@@ -2,7 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { FeaturedHeroPreviewFallback } from './FeaturedHeroPreviewFallback';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
-import type { BlazePrimarySkill, BlazeSecondarySkill } from '@voxel-strike/shared';
+import type { BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill } from '@voxel-strike/shared';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { AbilityIcon, HeroIcon } from './HeroIcons';
 import { SkinRarityChrome } from './SkinRarityChrome';
@@ -12,6 +12,7 @@ import {
   HERO_LOADOUT_POOL,
   BLAZE_PHOSPHOR_FLARE_OPTION_ID,
   BLAZE_SCRAPSHOT_OPTION_ID,
+  BLAZE_PHOENIX_DIVE_OPTION_ID,
   LOADOUT_GROUPS,
   LOADOUT_SLOTS,
   defaultOptionId,
@@ -52,9 +53,11 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
   const [filter, setFilter] = useState<LoadoutFilter>('all');
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
   const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
+  const blazeUltimateSkill = useLoadoutStore((state) => state.blazeUltimateSkill);
   const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
   const setBlazePrimarySkill = useLoadoutStore((state) => state.setBlazePrimarySkill);
   const setBlazeSecondarySkill = useLoadoutStore((state) => state.setBlazeSecondarySkill);
+  const setBlazeUltimateSkill = useLoadoutStore((state) => state.setBlazeUltimateSkill);
   const assignHeroAbility = useLoadoutStore((state) => state.assignHeroAbility);
 
   const heroDef = HERO_DEFINITIONS[featuredHero];
@@ -70,6 +73,11 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
       return blazeSecondarySkill === 'phosphor_flare'
         ? BLAZE_PHOSPHOR_FLARE_OPTION_ID
         : defaultOptionId('blaze', 'secondaryFire');
+    }
+    if (featuredHero === 'blaze' && slot === 'ultimate') {
+      return blazeUltimateSkill === 'phoenix_dive'
+        ? BLAZE_PHOENIX_DIVE_OPTION_ID
+        : defaultOptionId('blaze', 'ultimate');
     }
     if (slot === 'ability1' || slot === 'ability2') {
       const option = getAbilityPool(featuredHero).find((candidate) => (
@@ -93,6 +101,13 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
         ? 'phosphor_flare'
         : 'meteor_strike';
       setBlazeSecondarySkill(skill);
+      return;
+    }
+    if (featuredHero === 'blaze' && slot === 'ultimate') {
+      const skill: BlazeUltimateSkill = optionId === BLAZE_PHOENIX_DIVE_OPTION_ID
+        ? 'phoenix_dive'
+        : 'infernal_gearstorm';
+      setBlazeUltimateSkill(skill);
     }
   };
 
@@ -106,9 +121,10 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
   const tunedCount = (heroId: HeroId) => {
     const blazeTuned = heroId === 'blaze' && blazePrimarySkill === 'scrapshot' ? 1 : 0;
     const blazeSecondaryTuned = heroId === 'blaze' && blazeSecondarySkill === 'phosphor_flare' ? 1 : 0;
+    const blazeUltimateTuned = heroId === 'blaze' && blazeUltimateSkill === 'phoenix_dive' ? 1 : 0;
     const defaults = getDefaultHeroAbilityBindings(heroId);
     const abilities = resolveHeroAbilityBindings(heroId, heroAbilityBindings);
-    return blazeTuned + blazeSecondaryTuned
+    return blazeTuned + blazeSecondaryTuned + blazeUltimateTuned
       + (abilities.ability1 === defaults.ability1 ? 0 : 1)
       + (abilities.ability2 === defaults.ability2 ? 0 : 1);
   };

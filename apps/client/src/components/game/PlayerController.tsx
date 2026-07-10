@@ -37,7 +37,7 @@ import {
   rebuildCombatVisualFrameCache,
 } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
-import { getPhysicsWorld, isPhysicsReady, raycast, usePhysics } from '../../hooks/usePhysics';
+import { checkGroundWithNormal, getPhysicsWorld, isPhysicsReady, raycast, usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { isGameConsoleOpen } from '../../store/gameConsoleState';
 import { mouseButtonToKeybindCode } from '../../utils/keybindings';
@@ -63,6 +63,7 @@ import {
   setBlazeBombTargetHeld,
   setBlazeFlamethrowerHeld,
   setBlazeRocketHeld,
+  triggerBlazeRocketJumpStaffSlam,
 } from '../../viewmodel/blazePose';
 import {
   CHRONOS_ASCENDANT_CAST_LOCK_MS,
@@ -127,6 +128,14 @@ import { getLocalChronosTimebreakTempoMultiplier } from '../../hooks/player/chro
 import {
   ABILITY_DEFINITIONS,
   BLAZE_FLAMETHROWER_MAX_FUEL,
+  BLAZE_PHOENIX_DIVE_DAMAGE,
+  BLAZE_PHOENIX_DIVE_FALL_SPEED,
+  BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_MAX_RANGE,
+  BLAZE_PHOENIX_DIVE_RADIUS,
+  BLAZE_PHOENIX_DIVE_START_HEIGHT,
   CHRONOS_LIFELINE_ALLY_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
@@ -142,12 +151,19 @@ import {
   TICK_RATE,
   createEmptyInputState,
   getHeroStats,
+  getBlazeUltimateAbilityId,
+  calculateBlazePhoenixDiveLaunchVelocity,
+  createBlazePhoenixDiveHoverMotion,
+  getBlazePhoenixDiveHoverVelocity,
+  getBlazePhoenixDiveStartPosition,
+  getBlazePhoenixDiveVelocity,
   HERO_DEFINITIONS,
   type HeroId,
   type MatchMode,
   type MatchPerspective,
   type AbilityCastOriginHint,
   type BattleRoyalDropPlayerSnapshot,
+  type BlazeUltimateSkill,
   type InputState,
   type MovementCommand,
   type Player,
@@ -171,6 +187,8 @@ import {
   predictLocalBattleRoyalDrop,
   predictLocalBlazeAfterburner,
   predictLocalBlazeRocketJump,
+  setLocalBlazePhoenixDiving,
+  setLocalBlazePhoenixHovering,
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
   suppressDownedMovementInput,
@@ -240,7 +258,10 @@ import {
   getDevTestingHeroInteraction,
   isDevTestingMapProfileId,
 } from '../../utils/devTestingMapInteraction';
-import { applyTutorialOfflineTrainingTimebreakKnockback } from '../../utils/tutorialOfflineCombatRuntime';
+import {
+  applyTutorialOfflineTrainingAreaDamage,
+  applyTutorialOfflineTrainingTimebreakKnockback,
+} from '../../utils/tutorialOfflineCombatRuntime';
 import { getPreparedVoxelMap } from '../../utils/mapWarmup/mapPrepCache';
 export {
   deriveDownedServerCombatInput,
@@ -446,6 +467,35 @@ export function resolveThirdPersonCrosshairAimPoint({
   return thirdPersonAimPointScratch;
 }
 
+function resolvePracticeBlazePhoenixDiveTarget(ctx: AbilityContext): { x: number; y: number; z: number } {
+  const forward = calculateLookDirection(ctx.yaw, ctx.pitch);
+  const rawTarget = ctx.aimPoint ?? {
+    x: ctx.position.x + forward.x * BLAZE_PHOENIX_DIVE_MAX_RANGE,
+    y: ctx.position.y + forward.y * BLAZE_PHOENIX_DIVE_MAX_RANGE,
+    z: ctx.position.z + forward.z * BLAZE_PHOENIX_DIVE_MAX_RANGE,
+  };
+  const dx = rawTarget.x - ctx.position.x;
+  const dz = rawTarget.z - ctx.position.z;
+  const horizontalDistance = Math.hypot(dx, dz);
+  const rangeScale = horizontalDistance > BLAZE_PHOENIX_DIVE_MAX_RANGE
+    ? BLAZE_PHOENIX_DIVE_MAX_RANGE / horizontalDistance
+    : 1;
+  const x = ctx.position.x + dx * rangeScale;
+  const z = ctx.position.z + dz * rangeScale;
+  const ground = checkGroundWithNormal(
+    x,
+    Math.max(rawTarget.y + 50, ctx.position.y + 50),
+    z,
+    160,
+    { priority: 'visual', feature: 'practice:blazePhoenixDive' },
+  );
+  return {
+    x,
+    y: ground?.groundY ?? ctx.position.y - PLAYER_HEIGHT / 2,
+    z,
+  };
+}
+
 function writeMobileAimAssistOrigin({
   out,
   bodyPosition,
@@ -612,6 +662,15 @@ function pushUniqueTraceAbilityId(target: string[], abilityId: string | undefine
   target.push(abilityId);
 }
 
+export function resolveEquippedUltimateAbilityId(
+  heroId: HeroId,
+  blazeUltimateSkill: BlazeUltimateSkill = useLoadoutStore.getState().blazeUltimateSkill,
+): string {
+  return heroId === 'blaze'
+    ? getBlazeUltimateAbilityId(blazeUltimateSkill)
+    : HERO_DEFINITIONS[heroId].ultimate.abilityId;
+}
+
 function getInitialPracticeCooldownSeconds(
   abilityId: string,
   abilityDef: typeof ABILITY_DEFINITIONS[string] | undefined,
@@ -639,6 +698,292 @@ function buildPracticeAbilityState(
     charges: existingAbility?.charges ?? abilityDef?.charges ?? 1,
     isActive,
     activatedAt: now,
+  };
+}
+
+interface PracticeBlazePhoenixDiveRuntime {
+  playerId: string;
+  ownerTeam: Player['team'];
+  phase: 'launch' | 'hover' | 'dive';
+  targetPosition: { x: number; y: number; z: number } | null;
+  launchYaw: number;
+  launchTimer: number;
+  hoverTimer: number;
+  impactTimer: number;
+}
+
+function clearPracticeBlazePhoenixDiveRuntime(
+  runtimeRef: MutableRefObject<PracticeBlazePhoenixDiveRuntime | null>
+): void {
+  const runtime = runtimeRef.current;
+  if (!runtime) return;
+  window.clearTimeout(runtime.launchTimer);
+  window.clearTimeout(runtime.hoverTimer);
+  window.clearTimeout(runtime.impactTimer);
+  setLocalBlazePhoenixHovering(runtime.playerId, null);
+  setLocalBlazePhoenixDiving(runtime.playerId, false);
+  runtimeRef.current = null;
+}
+
+function beginPracticeBlazePhoenixDiveDescent(
+  runtimeRef: MutableRefObject<PracticeBlazePhoenixDiveRuntime | null>
+): void {
+  const runtime = runtimeRef.current;
+  if (!runtime || runtime.phase === 'dive' || !runtime.targetPosition) return;
+
+  const store = useGameStore.getState();
+  const currentPlayer = store.localPlayer;
+  if (!store.isPracticeMode || currentPlayer?.id !== runtime.playerId || currentPlayer.state !== 'alive') {
+    clearPracticeBlazePhoenixDiveRuntime(runtimeRef);
+    return;
+  }
+
+  runtime.phase = 'dive';
+  window.clearTimeout(runtime.hoverTimer);
+  store.setPhoenixDiveTargeting(false, false);
+  setLocalBlazePhoenixHovering(runtime.playerId, null);
+
+  const divePosition = getBlazePhoenixDiveStartPosition(currentPlayer.position, runtime.targetPosition);
+  const diveVelocity = getBlazePhoenixDiveVelocity();
+  const diveMovement = {
+    ...currentPlayer.movement,
+    isGrounded: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+  };
+  setLocalBlazePhoenixDiving(runtime.playerId, true);
+  confirmLocalMovementTransform(currentPlayer, {
+    position: divePosition,
+    velocity: diveVelocity,
+    movement: diveMovement,
+  }, currentPlayer.lookYaw);
+  store.updateLocalPlayer({
+    position: divePosition,
+    velocity: diveVelocity,
+    movement: diveMovement,
+  });
+  triggerBlazeRocketJumpStaffSlam(Date.now());
+  void playSharedSound('blazeBombFall', {
+    position: divePosition,
+    durationMs: BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS,
+    fadeOutMs: 120,
+    pitch: 1.15,
+  });
+
+  const fallDurationMs = Math.min(
+    BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS,
+    Math.max(120, BLAZE_PHOENIX_DIVE_START_HEIGHT / BLAZE_PHOENIX_DIVE_FALL_SPEED * 1000),
+  );
+  runtime.impactTimer = window.setTimeout(() => {
+    const impactRuntime = runtimeRef.current;
+    const impactStore = useGameStore.getState();
+    const impactPlayer = impactStore.localPlayer;
+    if (
+      !impactRuntime ||
+      impactRuntime.playerId !== runtime.playerId ||
+      !impactStore.isPracticeMode ||
+      impactPlayer?.id !== runtime.playerId ||
+      impactPlayer.state !== 'alive'
+    ) {
+      clearPracticeBlazePhoenixDiveRuntime(runtimeRef);
+      return;
+    }
+
+    const ground = checkGroundWithNormal(
+      runtime.targetPosition!.x,
+      Math.max(runtime.targetPosition!.y + 50, impactPlayer.position.y + 50),
+      runtime.targetPosition!.z,
+      160,
+      { priority: 'visual', feature: 'practice:blazePhoenixDiveImpact' },
+    );
+    const groundedTarget = {
+      x: runtime.targetPosition!.x,
+      y: ground?.groundY ?? runtime.targetPosition!.y,
+      z: runtime.targetPosition!.z,
+    };
+    const impactPosition = {
+      x: groundedTarget.x,
+      y: groundedTarget.y + PLAYER_HEIGHT / 2 + 0.06,
+      z: groundedTarget.z,
+    };
+    const impactVelocity = { x: 0, y: 0, z: 0 };
+    const impactMovement = {
+      ...impactPlayer.movement,
+      isGrounded: true,
+      isSliding: false,
+      slideTimeRemaining: 0,
+    };
+    setLocalBlazePhoenixDiving(runtime.playerId, false);
+    confirmLocalMovementTransform(impactPlayer, {
+      position: impactPosition,
+      velocity: impactVelocity,
+      movement: impactMovement,
+    }, impactPlayer.lookYaw);
+    impactStore.updateLocalPlayer({
+      position: impactPosition,
+      velocity: impactVelocity,
+      movement: impactMovement,
+    });
+    triggerRocketJumpExplosion(groundedTarget);
+    void playSharedSound('blazeBombExplode', {
+      position: groundedTarget,
+      pitch: 0.86,
+      volume: 1.15,
+    });
+    applyTutorialOfflineTrainingAreaDamage({
+      center: groundedTarget,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+      damage: BLAZE_PHOENIX_DIVE_DAMAGE,
+      damageType: 'phoenix_dive',
+      sourceId: runtime.playerId,
+      sourceTeam: runtime.ownerTeam,
+      abilityId: 'blaze_phoenix_dive',
+    });
+    runtimeRef.current = null;
+  }, fallDurationMs);
+}
+
+function confirmPracticeBlazePhoenixDive(
+  runtimeRef: MutableRefObject<PracticeBlazePhoenixDiveRuntime | null>,
+  targetPosition: THREE.Vector3
+): void {
+  const runtime = runtimeRef.current;
+  if (!runtime || runtime.phase !== 'hover') return;
+  runtime.targetPosition = {
+    x: targetPosition.x,
+    y: targetPosition.y,
+    z: targetPosition.z,
+  };
+  beginPracticeBlazePhoenixDiveDescent(runtimeRef);
+}
+
+export function resolvePracticeBlazePhoenixHoverState(
+  localPlayer: Player,
+  launchYaw: number,
+  startedAtMs = Date.now(),
+): MovementSimulationState {
+  const liveState = getCurrentPredictedState(movementStateFromPlayer(localPlayer));
+  const motion = createBlazePhoenixDiveHoverMotion(liveState.velocity, launchYaw, startedAtMs);
+  return {
+    position: { ...liveState.position },
+    velocity: getBlazePhoenixDiveHoverVelocity(motion, startedAtMs),
+    movement: {
+      ...liveState.movement,
+      isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+    },
+  };
+}
+
+function startPracticeBlazePhoenixDive(
+  localPlayer: Player,
+  launchYaw: number,
+  now: number,
+  runtimeRef: MutableRefObject<PracticeBlazePhoenixDiveRuntime | null>,
+  fallbackTarget: { x: number; y: number; z: number },
+  liveTargetRef: MutableRefObject<THREE.Vector3 | null>,
+): MovementSimulationState {
+  clearPracticeBlazePhoenixDiveRuntime(runtimeRef);
+  const currentState = getCurrentPredictedState(movementStateFromPlayer(localPlayer));
+  const launchState: MovementSimulationState = {
+    position: {
+      ...currentState.position,
+      y: currentState.position.y + 0.5,
+    },
+    velocity: calculateBlazePhoenixDiveLaunchVelocity(currentState.velocity, launchYaw),
+    movement: {
+      ...currentState.movement,
+      isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+    },
+  };
+  confirmLocalMovementTransform(localPlayer, launchState, localPlayer.lookYaw);
+  useGameStore.getState().updateLocalPlayer({
+    position: launchState.position,
+    velocity: launchState.velocity,
+    movement: launchState.movement,
+  });
+  triggerRocketJumpExplosion(currentState.position);
+
+  const runtime: PracticeBlazePhoenixDiveRuntime = {
+    playerId: localPlayer.id,
+    ownerTeam: localPlayer.team,
+    phase: 'launch',
+    targetPosition: null,
+    launchYaw,
+    launchTimer: 0,
+    hoverTimer: 0,
+    impactTimer: 0,
+  };
+  runtimeRef.current = runtime;
+  useGameStore.getState().setPhoenixDiveTargeting(true, false);
+
+  runtime.launchTimer = window.setTimeout(() => {
+    const store = useGameStore.getState();
+    const currentPlayer = store.localPlayer;
+    const currentRuntime = runtimeRef.current;
+    if (
+      !currentRuntime ||
+      currentRuntime.playerId !== runtime.playerId ||
+      !store.isPracticeMode ||
+      currentPlayer?.id !== runtime.playerId ||
+      currentPlayer.state !== 'alive'
+    ) {
+      clearPracticeBlazePhoenixDiveRuntime(runtimeRef);
+      return;
+    }
+
+    currentRuntime.phase = 'hover';
+    const hoverStartedAtMs = Date.now();
+    const hoverState = resolvePracticeBlazePhoenixHoverState(
+      currentPlayer,
+      currentRuntime.launchYaw,
+      hoverStartedAtMs,
+    );
+    setLocalBlazePhoenixHovering(runtime.playerId, {
+      velocity: hoverState.velocity,
+      lookYaw: currentRuntime.launchYaw,
+      startedAtMs: hoverStartedAtMs,
+    });
+    confirmLocalMovementTransform(currentPlayer, hoverState, currentPlayer.lookYaw);
+    store.updateLocalPlayer({
+      position: hoverState.position,
+      velocity: hoverState.velocity,
+      movement: hoverState.movement,
+    });
+
+    currentRuntime.hoverTimer = window.setTimeout(() => {
+      const timeoutRuntime = runtimeRef.current;
+      if (!timeoutRuntime || timeoutRuntime.playerId !== runtime.playerId || timeoutRuntime.phase !== 'hover') return;
+      const liveTarget = liveTargetRef.current;
+      timeoutRuntime.targetPosition = liveTarget
+        ? { x: liveTarget.x, y: liveTarget.y, z: liveTarget.z }
+        : blazeFallbackTarget(useGameStore.getState().localPlayer, fallbackTarget);
+      beginPracticeBlazePhoenixDiveDescent(runtimeRef);
+    }, BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS);
+  }, BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS);
+
+  return launchState;
+}
+
+function blazeFallbackTarget(
+  player: Player | null,
+  fallbackTarget: { x: number; y: number; z: number }
+): { x: number; y: number; z: number } {
+  if (!player) return fallbackTarget;
+  const ground = checkGroundWithNormal(
+    fallbackTarget.x,
+    Math.max(fallbackTarget.y + 50, player.position.y + 50),
+    fallbackTarget.z,
+    160,
+    { priority: 'visual', feature: 'practice:blazePhoenixDiveFallback' },
+  );
+  return {
+    x: fallbackTarget.x,
+    y: ground?.groundY ?? fallbackTarget.y,
+    z: fallbackTarget.z,
   };
 }
 
@@ -1219,7 +1564,12 @@ function runTracePhase(input: {
   );
   if (frameInput.ability1) pushUniqueTraceAbilityId(traceAbilityIds, traceBindings.ability1);
   if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, traceBindings.ability2);
-  if (frameInput.ultimate) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ultimate.abilityId);
+  if (frameInput.ultimate) {
+    pushUniqueTraceAbilityId(
+      traceAbilityIds,
+      heroDef ? resolveEquippedUltimateAbilityId(heroId) : undefined,
+    );
+  }
   if (bombTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'blaze_bomb_targeting');
   traceAbilityIds.sort();
   const traceGroundY = localMovementForTrace.isGrounded
@@ -1314,6 +1664,7 @@ export function runPredictionAndCommandPhase(input: {
   let { predictedState } = input;
   const wasGroundedBeforePrediction = predictedState.movement.isGrounded;
   const currentBombTargeting = useGameStore.getState().bombTargeting;
+  const currentPhoenixDiveTargeting = useGameStore.getState().phoenixDiveTargeting;
   const phantomAutoReloadForServer = heroId === 'phantom' &&
     phantomAbilities.phantomPrimaryReloadingRef.current &&
     phantomAbilities.phantomPrimaryAmmoRef.current <= 0;
@@ -1350,6 +1701,9 @@ export function runPredictionAndCommandPhase(input: {
   };
   const abilityCastHints = buildAbilityCastOriginHints(abilityCtx, commandInput, {
     bombTargeting: currentBombTargeting,
+    phoenixDiveTarget: currentPhoenixDiveTargeting && blazeAbilities.phoenixDiveValidRef.current
+      ? blazeAbilities.phoenixDiveTargetRef.current
+      : null,
   });
   refs.latestAbilityCastHintsRef.current = abilityCastHints ?? [];
 
@@ -1461,6 +1815,7 @@ export function runInputPhase(
 
   const heroDef = HERO_DEFINITIONS[heroId];
   const bombTargetingForFrame = useGameStore.getState().bombTargeting;
+  const phoenixDiveTargetingForFrame = useGameStore.getState().phoenixDiveTargeting;
   const previousHoldInput = refs.lastExclusiveHoldInputRef.current;
   const chronosLifelineQueuedAtFrameStart = heroId === 'chronos' && refs.chronosLifelineQueuedRef.current;
   if (!rawFrameInput.primaryFire) {
@@ -1523,8 +1878,17 @@ export function runInputPhase(
       isHeroActionLocked(heroId, now, HERO_ACTION_OVERLAP_GRACE_MS),
       heroId === 'blaze' && bombTargetingForFrame,
       continuingHoldInput,
-      lockedAllowedInput
+      lockedAllowedInput,
+      heroId === 'blaze' && phoenixDiveTargetingForFrame,
     );
+    if (
+      heroId === 'blaze' &&
+      phoenixDiveTargetingForFrame &&
+      frameInput.ultimate &&
+      !blazeAbilities.phoenixDiveValidRef.current
+    ) {
+      frameInput = withCastActionFields(frameInput);
+    }
     if (heroId === 'chronos' && frameInput.ability1) {
       frameInput = withCastActionFields(frameInput);
     }
@@ -1599,6 +1963,12 @@ export function runInputPhase(
       (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
       (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2)
     )) ||
+    (
+      heroId === 'blaze' &&
+      frameInput.ultimate &&
+      !abilitySystem.abilityPressedRef.current.ultimate &&
+      resolveEquippedUltimateAbilityId(heroId) === 'blaze_phoenix_dive'
+    ) ||
     (heroId === 'chronos' && frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate)
   );
   if (movementBarrierInputPressed) {
@@ -1934,7 +2304,11 @@ function runDevTestingInteractionFrame(
 
   if (!pressed) return false;
 
-  store.updateLocalPlayer(createDevTestingHeroSwitchUpdates(localPlayer, interaction.heroId));
+  store.updateLocalPlayer(createDevTestingHeroSwitchUpdates(
+    localPlayer,
+    interaction.heroId,
+    useLoadoutStore.getState().blazeUltimateSkill,
+  ));
   store.setInteractionPrompt(null);
   return true;
 }
@@ -2345,6 +2719,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const updateLocalPlayer = useGameStore(state => state.updateLocalPlayer);
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const bombTargeting = useGameStore(state => state.bombTargeting);
+  const phoenixDiveTargeting = useGameStore(state => state.phoenixDiveTargeting);
   const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
   const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
   const gamePhase = useGameStore(state => state.gamePhase);
@@ -2433,6 +2808,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
   const battleRoyalFirstPersonDropCameraRef = useRef(createBattleRoyalFirstPersonDropCameraRuntime());
   const battleRoyalDeploymentAudioRef = useRef(createBattleRoyalDeploymentAudioRuntime());
+  const practiceBlazePhoenixDiveRef = useRef<PracticeBlazePhoenixDiveRuntime | null>(null);
   const frameContextRef = useRef<LocalPlayerFrameContext | null>(null);
   // Persistent per-frame scratch objects for the alive-path frame loop. Each is
   // mutated in place every frame; all consumers read them synchronously and copy
@@ -2443,6 +2819,17 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const traceOptionsRef = useRef<Parameters<typeof runTracePhase>[0] | null>(null);
   const soundFrameArgRef = useRef<LocalAbilityAudioPredictionFrame | null>(null);
   const soundLocalPlayerRef = useRef<Player | null>(null);
+
+  useEffect(() => () => {
+    clearPracticeBlazePhoenixDiveRuntime(practiceBlazePhoenixDiveRef);
+    useGameStore.getState().setPhoenixDiveTargeting(false, false);
+  }, []);
+
+  useEffect(() => {
+    if (localPlayerForInit?.heroId === 'blaze' && localPlayerForInit.state === 'alive') return;
+    clearPracticeBlazePhoenixDiveRuntime(practiceBlazePhoenixDiveRef);
+    useGameStore.getState().setPhoenixDiveTargeting(false, false);
+  }, [localPlayerForInit?.heroId, localPlayerForInit?.state]);
   // Stable closures for the reused sound-update arg. updatePredictedAbilitySounds
   // invokes both only synchronously and never retains them.
   const getAbilityChargesForSound = useCallback(
@@ -3680,7 +4067,22 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
       // Ultimate (F)
       if (localAbilityInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
-        if (abilitySystem.canUseAbility(heroDef.ultimate.abilityId, true)) {
+        const ultimateAbilityId = resolveEquippedUltimateAbilityId(heroId);
+        const isConfirmingPhoenixDive = (
+          heroId === 'blaze' &&
+          ultimateAbilityId === 'blaze_phoenix_dive' &&
+          useGameStore.getState().phoenixDiveTargeting
+        );
+        if (isConfirmingPhoenixDive) {
+          if (blazeAbilities.phoenixDiveValidRef.current && blazeAbilities.phoenixDiveTargetRef.current) {
+            if (isPracticeMode) {
+              confirmPracticeBlazePhoenixDive(
+                practiceBlazePhoenixDiveRef,
+                blazeAbilities.phoenixDiveTargetRef.current,
+              );
+            }
+          }
+        } else if (abilitySystem.canUseAbility(ultimateAbilityId, true)) {
           if (heroId === 'phantom') {
             if (isPracticeMode) {
               const abilityId = heroDef.ultimate.abilityId;
@@ -3704,28 +4106,56 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
               lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
             }
           } else if (heroId === 'blaze') {
-            const abilityId = heroDef.ultimate.abilityId;
-            blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
+            const abilityId = ultimateAbilityId;
+            blazeAbilities.lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, now);
             useGameStore.getState().recordSkillCast(now);
             if (isPracticeMode) {
-              const abilityDef = ABILITY_DEFINITIONS[abilityId];
-              const durationMs = (abilityDef?.duration ?? 0) * 1000;
-              const effectEndTime = now + durationMs;
-              const effectPosition = { x: position.x, y: position.y, z: position.z };
               resetBlazeFlamethrower(now);
-              triggerAirStrike(effectPosition, { ownerId: localPlayer.id, ownerTeam: localPlayer.team });
-              abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
-              useGameStore.getState().setUltimateEffect(true, abilityId, effectEndTime);
-              if (!shouldSuppressPredictedLocalAbilitySound(abilityId, now)) {
-                void playSharedBlazeAirstrikeSound({ position: effectPosition });
+              if (abilityId === 'blaze_phoenix_dive') {
+                blazeAbilities.phoenixDiveTargetRef.current = null;
+                blazeAbilities.phoenixDiveValidRef.current = false;
+                const launchState = startPracticeBlazePhoenixDive(
+                  localPlayer,
+                  abilityCtx.yaw,
+                  now,
+                  practiceBlazePhoenixDiveRef,
+                  resolvePracticeBlazePhoenixDiveTarget(abilityCtx),
+                  blazeAbilities.phoenixDiveTargetRef,
+                );
+                predictedState = launchState;
+                position.set(launchState.position.x, launchState.position.y, launchState.position.z);
+                velocity.set(launchState.velocity.x, launchState.velocity.y, launchState.velocity.z);
+                movement.refs.isGrounded.current = false;
+                movement.refs.wasGrounded.current = false;
+                movement.refs.canJump.current = false;
+              } else {
+                const abilityDef = ABILITY_DEFINITIONS[abilityId];
+                const durationMs = (abilityDef?.duration ?? 0) * 1000;
+                const effectEndTime = now + durationMs;
+                const effectPosition = { x: position.x, y: position.y, z: position.z };
+                triggerAirStrike(effectPosition, { ownerId: localPlayer.id, ownerTeam: localPlayer.team });
+                abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
+                useGameStore.getState().setUltimateEffect(true, abilityId, effectEndTime);
+                if (!shouldSuppressPredictedLocalAbilitySound(abilityId, now)) {
+                  void playSharedBlazeAirstrikeSound({ position: effectPosition });
+                }
               }
               updateLocalPlayer({
                 ultimateCharge: 0,
                 abilities: {
                   ...localPlayer.abilities,
-                  [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
+                  [abilityId]: buildPracticeAbilityState(
+                    localPlayer.abilities,
+                    abilityId,
+                    now,
+                    abilityId === 'blaze_airstrike',
+                  ),
                 },
               });
+            } else if (abilityId === 'blaze_phoenix_dive') {
+              blazeAbilities.phoenixDiveTargetRef.current = null;
+              blazeAbilities.phoenixDiveValidRef.current = false;
+              useGameStore.getState().setPhoenixDiveTargeting(true, false);
             }
           } else if (heroId === 'hookshot') {
             if (hookshotAbilities.executeGroundHooks(abilityCtx, updateLocalPlayer)) {
@@ -3926,8 +4356,14 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   return (
     <>
       <BombTargetingIndicator
-        isActive={bombTargeting}
-        onTargetUpdate={blazeAbilities.handleBombTargetUpdate}
+        isActive={bombTargeting || phoenixDiveTargeting}
+        maxRange={phoenixDiveTargeting ? BLAZE_PHOENIX_DIVE_MAX_RANGE : undefined}
+        minRange={phoenixDiveTargeting ? 0 : undefined}
+        radius={phoenixDiveTargeting ? BLAZE_PHOENIX_DIVE_RADIUS : undefined}
+        raycastFeature={phoenixDiveTargeting ? 'targeting:blazePhoenixDive' : undefined}
+        onTargetUpdate={phoenixDiveTargeting
+          ? blazeAbilities.handlePhoenixDiveTargetUpdate
+          : blazeAbilities.handleBombTargetUpdate}
       />
     </>
   );

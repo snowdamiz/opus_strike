@@ -11,6 +11,7 @@ import {
   type InputState,
   type BlazePrimarySkill,
   getBlazePrimaryAbilityId,
+  getBlazeUltimateAbilityId,
 } from '@voxel-strike/shared';
 import { playSharedBlazeAirstrikeSound, playSharedSound } from '../useAudio';
 import { resolveRuntimeHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
@@ -460,9 +461,16 @@ export function useLocalAbilityAudioPrediction() {
       if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_veil', true)) {
         markPredictedLocalAbilitySound('phantom_veil', now);
         void playSharedSound('phantomVeil');
-      } else if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_airstrike', true)) {
-        markPredictedLocalAbilitySound('blaze_airstrike', now);
-        void playSharedBlazeAirstrikeSound();
+      } else if (heroId === 'blaze') {
+        const abilityId = getBlazeUltimateAbilityId(useLoadoutStore.getState().blazeUltimateSkill);
+        if (canReservePredictedSkillSound(abilityId, true)) {
+          markPredictedLocalAbilitySound(abilityId, now);
+          if (abilityId === 'blaze_phoenix_dive') {
+            void playSharedSound('blazeRocketJump', { pitch: 0.82, volume: 1.05 });
+          } else {
+            void playSharedBlazeAirstrikeSound();
+          }
+        }
       } else if (heroId === 'hookshot' && canReservePredictedSkillSound('hookshot_ground_hooks', true)) {
         playHookshotCastSounds('hookshot_ground_hooks', 'hookshotGroundHooks', 1.12);
       }

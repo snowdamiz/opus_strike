@@ -128,6 +128,20 @@ export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
 export const BLAZE_AFTERBURNER_DASH_SPEED = 24;
 export const BLAZE_AFTERBURNER_DASH_DURATION_MS = 360;
 
+// Phoenix Dive uses a staged server-authoritative movement sequence: a strong
+// vertical launch, then a short locked downward plunge over the selected point.
+export const BLAZE_PHOENIX_DIVE_LAUNCH_VERTICAL_FORCE = 18.5;
+export const BLAZE_PHOENIX_DIVE_LAUNCH_FORWARD_FORCE = 6;
+export const BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS = 620;
+export const BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS = 3000;
+export const BLAZE_PHOENIX_DIVE_HOVER_MIN_FORWARD_SPEED = 1.25;
+export const BLAZE_PHOENIX_DIVE_HOVER_FORWARD_DECAY = 4;
+export const BLAZE_PHOENIX_DIVE_HOVER_VERTICAL_DECAY = 5;
+export const BLAZE_PHOENIX_DIVE_HOVER_SETTLE_SPEED = 0.35;
+export const BLAZE_PHOENIX_DIVE_START_HEIGHT = 10;
+export const BLAZE_PHOENIX_DIVE_FALL_SPEED = 34;
+export const BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS = 700;
+
 // Glide
 export const GLIDE_FALL_SPEED = -4;
 export const GLIDE_FORWARD_BOOST = 1.3;

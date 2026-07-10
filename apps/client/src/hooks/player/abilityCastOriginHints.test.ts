@@ -72,9 +72,34 @@ try {
   assert.ok(secondaryHint, 'Phosphor Flare should emit a staff-tip cast-origin hint');
   assert.equal(secondaryHint.socketName, BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME);
   assert.deepEqual(secondaryHint.origin, { x: 1, y: 2, z: 3 });
+
+  useLoadoutStore.getState().setBlazeUltimateSkill('phoenix_dive');
+  const ultimateInput = {
+    ...createEmptyInputState(),
+    ultimate: true,
+  };
+  const ultimateHint = buildAbilityCastOriginHints(
+    {
+      ...context,
+      inputState: ultimateInput,
+      aimPoint: new THREE.Vector3(12, 0, -8),
+    },
+    ultimateInput,
+  )?.find((candidate) => candidate.abilityId === 'blaze_phoenix_dive');
+  assert.ok(ultimateHint, 'Phoenix Dive should emit a targeted root cast hint');
+  assert.equal(ultimateHint.socketName, 'root');
+  assert.deepEqual(ultimateHint.aimPoint, { x: 12, y: 0, z: -8 });
+
+  const confirmedTargetHint = buildAbilityCastOriginHints(
+    { ...context, inputState: ultimateInput },
+    ultimateInput,
+    { phoenixDiveTarget: { x: 9, y: 1.25, z: -6 } },
+  )?.find((candidate) => candidate.abilityId === 'blaze_phoenix_dive');
+  assert.deepEqual(confirmedTargetHint?.aimPoint, { x: 9, y: 1.25, z: -6 });
 } finally {
   useLoadoutStore.getState().setBlazePrimarySkill('fireball_rockets');
   useLoadoutStore.getState().setBlazeSecondarySkill('meteor_strike');
+  useLoadoutStore.getState().setBlazeUltimateSkill('infernal_gearstorm');
   unregisterSampledSocket();
   unregisterLiveSocket();
 }

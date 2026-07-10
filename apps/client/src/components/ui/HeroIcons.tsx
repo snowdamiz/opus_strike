@@ -288,6 +288,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     blaze_rocketjump: 'rocketjump',
     blaze_afterburner: 'afterburner',
     blaze_airstrike: 'gearstorm',
+    blaze_phoenix_dive: 'phoenixdive',
     chronos_lifeline_conduit: 'lifelineconduit',
     chronos_timebreak: 'timebreak',
     chronos_ascendant_paradox: 'ascendantparadox',

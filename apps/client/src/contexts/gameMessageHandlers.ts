@@ -45,7 +45,15 @@ import {
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
-import { acknowledgeSelfMovementAck, confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil, startLocalBlazeAfterburnerDash } from '../movement/localPrediction';
+import {
+  acknowledgeSelfMovementAck,
+  confirmLocalMovementTransform,
+  enqueueSelfMovementAuthority,
+  setLocalBlazePhoenixDiving,
+  setLocalBlazePhoenixHovering,
+  setLocalMovementRootedUntil,
+  startLocalBlazeAfterburnerDash,
+} from '../movement/localPrediction';
 import {
   recordAuthorityAckReceived,
   recordLocalReactiveUpdate,
@@ -2867,6 +2875,106 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       }
       if (isLocalPlayer && store.localPlayer) {
         store.updateLocalPlayer({ ultimateCharge: 0 });
+      }
+      return true;
+    }
+
+    case 'blaze_phoenix_dive': {
+      const phase = data.phase ?? 'launch';
+      if (phase === 'launch') {
+        const launchPosition = data.startPosition ?? position;
+        if (launchPosition) {
+          triggerRocketJumpExplosion(launchPosition);
+          if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_phoenix_dive')) {
+            playBlazeWorldSound('blazeRocketJump', launchPosition, { pitch: 0.82, volume: 1.05 });
+          }
+        }
+        if (isLocalPlayer && store.localPlayer) {
+          store.setPhoenixDiveTargeting(true, false);
+          store.updateLocalPlayer({ ultimateCharge: 0 });
+          if (position && data.velocity) {
+            const movement = {
+              ...store.localPlayer.movement,
+              isGrounded: false,
+              isSliding: false,
+              slideTimeRemaining: 0,
+            };
+            confirmLocalMovementTransform(store.localPlayer, { position, velocity: data.velocity, movement }, store.localPlayer.lookYaw);
+            pushLocalPlayerImpulse({ ...data.velocity, mode: 'set' });
+            store.updateLocalPlayer({ position, velocity: data.velocity, movement });
+          }
+        }
+        return true;
+      }
+
+      if (phase === 'hover') {
+        if (isLocalPlayer && store.localPlayer && position) {
+          const velocity = data.velocity ?? { x: 0, y: 0, z: 0 };
+          const movement = {
+            ...store.localPlayer.movement,
+            isGrounded: false,
+            isSliding: false,
+            slideTimeRemaining: 0,
+          };
+          store.setPhoenixDiveTargeting(true, store.phoenixDiveTargetValid);
+          setLocalBlazePhoenixHovering(store.localPlayer.id, {
+            velocity,
+            lookYaw: data.launchYaw ?? store.localPlayer.lookYaw,
+          });
+          confirmLocalMovementTransform(store.localPlayer, { position, velocity, movement }, store.localPlayer.lookYaw);
+          store.updateLocalPlayer({ position, velocity, movement });
+        }
+        return true;
+      }
+
+      if (phase === 'dive') {
+        if (position) {
+          addEffect({ type: 'explosion', position: new THREE.Vector3(position.x, position.y, position.z), duration: 320 });
+          playBlazeWorldSound('blazeBombFall', position, { durationMs: 650, fadeOutMs: 120, pitch: 1.15 });
+        }
+        if (isLocalPlayer && store.localPlayer && position && data.velocity) {
+          store.setPhoenixDiveTargeting(false, false);
+          setLocalBlazePhoenixHovering(store.localPlayer.id, null);
+          setLocalBlazePhoenixDiving(store.localPlayer.id, true);
+          triggerBlazeRocketJumpStaffSlam(Date.now());
+          const movement = {
+            ...store.localPlayer.movement,
+            isGrounded: false,
+            isSliding: false,
+            slideTimeRemaining: 0,
+          };
+          confirmLocalMovementTransform(store.localPlayer, { position, velocity: data.velocity, movement }, store.localPlayer.lookYaw);
+          pushLocalPlayerImpulse({ ...data.velocity, mode: 'set' });
+          store.updateLocalPlayer({ position, velocity: data.velocity, movement });
+        }
+        return true;
+      }
+
+      const impactPosition = data.impactPosition ?? targetPosition ?? position;
+      if (impactPosition) {
+        triggerRocketJumpExplosion(impactPosition);
+        addEffect({
+          type: 'explosion',
+          position: new THREE.Vector3(impactPosition.x, impactPosition.y + 0.5, impactPosition.z),
+          duration: 700,
+        });
+        playBlazeWorldSound('blazeBombExplode', impactPosition, { pitch: 0.86, volume: 1.15 });
+      }
+      if (isLocalPlayer && store.localPlayer) {
+        store.setPhoenixDiveTargeting(false, false);
+        setLocalBlazePhoenixHovering(store.localPlayer.id, null);
+        setLocalBlazePhoenixDiving(store.localPlayer.id, false);
+        if (position) {
+          const velocity = data.velocity ?? { x: 0, y: 0, z: 0 };
+          const movement = {
+            ...store.localPlayer.movement,
+            isGrounded: true,
+            isSliding: false,
+            slideTimeRemaining: 0,
+          };
+          confirmLocalMovementTransform(store.localPlayer, { position, velocity, movement }, store.localPlayer.lookYaw);
+          store.updateLocalPlayer({ position, velocity, movement });
+        }
       }
       return true;
     }

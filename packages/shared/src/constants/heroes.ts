@@ -165,6 +165,9 @@ export const BLAZE_GEARSTORM_DAMAGE = 14;
 export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 400;
 export const BLAZE_GEARSTORM_DURATION_SECONDS = 6;
 export const BLAZE_GEARSTORM_DURATION_MS = BLAZE_GEARSTORM_DURATION_SECONDS * 1000;
+export const BLAZE_PHOENIX_DIVE_DAMAGE = 80;
+export const BLAZE_PHOENIX_DIVE_RADIUS = 5;
+export const BLAZE_PHOENIX_DIVE_MAX_RANGE = BLAZE_BOMB_MAX_RANGE;
 
 export type AbilityCardStatFormat = 'number' | 'seconds';
 
@@ -239,6 +242,10 @@ export const ABILITY_CARD_STATS = {
     { value: BLAZE_GEARSTORM_DAMAGE, label: 'dmg/tick' },
     { value: BLAZE_GEARSTORM_RADIUS, label: 'radius' },
     { value: BLAZE_GEARSTORM_DURATION_SECONDS, label: 'duration', format: 'seconds' },
+  ],
+  blaze_phoenix_dive: [
+    { value: BLAZE_PHOENIX_DIVE_DAMAGE, label: 'impact dmg' },
+    { value: BLAZE_PHOENIX_DIVE_RADIUS, label: 'radius' },
   ],
   chronos_verdant_pulse: [
     { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
@@ -476,6 +483,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: BLAZE_GEARSTORM_DURATION_SECONDS,
     resourceCost: 100,
     description: 'Ignite a massive area around yourself, scorching the ground while flaming cogs spin through the air.',
+  },
+  blaze_phoenix_dive: {
+    id: 'blaze_phoenix_dive',
+    name: 'Phoenix Dive',
+    type: 'ultimate',
+    targeting: 'ground',
+    cooldown: 0,
+    resourceCost: 100,
+    description: 'Launch high into the air, then crash down at a targeted location in a huge fiery explosion.',
   },
 
   // Chronos Abilities

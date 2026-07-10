@@ -19,11 +19,13 @@ const {
 
 assert.equal(loadStoredLoadout().blazePrimarySkill, 'fireball_rockets');
 assert.equal(loadStoredLoadout().blazeSecondarySkill, 'meteor_strike');
+assert.equal(loadStoredLoadout().blazeUltimateSkill, 'infernal_gearstorm');
 assert.deepEqual(loadStoredLoadout().heroAbilityBindings, {});
 
 localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
+  blazeUltimateSkill: 'phoenix_dive',
   heroAbilityBindings: {
     phantom: {
       ability1: 'phantom_personal_shield',
@@ -34,6 +36,7 @@ localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
 const storedLoadout = loadStoredLoadout();
 assert.equal(storedLoadout.blazePrimarySkill, 'scrapshot');
 assert.equal(storedLoadout.blazeSecondarySkill, 'phosphor_flare');
+assert.equal(storedLoadout.blazeUltimateSkill, 'phoenix_dive');
 assert.deepEqual(storedLoadout.heroAbilityBindings.phantom, {
   ability1: 'phantom_personal_shield',
   ability2: 'phantom_blink',
@@ -42,6 +45,7 @@ assert.deepEqual(storedLoadout.heroAbilityBindings.phantom, {
 localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
   blazePrimarySkill: 'invalid',
   blazeSecondarySkill: 'invalid',
+  blazeUltimateSkill: 'invalid',
   heroAbilityBindings: {
     phantom: { ability1: 'invalid', ability2: 'phantom_blink' },
   },
@@ -49,6 +53,7 @@ localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
 const invalidLoadout = loadStoredLoadout();
 assert.equal(invalidLoadout.blazePrimarySkill, 'fireball_rockets');
 assert.equal(invalidLoadout.blazeSecondarySkill, 'meteor_strike');
+assert.equal(invalidLoadout.blazeUltimateSkill, 'infernal_gearstorm');
 assert.deepEqual(invalidLoadout.heroAbilityBindings, {});
 
 useLoadoutStore.getState().setBlazePrimarySkill('scrapshot');
@@ -56,6 +61,7 @@ assert.equal(useLoadoutStore.getState().blazePrimarySkill, 'scrapshot');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'meteor_strike',
+  blazeUltimateSkill: 'infernal_gearstorm',
   heroAbilityBindings: {},
 });
 
@@ -64,6 +70,16 @@ assert.equal(useLoadoutStore.getState().blazeSecondarySkill, 'phosphor_flare');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
+  blazeUltimateSkill: 'infernal_gearstorm',
+  heroAbilityBindings: {},
+});
+
+useLoadoutStore.getState().setBlazeUltimateSkill('phoenix_dive');
+assert.equal(useLoadoutStore.getState().blazeUltimateSkill, 'phoenix_dive');
+assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
+  blazePrimarySkill: 'scrapshot',
+  blazeSecondarySkill: 'phosphor_flare',
+  blazeUltimateSkill: 'phoenix_dive',
   heroAbilityBindings: {},
 });
 
@@ -124,6 +140,7 @@ const {
   BLAZE_AFTERBURNER_OPTION_ID,
   BLAZE_PHOSPHOR_FLARE_OPTION_ID,
   BLAZE_SCRAPSHOT_OPTION_ID,
+  BLAZE_PHOENIX_DIVE_OPTION_ID,
   HERO_LOADOUT_POOL,
 } = await import('../components/ui/loadoutPool');
 const scrapshotOption = HERO_LOADOUT_POOL.blaze.primaryFire.find((option) => (
@@ -139,6 +156,11 @@ const afterburnerOption = HERO_LOADOUT_POOL.blaze.ability1.find((option) => (
 ));
 assert.equal(afterburnerOption?.abilityId, 'blaze_afterburner');
 assert.equal(afterburnerOption?.ownership, 'owned');
+const phoenixDiveOption = HERO_LOADOUT_POOL.blaze.ultimate.find((option) => (
+  option.id === BLAZE_PHOENIX_DIVE_OPTION_ID
+));
+assert.equal(phoenixDiveOption?.abilityId, 'blaze_phoenix_dive');
+assert.equal(phoenixDiveOption?.ownership, 'owned');
 
 const { getHeroSkillItems } = await import('../components/ui/HeroSkillKit');
 assert.equal(getHeroSkillItems('blaze', 'scrapshot')[0]?.name, 'Scrapshot');
@@ -150,6 +172,10 @@ assert.equal(
 assert.equal(
   getHeroSkillItems('blaze', 'fireball_rockets', blazeBindings)[2]?.name,
   'Afterburner Dash',
+);
+assert.equal(
+  getHeroSkillItems('blaze', 'fireball_rockets', blazeBindings, 'meteor_strike', 'phoenix_dive')[4]?.name,
+  'Phoenix Dive',
 );
 const phantomSkills = getHeroSkillItems('phantom', 'fireball_rockets', phantomBindings);
 assert.equal(phantomSkills.find((skill) => skill.input === 'E')?.abilityId, 'phantom_personal_shield');

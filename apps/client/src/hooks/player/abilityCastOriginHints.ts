@@ -26,6 +26,7 @@ import { isHeroAbilityInputActive, useLoadoutStore } from '../../store/loadoutSt
 
 interface BuildAbilityCastOriginHintOptions {
   bombTargeting?: boolean;
+  phoenixDiveTarget?: { x: number; y: number; z: number } | null;
 }
 
 function plainOrigin(origin: ResolvedAbilitySocketOrigin): { x: number; y: number; z: number } {
@@ -49,6 +50,21 @@ function hintFromOrigin(
     origin: plainOrigin(origin),
     aimPoint: ctx.aimPoint ?? undefined,
     sampledAtMs: origin.timestampMs,
+  });
+}
+
+function hintFromPlayerRoot(
+  ctx: AbilityContext,
+  abilityId: string,
+  sampledAtMs: number,
+  aimPoint = ctx.aimPoint ?? undefined,
+): AbilityCastOriginHint {
+  return quantizeAbilityCastOriginHint({
+    abilityId,
+    socketName: 'root',
+    origin: ctx.position,
+    aimPoint,
+    sampledAtMs,
   });
 }
 
@@ -207,6 +223,7 @@ function shouldBuildAbilityCastOriginHints(
         input.ability1 ||
         input.secondaryFire ||
         input.ability2 ||
+        input.ultimate ||
         options.bombTargeting === true
       );
     case 'chronos':
@@ -364,6 +381,22 @@ export function buildAbilityCastOriginHints(
           ctx,
           'blaze_rocketjump',
           resolveBlazeStaffOrigin(ctx, 'blaze_rocketjump', now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS, 1)
+        )
+      );
+    }
+
+    if (
+      input.ultimate &&
+      useLoadoutStore.getState().blazeUltimateSkill === 'phoenix_dive'
+    ) {
+      pushHint(
+        hints,
+        seen,
+        hintFromPlayerRoot(
+          ctx,
+          'blaze_phoenix_dive',
+          now,
+          options.phoenixDiveTarget ?? ctx.aimPoint ?? undefined,
         )
       );
     }
