@@ -13127,10 +13127,10 @@ input[type="color"]::-webkit-color-swatch {
   box-sizing: border-box;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 0.8rem;
-  width: min(24rem, calc(100vw - max(1.8rem, env(safe-area-inset-left)) - max(1.8rem, env(safe-area-inset-right))));
-  padding: 0.75rem 0.85rem;
+  align-items: center;
+  gap: 0.7rem;
+  width: min(20rem, calc(100vw - max(1.8rem, env(safe-area-inset-left)) - max(1.8rem, env(safe-area-inset-right))));
+  padding: 0.6rem 0.7rem;
   border: 1px solid rgb(255 255 255 / 0.11);
   border-radius: 0.75rem;
   background:
@@ -13154,10 +13154,10 @@ input[type="color"]::-webkit-color-swatch {
 }
 
 .pwa-install-icon {
-  width: 2.6rem;
-  height: 2.6rem;
+  width: 2.25rem;
+  height: 2.25rem;
   flex-shrink: 0;
-  border-radius: 0.6rem;
+  border-radius: 0.55rem;
   border: 1px solid rgb(255 255 255 / 0.1);
 }
 
@@ -13198,7 +13198,7 @@ input[type="color"]::-webkit-color-swatch {
   display: flex;
   align-items: center;
   justify-content: center;
-  align-self: start;
+  align-self: center;
   flex-shrink: 0;
   width: 2.35rem;
   height: 2.35rem;
