@@ -21,7 +21,7 @@ import { SHARED_GEOMETRIES } from './effectResources';
 
 interface Effect {
   id: string;
-  type: 'grapple' | 'blink' | 'explosion' | 'hit' | 'lifeline' | 'heal' | 'chronosSelfHealPulse' | 'chronosAegisBreak';
+  type: 'grapple' | 'scrapshot' | 'blink' | 'explosion' | 'hit' | 'lifeline' | 'heal' | 'chronosSelfHealPulse' | 'chronosAegisBreak';
   position: THREE.Vector3;
   direction?: THREE.Vector3;
   endPosition?: THREE.Vector3;
@@ -44,6 +44,14 @@ const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
 const EFFECT_FORWARD = new THREE.Vector3(0, 0, 1);
 const EXPLOSION_INSTANCE_DUMMY = new THREE.Object3D();
 const GRAPPLE_LINE_MATERIAL = new THREE.LineBasicMaterial({ color: '#00ff88', linewidth: 2 });
+const SCRAPSHOT_TRACER_MATERIAL = new THREE.LineBasicMaterial({
+  color: '#ffb347',
+  transparent: true,
+  opacity: 0.9,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  toneMapped: false,
+});
 const CHRONOS_AEGIS_BREAK_SHARD_COUNT = 14;
 type GlobalEffectUpdater = (state: RootState, delta: number) => void;
 const globalEffectUpdaters = createFrameUpdaterRegistry<RootState>();
@@ -392,6 +400,18 @@ export function addEffects(newEffects: readonly Omit<Effect, 'id' | 'startTime'>
   }
 }
 
+export function addScrapshotEffects(
+  startPosition: { x: number; y: number; z: number },
+  endPositions: readonly { x: number; y: number; z: number }[]
+): void {
+  addEffects(endPositions.map((endPosition) => ({
+    type: 'scrapshot' as const,
+    position: new THREE.Vector3(startPosition.x, startPosition.y, startPosition.z),
+    endPosition: new THREE.Vector3(endPosition.x, endPosition.y, endPosition.z),
+    duration: 120,
+  })));
+}
+
 export function getGlobalEffectStats(now = Date.now()): GlobalEffectStats {
   compactExpiredEffects(now);
   return {
@@ -462,6 +482,8 @@ export function Effects() {
         switch (effect.type) {
           case 'grapple':
             return <GrappleLine key={effect.id} effect={effect} />;
+          case 'scrapshot':
+            return <ScrapshotTracer key={effect.id} effect={effect} />;
           case 'blink':
             return <BlinkEffect key={effect.id} effect={effect} />;
           case 'explosion':
@@ -516,6 +538,25 @@ function GrappleLine({ effect }: EffectProps) {
   return (
     <primitive object={lineObject} />
   );
+}
+
+function ScrapshotTracer({ effect }: EffectProps) {
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(6);
+    writeGrappleLinePositions(positions, effect);
+    const bufferGeometry = new THREE.BufferGeometry();
+    bufferGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return bufferGeometry;
+  }, [effect]);
+  const lineObject = useMemo(() => {
+    const line = new THREE.Line(geometry, SCRAPSHOT_TRACER_MATERIAL);
+    line.frustumCulled = false;
+    return line;
+  }, [geometry]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  return <primitive object={lineObject} />;
 }
 
 function BlinkEffect({ effect }: EffectProps) {

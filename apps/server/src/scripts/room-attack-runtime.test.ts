@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
+  BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS,
+  BLAZE_SCRAPSHOT_PELLET_DAMAGE,
+  BLAZE_SCRAPSHOT_RANGE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
@@ -20,6 +23,20 @@ import {
   getRoomAttackConfig,
   withHookshotHeavyAttackTargetHint,
 } from '../rooms/roomAttackRuntime';
+
+{
+  const attack = getRoomAttackConfig({
+    heroId: 'blaze',
+    mode: 'primary',
+    chronosAscendantActive: false,
+    blazePrimarySkill: 'scrapshot',
+  });
+
+  assert.equal(attack?.damageType, 'scrapshot');
+  assert.equal(attack?.damage, BLAZE_SCRAPSHOT_PELLET_DAMAGE);
+  assert.equal(attack?.range, BLAZE_SCRAPSHOT_RANGE);
+  assert.equal(attack?.collisionRadius, BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS);
+}
 
 {
   const attack = getRoomAttackConfig({
@@ -150,6 +167,7 @@ import {
 
 {
   assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'bomb' }), BLAZE_BOMB_AEGIS_COLLISION_RADIUS);
+  assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'scrapshot' }), BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS);
   assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'missing' }), 0);
 }
 

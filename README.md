@@ -213,6 +213,9 @@ Server environment:
 - `JUPITER_API_KEY`: Jupiter Swap API key used to build SOL to game-token swaps.
 - `JUPITER_SWAP_BASE_URL`: Jupiter Router API base URL. Default: `https://api.jup.ag/swap/v2`.
 - `WAGER_TOKEN_SWAP_SLIPPAGE_BPS`: swap slippage in basis points. Default: `50`.
+- `WAGER_RPC_CAPACITY_BACKOFF_MS`: cluster-wide wager background-job pause after an RPC monthly-capacity 429. Default: `21600000` (6 hours).
+
+Treasury recovery only polls Solana while an unsigned payment intent can still be recovered. It persists the newest inspected signature so unrelated treasury transactions are not fetched again after a restart or by another server replica.
 
 ### Playing
 

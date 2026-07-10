@@ -18,6 +18,7 @@ export interface WagerRuntimeConfig {
   settlementRetryMs: number;
   treasuryLowBalanceLamports: bigint;
   refundFeeFallbackLamports: bigint;
+  rpcCapacityBackoffMs: number;
   adminToken: string;
   goldenBiomeEnabled: boolean;
   goldenBiomeChanceBps: number;
@@ -29,6 +30,7 @@ const DEFAULT_MIN_COVER_CHARGE_LAMPORTS = 1_000_000n;
 const DEFAULT_MAX_COVER_CHARGE_LAMPORTS = 10_000_000_000n;
 const DEFAULT_TREASURY_LOW_BALANCE_LAMPORTS = 20_000_000n;
 const DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS = 5_000n;
+const DEFAULT_RPC_CAPACITY_BACKOFF_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_GOLDEN_BIOME_CHANCE_BPS = 200;
 const DEFAULT_GOLDEN_BIOME_TREASURY_MIN_LAMPORTS = 1_000_000_000n;
 const DEFAULT_GOLDEN_BIOME_WINNER_REWARD_LAMPORTS = 200_000_000n;
@@ -100,6 +102,7 @@ export function getWagerRuntimeConfig(): WagerRuntimeConfig {
     settlementRetryMs: intEnv('WAGER_SETTLEMENT_RETRY_MS', 60_000, { min: 5_000 }),
     treasuryLowBalanceLamports: bigintEnv('WAGER_TREASURY_LOW_BALANCE_LAMPORTS', DEFAULT_TREASURY_LOW_BALANCE_LAMPORTS),
     refundFeeFallbackLamports: bigintEnv('WAGER_REFUND_FEE_FALLBACK_LAMPORTS', DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS),
+    rpcCapacityBackoffMs: intEnv('WAGER_RPC_CAPACITY_BACKOFF_MS', DEFAULT_RPC_CAPACITY_BACKOFF_MS, { min: 60_000 }),
     adminToken: process.env.WAGER_ADMIN_TOKEN || '',
     goldenBiomeEnabled: envFlag('GOLDEN_BIOME_ENABLED', true),
     goldenBiomeChanceBps: intEnv('GOLDEN_BIOME_CHANCE_BPS', DEFAULT_GOLDEN_BIOME_CHANCE_BPS, { min: 0, max: 10_000 }),

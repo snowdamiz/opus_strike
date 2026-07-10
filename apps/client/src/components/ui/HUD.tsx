@@ -9,7 +9,6 @@ import {
   BATTLE_ROYAL_SOUL_INTERACTION_RADIUS,
   BATTLE_ROYAL_SOUL_SUMMON_DURATION_MS,
   BATTLE_ROYAL_SUMMONING_CIRCLE_INTERACTION_RADIUS,
-  BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
   CHRONOS_PRIMARY_RELOAD_MS,
@@ -21,10 +20,13 @@ import {
   type MapSummoningCircle,
   type Player,
   type SafeZoneSnapshot,
+  type BlazePrimarySkill,
+  getBlazePrimaryMagazineSize,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { useCombatFeedbackStore, type KillFeedEvent, type LocalDamageEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
+import { resolveHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
 import { useHudNow } from '../../store/hudSignals';
 import { visualStore } from '../../store/visualStore';
 import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
@@ -1504,23 +1506,25 @@ function BlazeAmmoCounter({
   reloading,
   reloadStart,
   reloadEnd,
+  primarySkill,
 }: {
   ammo: number;
   reloading: boolean;
   reloadStart: number;
   reloadEnd: number;
+  primarySkill: BlazePrimarySkill;
 }) {
   const now = useHudNow();
 
   return (
     <PrimaryShotCounter
-      label="rocket"
+      label={primarySkill === 'scrapshot' ? 'scrap' : 'rocket'}
       ammo={ammo}
       reloading={reloading}
       reloadStart={reloadStart}
       reloadEnd={reloadEnd}
       now={now}
-      maxAmmo={BLAZE_PRIMARY_MAGAZINE_SIZE}
+      maxAmmo={getBlazePrimaryMagazineSize(primarySkill)}
       reloadMs={BLAZE_PRIMARY_RELOAD_MS}
       tone={BLAZE_SHOT_COUNTER_TONE}
     />
@@ -1693,6 +1697,8 @@ function ChronosLifelineHelper() {
 }
 
 export function HUD() {
+  const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
+  const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
   const {
     // Local player decomposed into the specific fields the HUD reads, so the HUD
     // only re-renders when one of these values changes — not on every local
@@ -1907,7 +1913,13 @@ export function HUD() {
   const isLowHealth = isLocalCombatant && healthPercent < 30;
   const isCriticalHealth = isLocalCombatant && healthPercent < 15;
   const ultimatePercent = localUltimateCharge ?? 0;
-  const heroSkillItems = localHeroId ? getHeroSkillItems(localHeroId) : [];
+  const heroSkillItems = localHeroId
+    ? getHeroSkillItems(
+      localHeroId,
+      blazePrimarySkill,
+      resolveHeroAbilityBindings(localHeroId, heroAbilityBindings),
+    )
+    : [];
   const skillAccent = localHeroId ? HUD_HERO_COLORS[localHeroId].primary : HUD_HERO_COLORS.blaze.primary;
   const showChronosLifelineHelper = localHeroId === 'chronos' && chronosLifelineQueued;
   const isCaptureTheFlag = gameplayMode === 'capture_the_flag';
@@ -1953,6 +1965,7 @@ export function HUD() {
           reloading={blazePrimaryReloading}
           reloadStart={blazePrimaryReloadStart}
           reloadEnd={blazePrimaryReloadEnd}
+          primarySkill={blazePrimarySkill}
         />
       )}
       {localHeroId === 'chronos' && (

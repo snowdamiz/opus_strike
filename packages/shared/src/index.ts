@@ -18,6 +18,7 @@ export * from './types/modelSystem.js';
 export * from './types/skins.js';
 export * from './types/dailyMissions.js';
 export * from './types/recording.js';
+export * from './types/loadout.js';
 
 // Constants
 export * from './constants/game.js';
@@ -31,6 +32,7 @@ export * from './utils/playerGeometry.js';
 export * from './utils/chronosAegis.js';
 export * from './utils/blazeMeteor.js';
 export * from './utils/blazeRocketJump.js';
+export * from './utils/blazeScrapshot.js';
 export * from './utils/battleRoyalDropMovement.js';
 export * from './utils/movementDirection.js';
 export * from './utils/teamHeroLocks.js';

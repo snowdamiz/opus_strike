@@ -756,6 +756,19 @@ model WagerPayment {
   @@index([intentExpiresAt])
 }
 
+model WagerTreasuryRpcState {
+  id                   String    @id
+  cluster              String
+  treasuryWallet       String
+  lastScannedSignature String?
+  capacityBlockedUntil DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([cluster, treasuryWallet])
+  @@index([capacityBlockedUntil])
+}
+
 model WagerSettlement {
   id                   String                @id @default(cuid())
   wageredLobbyId       String                @unique

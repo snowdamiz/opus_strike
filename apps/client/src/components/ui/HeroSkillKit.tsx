@@ -2,18 +2,23 @@ import {
   ABILITY_CARD_STATS,
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
+  DEFAULT_BLAZE_PRIMARY_SKILL,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
-import type { AbilityCardStat, HeroId } from '@voxel-strike/shared';
+import type { AbilityCardStat, BlazePrimarySkill, HeroId } from '@voxel-strike/shared';
 import {
   DRAG_HOOK_COOLDOWN,
   HOOKSHOT_FIRE_INTERVAL,
   PHANTOM_FIRE_INTERVAL,
 } from '../../hooks/player/constants';
 import { SKILL_RARITY_COLORS } from '../../styles/colorTokens';
+import {
+  getDefaultHeroAbilityBindings,
+  type HeroAbilityBindings,
+} from '../../store/loadoutStore';
 import { AbilityIcon, getAbilityIconType, type AbilityIconType } from './HeroIcons';
 
 export type HeroSkillTone = 'click' | 'ultimate';
@@ -169,6 +174,16 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
   ],
 };
 
+export const BLAZE_SCRAPSHOT_SKILL: HeroClickSkill = {
+  input: 'LMB',
+  statKey: 'blaze_scrapshot',
+  name: 'Scrapshot',
+  description: 'Fire six incendiary pellets in a short-range burst with steep distance falloff.',
+  cooldown: BLAZE_ROCKET_FIRE_INTERVAL_MS / 1000,
+  iconType: 'scrapshot',
+  rarity: 'epic',
+};
+
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   phantom: [
     fromAbility('E', 'phantom_blink'),
@@ -195,25 +210,52 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
 // The skill list is static per hero, so cache it once per heroId. This keeps the
 // returned array (and its item objects) referentially stable across renders, which
 // lets memoized HUD leaf components (e.g. HUDSkillSlot) skip re-renders.
-const heroSkillItemsCache = new Map<HeroId, HeroSkillItem[]>();
+const heroSkillItemsCache = new Map<string, HeroSkillItem[]>();
 
-export function getHeroSkillItems(heroId: HeroId): HeroSkillItem[] {
-  const cached = heroSkillItemsCache.get(heroId);
+export function getHeroSkillItems(
+  heroId: HeroId,
+  blazePrimarySkill: BlazePrimarySkill = DEFAULT_BLAZE_PRIMARY_SKILL,
+  abilityBindings: HeroAbilityBindings = getDefaultHeroAbilityBindings(heroId),
+): HeroSkillItem[] {
+  const cacheKey = [
+    heroId,
+    heroId === 'blaze' ? blazePrimarySkill : DEFAULT_BLAZE_PRIMARY_SKILL,
+    abilityBindings.ability1,
+    abilityBindings.ability2,
+  ].join(':');
+  const cached = heroSkillItemsCache.get(cacheKey);
   if (cached) return cached;
 
+  const clickSkills = heroId === 'blaze' && blazePrimarySkill === 'scrapshot'
+    ? [BLAZE_SCRAPSHOT_SKILL, HERO_CLICK_SKILLS.blaze[1]]
+    : HERO_CLICK_SKILLS[heroId];
+  const stockAbilitySkills = HERO_ABILITY_SKILLS[heroId];
+  const stockAbilityById = new Map(
+    stockAbilitySkills.slice(0, 2).map((skill) => [skill.abilityId, skill]),
+  );
+  const slottedAbilitySkills: HeroSkillItem[] = [
+    {
+      ...(stockAbilityById.get(abilityBindings.ability1) ?? stockAbilitySkills[0]),
+      input: 'E',
+    },
+    {
+      ...(stockAbilityById.get(abilityBindings.ability2) ?? stockAbilitySkills[1]),
+      input: 'Q',
+    },
+    stockAbilitySkills[2],
+  ];
+
   const items: HeroSkillItem[] = [
-    // Real, shipped skills are all common. Higher rarities are only used by the
-    // synthesized loadout demo variants to showcase the rarity system.
-    ...HERO_CLICK_SKILLS[heroId].map((skill) => ({
+    ...clickSkills.map((skill) => ({
       ...skill,
       tone: 'click' as const,
-      rarity: 'common' as const,
+      rarity: skill.rarity ?? 'common',
       meta: [
         ...getAbilityCardMeta(skill.statKey),
         ...(skill.meta ?? []),
       ],
     })),
-    ...HERO_ABILITY_SKILLS[heroId].map((skill) => ({
+    ...slottedAbilitySkills.map((skill) => ({
       ...skill,
       rarity: 'common' as const,
       meta: [
@@ -223,7 +265,7 @@ export function getHeroSkillItems(heroId: HeroId): HeroSkillItem[] {
     })),
   ];
 
-  heroSkillItemsCache.set(heroId, items);
+  heroSkillItemsCache.set(cacheKey, items);
   return items;
 }
 

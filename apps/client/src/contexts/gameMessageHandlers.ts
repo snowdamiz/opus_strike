@@ -48,7 +48,7 @@ import {
   recordTransformMessage,
 } from '../movement/networkDiagnostics';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
-import { addEffect } from '../components/game/Effects';
+import { addEffect, addScrapshotEffects } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect } from '../components/game/PhantomEffects';
 import { triggerPhantomShieldBreakEffect, triggerPhantomShieldCastEffect } from '../components/game/phantom';
@@ -2623,6 +2623,34 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_rocket')) {
         playBlazeWorldSound('blazeRocket', startPosition, {
           pitch: 0.85 + Math.random() * 0.3,
+        });
+      }
+      return true;
+    }
+
+    case 'blaze_scrapshot': {
+      if (isLocalPlayer) {
+        applyBlazePrimaryState(data);
+      }
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition
+      );
+      if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('blaze_scrapshot', data.playerId)
+        : null;
+      if (!predictedVisualId && data.pelletImpacts?.length) {
+        addScrapshotEffects(
+          startPosition,
+          data.pelletImpacts.map((impact) => impact.position)
+        );
+      }
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_scrapshot')) {
+        playBlazeWorldSound('blazeRocket', startPosition, {
+          pitch: 0.72 + Math.random() * 0.12,
         });
       }
       return true;

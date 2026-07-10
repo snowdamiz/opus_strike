@@ -168,7 +168,7 @@ export type AbilityIconType =
   | 'timebreak'
   | 'lifelineconduit'
   | 'ascendantparadox'
-  // Epic loadout skills (UI-only)
+  // Epic loadout skills
   | 'soulrend'
   | 'riftbolt'
   | 'umbraldecoy'
@@ -568,7 +568,7 @@ function UltimateIcon({ size, color, className }: IconProps) {
   );
 }
 
-// ============= EPIC LOADOUT SKILL ICONS (UI-only) =============
+// ============= EPIC LOADOUT SKILL ICONS =============
 
 // Phantom — Soulrend Daggers: a shadow dagger with a ricochet bounce path.
 function SoulrendDaggersIcon({ size, color, className }: IconProps) {

@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { FeaturedHeroPreviewFallback } from './FeaturedHeroPreviewFallback';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
+import type { BlazePrimarySkill } from '@voxel-strike/shared';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { AbilityIcon, HeroIcon } from './HeroIcons';
 import { SkinRarityChrome } from './SkinRarityChrome';
@@ -9,6 +10,7 @@ import { SKILL_RARITY_COLORS } from '../../styles/colorTokens';
 import { formatKeybind } from '../../utils/keybindings';
 import {
   HERO_LOADOUT_POOL,
+  BLAZE_SCRAPSHOT_OPTION_ID,
   LOADOUT_GROUPS,
   LOADOUT_SLOTS,
   defaultOptionId,
@@ -19,6 +21,11 @@ import {
   type LoadoutSlotDef,
   type LoadoutSlotKey,
 } from './loadoutPool';
+import {
+  getDefaultHeroAbilityBindings,
+  resolveHeroAbilityBindings,
+  useLoadoutStore,
+} from '../../store/loadoutStore';
 
 type AbilitySlot = 'ability1' | 'ability2';
 type LoadoutFilter = 'all' | LoadoutOwnership;
@@ -35,56 +42,59 @@ const FeaturedHeroPreview = lazy(() =>
 );
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 
-// Session-only: stores only the slots the user has changed away from default.
-type EquippedMap = Partial<Record<HeroId, Partial<Record<LoadoutSlotKey, string>>>>;
-
 interface LoadoutTabProps {
   featuredHero: HeroId;
   onSelectHero: (heroId: HeroId) => void;
 }
 
 export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
-  const [equipped, setEquipped] = useState<EquippedMap>({});
   const [filter, setFilter] = useState<LoadoutFilter>('all');
+  const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
+  const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
+  const setBlazePrimarySkill = useLoadoutStore((state) => state.setBlazePrimarySkill);
+  const assignHeroAbility = useLoadoutStore((state) => state.assignHeroAbility);
 
   const heroDef = HERO_DEFINITIONS[featuredHero];
   const pool = HERO_LOADOUT_POOL[featuredHero];
-  const heroEquip = equipped[featuredHero] ?? {};
-  const equippedId = (slot: LoadoutSlotKey) => heroEquip[slot] ?? defaultOptionId(featuredHero, slot);
+  const equippedAbilities = resolveHeroAbilityBindings(featuredHero, heroAbilityBindings);
+  const equippedId = (slot: LoadoutSlotKey) => {
+    if (featuredHero === 'blaze' && slot === 'primaryFire') {
+      return blazePrimarySkill === 'scrapshot'
+        ? BLAZE_SCRAPSHOT_OPTION_ID
+        : defaultOptionId('blaze', 'primaryFire');
+    }
+    if (slot === 'ability1' || slot === 'ability2') {
+      const option = getAbilityPool(featuredHero).find((candidate) => (
+        candidate.abilityId === equippedAbilities[slot]
+      ));
+      return option?.id ?? defaultOptionId(featuredHero, slot);
+    }
+    return defaultOptionId(featuredHero, slot);
+  };
 
   const handleEquip = (slot: LoadoutSlotKey, optionId: string) => {
-    setEquipped((prev) => ({
-      ...prev,
-      [featuredHero]: { ...(prev[featuredHero] ?? {}), [slot]: optionId },
-    }));
+    if (featuredHero === 'blaze' && slot === 'primaryFire') {
+      const skill: BlazePrimarySkill = optionId === BLAZE_SCRAPSHOT_OPTION_ID
+        ? 'scrapshot'
+        : 'fireball_rockets';
+      setBlazePrimarySkill(skill);
+    }
   };
 
   // Assign an ability option to the E or Q slot. If the option already sits in
   // the other slot, the two swap so both slots stay filled and distinct.
-  const handleAssignAbility = (slot: AbilitySlot, optionId: string) => {
-    setEquipped((prev) => {
-      const heroEquipped = prev[featuredHero] ?? {};
-      const e = heroEquipped.ability1 ?? defaultOptionId(featuredHero, 'ability1');
-      const q = heroEquipped.ability2 ?? defaultOptionId(featuredHero, 'ability2');
-      const next = { ...heroEquipped };
-      if (slot === 'ability1') {
-        if (q === optionId) next.ability2 = e; // swap out of Q
-        next.ability1 = optionId;
-      } else {
-        if (e === optionId) next.ability1 = q; // swap out of E
-        next.ability2 = optionId;
-      }
-      return { ...prev, [featuredHero]: next };
-    });
+  const handleAssignAbility = (slot: AbilitySlot, option: LoadoutSkillOption) => {
+    if (!option.abilityId) return;
+    assignHeroAbility(featuredHero, slot, option.abilityId);
   };
 
   const tunedCount = (heroId: HeroId) => {
-    const heroChoices = equipped[heroId];
-    if (!heroChoices) return 0;
-    return LOADOUT_SLOTS.reduce((count, slot) => {
-      const choice = heroChoices[slot.key];
-      return choice && choice !== defaultOptionId(heroId, slot.key) ? count + 1 : count;
-    }, 0);
+    const blazeTuned = heroId === 'blaze' && blazePrimarySkill === 'scrapshot' ? 1 : 0;
+    const defaults = getDefaultHeroAbilityBindings(heroId);
+    const abilities = resolveHeroAbilityBindings(heroId, heroAbilityBindings);
+    return blazeTuned
+      + (abilities.ability1 === defaults.ability1 ? 0 : 1)
+      + (abilities.ability2 === defaults.ability2 ? 0 : 1);
   };
 
   const allOptions = LOADOUT_SLOTS.flatMap((slot) => pool[slot.key]);
@@ -120,7 +130,7 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
                 key={option.id}
                 option={option}
                 equippedSlot={equippedSlot}
-                onAssign={(slot) => handleAssignAbility(slot, option.id)}
+                onAssign={(slot) => handleAssignAbility(slot, option)}
               />
             );
           })}

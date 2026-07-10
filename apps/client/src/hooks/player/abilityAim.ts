@@ -1,11 +1,14 @@
 import {
   BLAZE_FLAMETHROWER_RANGE,
+  BLAZE_SCRAPSHOT_RANGE,
+  DEFAULT_BLAZE_PRIMARY_SKILL,
   HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE,
   HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
   type HeroId,
   type InputState,
   type Team,
   type Vec3,
+  type BlazePrimarySkill,
 } from '@voxel-strike/shared';
 import { calculateLookDirection } from './constants';
 import type { AbilityContext } from './types';
@@ -86,7 +89,8 @@ function isMobileAimAssistTarget(
 
 export function getMobileAimAssistActionConfig(
   heroId: HeroId,
-  input: Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>
+  input: Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>,
+  blazePrimarySkill: BlazePrimarySkill = DEFAULT_BLAZE_PRIMARY_SKILL
 ): MobileAimAssistActionConfig | null {
   switch (heroId) {
     case 'phantom':
@@ -99,7 +103,12 @@ export function getMobileAimAssistActionConfig(
       return null;
     case 'blaze':
       if (input.primaryFire) {
-        return { maxDistance: BLAZE_ROCKET_AIM_ASSIST_DISTANCE, targetTeam: 'enemy' };
+        return {
+          maxDistance: blazePrimarySkill === 'scrapshot'
+            ? BLAZE_SCRAPSHOT_RANGE
+            : BLAZE_ROCKET_AIM_ASSIST_DISTANCE,
+          targetTeam: 'enemy',
+        };
       }
       if (input.ability1) {
         return { maxDistance: BLAZE_FLAMETHROWER_RANGE, targetTeam: 'enemy' };

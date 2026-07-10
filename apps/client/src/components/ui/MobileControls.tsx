@@ -4,6 +4,7 @@ import { useGameStore } from '../../store/gameStore';
 import { addLookDelta } from '../../store/lookInputStore';
 import { resetMobileControls, useMobileControlsStore } from '../../store/mobileControlsStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { resolveHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
 import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
@@ -420,14 +421,22 @@ export function MobileControls({
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const setActionPressed = useMobileControlsStore(state => state.setActionPressed);
   const layoutEditing = useSettingsStore(state => state.settings.mobileHudLayoutEditing);
+  const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
+  const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
   const shouldRender = Boolean(controlsAvailable && !disabled && heroId);
   const gameplayControlsDisabled = disabled || layoutEditing;
   const isTargeting = bombTargeting;
   const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.blaze;
 
   const skillItems = useMemo(
-    () => (heroId ? getHeroSkillItems(heroId) : []),
-    [heroId]
+    () => (heroId
+      ? getHeroSkillItems(
+        heroId,
+        blazePrimarySkill,
+        resolveHeroAbilityBindings(heroId, heroAbilityBindings),
+      )
+      : []),
+    [blazePrimarySkill, heroAbilityBindings, heroId]
   );
   const primarySkill = getSkillByInput(skillItems, 'LMB');
   const secondarySkill = getSkillByInput(skillItems, 'RMB');

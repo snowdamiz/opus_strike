@@ -1,4 +1,5 @@
 import {
+  BLAZE_SCRAPSHOT_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA,
@@ -6,7 +7,10 @@ import {
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   applyDamage as resolveSharedDamage,
   calculateFalloffDamage,
+  calculateBlazeScrapshotPelletDamage,
   getAimConeHitAgainstPlayerCombatHitbox,
+  getBlazeScrapshotPelletDirections,
+  getSegmentHitAgainstPlayerCombatHitbox,
   shouldApplyDamageTick,
   type DamageEngineAdapter,
   type DamageHistoryStore,
@@ -80,6 +84,13 @@ interface TutorialOfflineTrainingConeDamageInput {
 }
 
 interface TutorialOfflineTimebreakKnockbackInput {
+  origin: Vec3;
+  direction: Vec3;
+  sourceId?: string | null;
+  sourceTeam?: Team | null;
+}
+
+interface TutorialOfflineScrapshotInput {
   origin: Vec3;
   direction: Vec3;
   sourceId?: string | null;
@@ -526,6 +537,48 @@ export function applyTutorialOfflineTrainingConeDamage(input: TutorialOfflineTra
   }
 
   return appliedCount;
+}
+
+export function applyTutorialOfflineTrainingScrapshot(input: TutorialOfflineScrapshotInput): number {
+  const store = useGameStore.getState();
+  if (!store.isPracticeMode || store.gamePhase !== 'playing') return 0;
+
+  const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
+  let appliedPellets = 0;
+
+  for (const direction of getBlazeScrapshotPelletDirections(input.direction)) {
+    let closestTarget: Player | null = null;
+    let closestHit: ReturnType<typeof getSegmentHitAgainstPlayerCombatHitbox> = null;
+
+    for (const target of useGameStore.getState().players.values()) {
+      if (!isTutorialOfflineTrainingHero(target) || target.state !== 'alive') continue;
+      if (sourceTeam && target.team === sourceTeam) continue;
+
+      const hit = getSegmentHitAgainstPlayerCombatHitbox(
+        input.origin,
+        direction,
+        BLAZE_SCRAPSHOT_RANGE,
+        { position: target.position, heroId: target.heroId }
+      );
+      if (!hit || (closestHit && hit.distance >= closestHit.distance)) continue;
+      closestTarget = target;
+      closestHit = hit;
+    }
+
+    if (!closestTarget || !closestHit) continue;
+    const result = applyTutorialOfflineTrainingDamage({
+      target: closestTarget,
+      damage: calculateBlazeScrapshotPelletDamage(closestHit.distance),
+      damageType: 'scrapshot',
+      hitPosition: closestHit.targetPoint,
+      sourceId,
+      sourceTeam,
+      abilityId: 'blaze_scrapshot',
+    });
+    if (result.applied) appliedPellets++;
+  }
+
+  return appliedPellets;
 }
 
 export function applyTutorialOfflineTrainingTimebreakKnockback(input: TutorialOfflineTimebreakKnockbackInput): number {

@@ -16,6 +16,7 @@ import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type ObserverFlightSpeed } from '../../store/gameStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { applyHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
 import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
 import {
   consumeLocalPlayerImpulses,
@@ -527,7 +528,11 @@ function resolveMobileAimAssistAimPoint({
 }): MutableVec3 | null {
   if (!isTouchInputActive) return null;
 
-  const assistConfig = getMobileAimAssistActionConfig(heroId, inputState);
+  const assistConfig = getMobileAimAssistActionConfig(
+    heroId,
+    inputState,
+    useLoadoutStore.getState().blazePrimarySkill
+  );
   if (!assistConfig) return null;
 
   writeMobileAimAssistOrigin({
@@ -2332,6 +2337,8 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   usePhysics();
   const { sendMovementCommands, sendMapPing } = useNetwork();
   const pingKeybinding = useSettingsStore(state => state.settings.keybindings.ping);
+  const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
+  const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
 
   // Audio hooks
   const {
@@ -2349,7 +2356,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
   // Hero ability hooks
   const phantomAbilities = usePhantomAbilities();
-  const blazeAbilities = useBlazeAbilities();
+  const blazeAbilities = useBlazeAbilities(blazePrimarySkill);
   const hookshotAbilities = useHookshotAbilities();
   const chronosAbilities = useChronosAbilities();
   const {
@@ -2940,7 +2947,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
     const hasControlInput = inputEnabled && (isPointerLocked || isTouchInputActive || isGamepadInputActive);
-    const rawFrameInput = hasControlInput ? inputState : INACTIVE_INPUT_STATE;
+    let rawFrameInput = hasControlInput ? inputState : INACTIVE_INPUT_STATE;
     let frameInput = rawFrameInput;
     const hasMovementInput = (
       rawFrameInput.moveForward ||
@@ -3061,6 +3068,8 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
     // Get hero stats (cached)
     const heroId = localPlayer.heroId as HeroId;
+    rawFrameInput = applyHeroAbilityBindings(rawFrameInput, heroId, heroAbilityBindings);
+    frameInput = applyHeroAbilityBindings(frameInput, heroId, heroAbilityBindings);
     defaultViewmodelPoseRuntime.heroId = heroId;
     if (hasControlInput) {
       lastViewmodelPoseResetKeyRef.current = null;
@@ -3356,6 +3365,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       soundFrameArg.phantomPrimaryReloading = phantomPrimaryReloading;
       soundFrameArg.blazePrimaryAmmo = blazeAbilities.blazePrimaryAmmoRef.current;
       soundFrameArg.blazePrimaryReloading = blazePrimaryReloading;
+      soundFrameArg.blazePrimarySkill = blazePrimarySkill;
       soundFrameArg.chronosPrimaryAmmo = chronosAbilities.chronosPrimaryAmmoRef.current;
       soundFrameArg.chronosPrimaryReloading = chronosAbilities.chronosPrimaryReloadingRef.current;
       soundFrameArg.canUseAbility = abilitySystem.canUseAbility;
@@ -3681,7 +3691,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       }
 
       if (heroId === 'blaze') {
-        blazeAbilities.fireRocket(abilityCtx);
+        blazeAbilities.firePrimary(abilityCtx);
         blazeAbilities.handleBombTargeting(abilityCtx, playerSounds);
         blazeAbilities.handleFlamethrower(
           abilityCtx,

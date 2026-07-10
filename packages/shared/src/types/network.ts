@@ -105,6 +105,10 @@ export interface AbilityUsedMessage {
   impactPosition?: Vec3;
   interceptedByChronosAegis?: boolean;
   targetIds?: string[];
+  pelletImpacts?: Array<{
+    position: Vec3;
+    kind: 'miss' | 'terrain' | 'player' | 'aegis';
+  }>;
   targets?: Array<{
     targetId: string;
     position: Vec3;
