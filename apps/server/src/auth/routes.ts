@@ -58,6 +58,7 @@ import {
   type MobileWalletDeepLinkState,
   type MobileWalletHandoffSessionKind,
 } from './mobileWalletDeepLinkStore';
+import { renderMobileWalletHandoffPage } from './mobileWalletHandoffPage';
 
 const router: RouterType = Router();
 
@@ -424,74 +425,6 @@ function sendMobileWalletAuthError(
   });
 }
 
-const MOBILE_WALLET_HANDOFF_ERROR_MESSAGES: Record<string, string> = {
-  wallet_denied: 'The wallet request was canceled.',
-  wallet_conflict: 'That wallet is already linked to another profile.',
-  wallet_expired: 'The wallet connection expired.',
-  wallet_invalid_signature: 'The wallet signature could not be verified.',
-  wallet_unavailable: 'Wallet sign-in is temporarily unavailable.',
-  wallet_failed: 'Wallet sign-in failed.',
-};
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function buildClientReturnUrl(returnTo: string, params: Record<string, string>): string {
-  const returnPath = appendAuthStatus(returnTo, params);
-  const clientOrigin = getClientOrigin();
-  return clientOrigin ? new URL(returnPath, clientOrigin).toString() : returnPath;
-}
-
-function renderMobileWalletHandoffPage(
-  res: Response,
-  input: { success: boolean; errorCode?: string; continueUrl: string }
-): void {
-  const title = input.success ? 'Wallet connected' : 'Wallet sign-in didn’t finish';
-  const icon = input.success ? '&#10003;' : '&#10007;';
-  const detail = input.success
-    ? 'Switch back to the Slop Heroes app to finish signing in. You can close this tab.'
-    : `${MOBILE_WALLET_HANDOFF_ERROR_MESSAGES[input.errorCode ?? ''] ?? MOBILE_WALLET_HANDOFF_ERROR_MESSAGES.wallet_failed} Return to the Slop Heroes app and try again.`;
-
-  res
-    .status(input.success ? 200 : 400)
-    .type('html')
-    .send(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>${escapeHtml(title)} · Slop Heroes</title>
-<style>
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #0b0e14; color: #e6e9f0; font-family: system-ui, -apple-system, sans-serif; text-align: center; }
-  main { padding: 32px 24px; max-width: 420px; }
-  .icon { width: 64px; height: 64px; margin: 0 auto 20px; border-radius: 50%; display: flex;
-    align-items: center; justify-content: center; font-size: 30px;
-    background: ${input.success ? 'rgba(74, 222, 128, 0.12)' : 'rgba(248, 113, 113, 0.12)'};
-    color: ${input.success ? '#4ade80' : '#f87171'}; }
-  h1 { font-size: 22px; margin: 0 0 10px; }
-  p { margin: 0 0 24px; line-height: 1.5; color: #9aa3b2; }
-  a { color: #7dd3fc; text-decoration: none; font-size: 14px; }
-</style>
-</head>
-<body>
-<main>
-  <div class="icon">${icon}</div>
-  <h1>${escapeHtml(title)}</h1>
-  <p>${escapeHtml(detail)}</p>
-  <a href="${escapeHtml(input.continueUrl)}">Or continue in this browser instead</a>
-</main>
-</body>
-</html>`);
-}
-
 async function failMobileWalletCallback(
   req: Request,
   res: Response,
@@ -514,12 +447,8 @@ async function failMobileWalletCallback(
 
     renderMobileWalletHandoffPage(res, {
       success: false,
+      providerId: state.providerId,
       errorCode,
-      continueUrl: buildClientReturnUrl(state.returnTo, {
-        auth: 'error',
-        provider: 'wallet',
-        error: errorCode,
-      }),
     });
     return;
   }
@@ -1457,7 +1386,7 @@ router.get('/mobile-wallet/:providerId/sign', async (req: Request, res: Response
       if (storedResult && !wantsMobileWalletJsonResponse(req)) {
         renderMobileWalletHandoffPage(res, {
           success: true,
-          continueUrl: buildClientReturnUrl(state.returnTo, walletAuthSuccessParams(completion.payload)),
+          providerId: state.providerId,
         });
         return;
       }

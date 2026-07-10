@@ -18,6 +18,7 @@ import {
   MOBILE_WALLET_HANDOFF_TTL_MS,
   type MobileWalletDeepLinkState,
 } from '../auth/mobileWalletDeepLinkStore';
+import { buildMobileWalletHandoffPage } from '../auth/mobileWalletHandoffPage';
 
 function encryptWalletResponse(input: {
   dappPublicKey: string;
@@ -151,6 +152,29 @@ function runMobileWalletDeepLinkTests(): void {
   assert.equal(solflareConnectUrl.origin + solflareConnectUrl.pathname, 'https://solflare.com/ul/v1/connect');
 }
 
+function runMobileWalletHandoffPageTests(): void {
+  const successPage = buildMobileWalletHandoffPage({
+    success: true,
+    providerId: 'phantom',
+  });
+  assert.match(successPage, /role="dialog"/);
+  assert.match(successPage, /aria-modal="true"/);
+  assert.match(successPage, /Return to Slop Heroes/);
+  assert.match(successPage, /Close this Phantom browser/);
+  assert.match(successPage, /Open Slop Heroes from your Home Screen/);
+  assert.doesNotMatch(successPage, /<a\b/i, 'handoff dialog must not offer browser navigation');
+  assert.doesNotMatch(successPage, /<button\b/i, 'handoff dialog must not be dismissible');
+
+  const errorPage = buildMobileWalletHandoffPage({
+    success: false,
+    providerId: 'solflare',
+    errorCode: 'wallet_denied',
+  });
+  assert.match(errorPage, /Wallet sign-in didn’t finish/);
+  assert.match(errorPage, /The wallet request was canceled/);
+  assert.match(errorPage, /Close this Solflare browser/);
+}
+
 async function runMobileWalletHandoffTests(): Promise<void> {
   forceLocalMobileWalletDeepLinkStoreForTests();
 
@@ -230,6 +254,7 @@ async function runMobileWalletHandoffTests(): Promise<void> {
 }
 
 runMobileWalletDeepLinkTests();
+runMobileWalletHandoffPageTests();
 runMobileWalletHandoffTests()
   .then(() => {
     console.log('mobile-wallet-deeplink tests passed');
