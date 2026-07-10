@@ -16,6 +16,24 @@ export interface MobileWalletHandoffPageInput {
   errorCode?: string;
 }
 
+export interface MobileWalletHandoffResponse {
+  action: 'handoff';
+  status: 'success' | 'error';
+  providerId: MobileWalletProviderId;
+  errorCode?: string;
+}
+
+export function buildMobileWalletHandoffResponse(
+  input: MobileWalletHandoffPageInput
+): MobileWalletHandoffResponse {
+  return {
+    action: 'handoff',
+    status: input.success ? 'success' : 'error',
+    providerId: input.providerId,
+    ...(!input.success && input.errorCode ? { errorCode: input.errorCode } : {}),
+  };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

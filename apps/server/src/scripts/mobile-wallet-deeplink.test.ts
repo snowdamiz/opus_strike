@@ -18,7 +18,10 @@ import {
   MOBILE_WALLET_HANDOFF_TTL_MS,
   type MobileWalletDeepLinkState,
 } from '../auth/mobileWalletDeepLinkStore';
-import { buildMobileWalletHandoffPage } from '../auth/mobileWalletHandoffPage';
+import {
+  buildMobileWalletHandoffPage,
+  buildMobileWalletHandoffResponse,
+} from '../auth/mobileWalletHandoffPage';
 
 function encryptWalletResponse(input: {
   dappPublicKey: string;
@@ -153,6 +156,25 @@ function runMobileWalletDeepLinkTests(): void {
 }
 
 function runMobileWalletHandoffPageTests(): void {
+  assert.deepEqual(buildMobileWalletHandoffResponse({
+    success: true,
+    providerId: 'phantom',
+  }), {
+    action: 'handoff',
+    status: 'success',
+    providerId: 'phantom',
+  });
+  assert.deepEqual(buildMobileWalletHandoffResponse({
+    success: false,
+    providerId: 'solflare',
+    errorCode: 'wallet_denied',
+  }), {
+    action: 'handoff',
+    status: 'error',
+    providerId: 'solflare',
+    errorCode: 'wallet_denied',
+  });
+
   const successPage = buildMobileWalletHandoffPage({
     success: true,
     providerId: 'phantom',
