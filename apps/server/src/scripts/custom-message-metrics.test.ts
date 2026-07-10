@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { estimateCustomMessageBytes } from '../rooms/customMessageMetrics';
+import { GameRoom } from '../rooms/GameRoom';
 import { RoomMetrics } from '../rooms/roomMetrics';
 
 const singleTransform = {
@@ -45,6 +46,20 @@ assert.ok(multiBytes > singleBytes);
 assert.ok(hiddenBytes > estimateCustomMessageBytes('playerTransformsV2', { ...singleTransform, players: [] }));
 assert.ok(estimateCustomMessageBytes('playerInterest', interestUpdate) > 0);
 
+const combatBatchBytes = estimateCustomMessageBytes('playerEventBatch', {
+  events: [
+    { type: 'abilityUsed', payload: { playerId: 'bot-a', abilityId: 'phantom_primary' } },
+    { type: 'playerDamaged', payload: { targetId: 'bot-b', damage: 24 } },
+    { type: 'playerKilled', payload: { victimId: 'bot-b', killerId: 'bot-a' } },
+  ],
+});
+assert.ok(
+  combatBatchBytes >
+    estimateCustomMessageBytes('abilityUsed', {}) +
+    estimateCustomMessageBytes('playerDamaged', {}) +
+    estimateCustomMessageBytes('playerKilled', {})
+);
+
 const cyclic: Record<string, unknown> = { type: 'diagnostic' };
 cyclic.self = cyclic;
 assert.ok(estimateCustomMessageBytes('diagnostic', cyclic) > 0);
@@ -73,5 +88,49 @@ assert.equal(roomMetrics.getCustomMessageMetric('playerTransformsV2')?.bytes, si
 const messageTotals = roomMetrics.getCustomMessageTotals();
 assert.equal(messageTotals.messages, 2);
 assert.ok(messageTotals.bytes > singleBytes * 2);
+
+{
+  const sent: Array<{ type: string; payload: unknown }> = [];
+  type BatchTestClient = {
+    send(type: string, payload: unknown): void;
+  };
+  const client: BatchTestClient = {
+    send(type: string, payload: unknown) {
+      sent.push({ type, payload });
+    },
+  };
+  const room = Object.create(GameRoom.prototype) as {
+    state: { phase: string };
+    tickInProgress: boolean;
+    roomMetrics: { recordCustomMessage(type: string, payload: unknown, recipients: number): void };
+    deferredTrackedMessages: Array<{ client: BatchTestClient; type: string; payload: unknown }>;
+    deferredPlayerEventBatches: Map<BatchTestClient, Array<{ type: string; payload: unknown }>>;
+    deferredPlayerEventBatchClients: BatchTestClient[];
+    sendTrackedAfterGameplayWork(client: BatchTestClient, type: string, payload: unknown): void;
+    flushDeferredTrackedMessages(): void;
+  };
+  room.state = { phase: 'playing' };
+  room.tickInProgress = true;
+  room.roomMetrics = { recordCustomMessage: () => undefined };
+  room.deferredTrackedMessages = [];
+  room.deferredPlayerEventBatches = new Map();
+  room.deferredPlayerEventBatchClients = [];
+
+  room.sendTrackedAfterGameplayWork(client, 'abilityUsed', { playerId: 'bot-a', abilityId: 'phantom_primary' });
+  room.sendTrackedAfterGameplayWork(client, 'playerDamaged', { targetId: 'bot-b', damage: 24 });
+  assert.equal(sent.length, 0);
+
+  room.flushDeferredTrackedMessages();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.type, 'playerEventBatch');
+  assert.deepEqual(sent[0]?.payload, {
+    events: [
+      { type: 'abilityUsed', payload: { playerId: 'bot-a', abilityId: 'phantom_primary' } },
+      { type: 'playerDamaged', payload: { targetId: 'bot-b', damage: 24 } },
+    ],
+  });
+  room.flushDeferredTrackedMessages();
+  assert.equal(sent.length, 1);
+}
 
 console.log('custom message metrics tests passed');

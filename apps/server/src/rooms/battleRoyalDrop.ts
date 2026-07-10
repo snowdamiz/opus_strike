@@ -9,7 +9,9 @@ import type {
 import {
   BATTLE_ROYAL_DROP_POD_LANDING_CLEARANCE,
   BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED,
+  PITCH_LIMIT,
   advanceBattleRoyalDropPodMotion,
+  getBattleRoyalDropInputSteer,
   hashSeed,
   isInsideBoundaryPolygon,
 } from '@voxel-strike/shared';
@@ -40,6 +42,7 @@ export interface BattleRoyalDropPlayerState {
   landedAt: number | null;
   slotOffset: Vec3;
   landingOffset: Vec3;
+  landingTarget: Vec3 | null;
   attachedToPlayerId: string | null;
   latestInput: PlayerInput | null;
 }
@@ -65,6 +68,10 @@ export interface BattleRoyalDropState {
   teamLeaderIds: Map<Team, string>;
 }
 
+export type BattleRoyalDeploymentCompletionReason =
+  | 'all_players_landed'
+  | 'deadline_elapsed';
+
 interface BoundarySummary {
   center: Vec3;
   radius: number;
@@ -84,6 +91,11 @@ function clamp01(value: number): number {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function normalizeAngle(angle: number): number {
+  const fullTurn = Math.PI * 2;
+  return ((angle + Math.PI) % fullTurn + fullTurn) % fullTurn - Math.PI;
 }
 
 function lerpVec3(a: Vec3, b: Vec3, t: number): Vec3 {
@@ -269,6 +281,51 @@ function createLandingOffset(index: number): Vec3 {
   };
 }
 
+function createTeamDistributionSlots(
+  participants: readonly BattleRoyalDropParticipant[]
+): Map<Team, number> {
+  const slots = new Map<Team, number>();
+  for (const participant of participants) {
+    if (slots.has(participant.team)) continue;
+    slots.set(participant.team, slots.size);
+  }
+  return slots;
+}
+
+function createBattleRoyalBotTeamLandingTarget(input: {
+  manifest: VoxelMapManifest;
+  distributionIndex: number;
+  distributionCount: number;
+}): Vec3 {
+  const summary = getBoundarySummary(input.manifest);
+  const count = Math.max(1, input.distributionCount);
+  const angleSpacing = Math.PI * 2 / count;
+  const rotation = unitRandom(input.manifest.seed ^ 0x6d2b79f5) * Math.PI * 2 - Math.PI;
+  const jitterSeed = input.manifest.seed ^ Math.imul(input.distributionIndex + 1, 0x9e3779b1);
+  const angleJitter = (unitRandom(jitterSeed) - 0.5) * angleSpacing * 0.32;
+  const angle = rotation + input.distributionIndex * angleSpacing + angleJitter;
+  const radialUnit = (unitRandom(input.manifest.seed ^ 0x85ebca6b)
+    + input.distributionIndex * 0.6180339887498949) % 1;
+  let radius = summary.radius * lerp(0.24, 0.8, Math.sqrt(radialUnit));
+  let target = {
+    x: summary.center.x + Math.cos(angle) * radius,
+    y: input.manifest.origin.y,
+    z: summary.center.z + Math.sin(angle) * radius,
+  };
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    if (isInsideDropBoundary(input.manifest, target.x, target.z)) return target;
+    radius *= 0.82;
+    target = {
+      x: summary.center.x + Math.cos(angle) * radius,
+      y: input.manifest.origin.y,
+      z: summary.center.z + Math.sin(angle) * radius,
+    };
+  }
+
+  return { ...summary.center };
+}
+
 function writeVec3(target: Vec3, x: number, y: number, z: number): void {
   target.x = x;
   target.y = y;
@@ -338,12 +395,22 @@ function getTeamAutoDropAt(input: {
 }
 
 function createBattleRoyalBotDropInput(input: {
-  playerId: string;
   team: Team;
   seed: number;
   now: number;
+  distributionIndex?: number;
+  distributionCount?: number;
 }): PlayerInput {
-  const botSeed = (input.seed ^ hashString(`${input.team}:${input.playerId}:drop`)) >>> 0;
+  const teamDropSeed = (input.seed ^ hashString(`${input.team}:drop`)) >>> 0;
+  const distributionCount = Math.max(1, input.distributionCount ?? 1);
+  const hasDistributionSlot = input.distributionIndex !== undefined && distributionCount > 1;
+  const angleSpacing = Math.PI * 2 / distributionCount;
+  const randomRotation = unitRandom(input.seed ^ 0x6d2b79f5) * Math.PI * 2 - Math.PI;
+  const angleJitter = (unitRandom(teamDropSeed ^ 0xa511e9b3) - 0.5) * angleSpacing * 0.4;
+  const lookYaw = hasDistributionSlot
+    ? normalizeAngle(randomRotation + input.distributionIndex! * angleSpacing + angleJitter)
+    : unitRandom(teamDropSeed) * Math.PI * 2 - Math.PI;
+  const lookPitch = lerp(-PITCH_LIMIT * 0.28, PITCH_LIMIT * 0.2, unitRandom(teamDropSeed ^ 0x63d83595));
   return {
     tick: 0,
     moveForward: true,
@@ -352,7 +419,7 @@ function createBattleRoyalBotDropInput(input: {
     moveRight: false,
     jump: false,
     crouch: false,
-    sprint: false,
+    sprint: unitRandom(teamDropSeed ^ 0x9e3779b9) > 0.55,
     primaryFire: false,
     secondaryFire: false,
     reload: false,
@@ -360,8 +427,8 @@ function createBattleRoyalBotDropInput(input: {
     ability2: false,
     ultimate: false,
     interact: false,
-    lookYaw: unitRandom(botSeed) * Math.PI * 2 - Math.PI,
-    lookPitch: 0,
+    lookYaw,
+    lookPitch,
     timestamp: input.now,
   };
 }
@@ -470,6 +537,9 @@ export function createBattleRoyalDropState(
   const teamHumanCounts = new Map<Team, number>();
   const teamAutoDropAt = new Map<Team, number>();
   const teamLeaderIds = selectBattleRoyalDropTeamLeaders(participants);
+  const teamDistributionSlots = createTeamDistributionSlots(participants);
+  const teamDistributionCount = teamDistributionSlots.size;
+  const teamLandingTargets = new Map<Team, Vec3>();
 
   for (const participant of participants) {
     if (!teamAutoDropAt.has(participant.team)) {
@@ -488,6 +558,18 @@ export function createBattleRoyalDropState(
     const teamSlot = teamList.length;
     const slotOffset = createSlotOffset(teamSlot);
     const landingOffset = createLandingOffset(teamSlot);
+    const teamDistributionIndex = teamDistributionSlots.get(participant.team);
+    let landingTarget = participant.isBot === true
+      ? teamLandingTargets.get(participant.team) ?? null
+      : null;
+    if (participant.isBot === true && !landingTarget && teamDistributionIndex !== undefined) {
+      landingTarget = createBattleRoyalBotTeamLandingTarget({
+        manifest,
+        distributionIndex: teamDistributionIndex,
+        distributionCount: teamDistributionCount,
+      });
+      teamLandingTargets.set(participant.team, landingTarget);
+    }
     const attachedToPlayerId = teamLeaderIds.get(participant.team) ?? null;
     const player: BattleRoyalDropPlayerState = {
       playerId: participant.playerId,
@@ -504,13 +586,15 @@ export function createBattleRoyalDropState(
       landedAt: null,
       slotOffset,
       landingOffset,
+      landingTarget,
       attachedToPlayerId: attachedToPlayerId === participant.playerId ? null : attachedToPlayerId,
       latestInput: participant.isBot === true
         ? createBattleRoyalBotDropInput({
-          playerId: participant.playerId,
           team: participant.team,
           seed: manifest.seed,
           now,
+          distributionIndex: teamDistributionIndex,
+          distributionCount: teamDistributionCount,
         })
         : null,
     };
@@ -590,10 +674,10 @@ export function addBattleRoyalDropParticipant(
     landedAt: null,
     slotOffset,
     landingOffset,
+    landingTarget: null,
     attachedToPlayerId,
     latestInput: participant.isBot === true
       ? createBattleRoyalBotDropInput({
-        playerId: participant.playerId,
         team: participant.team,
         seed: state.phaseStartedAt,
         now,
@@ -695,6 +779,22 @@ export function startBattleRoyalTeamDrop(
   return droppedAny;
 }
 
+export function releaseAboardBattleRoyalBotPods(
+  state: BattleRoyalDropState,
+  now: number
+): number {
+  let releasedPodCount = 0;
+
+  for (const [team, players] of state.teamPlayers) {
+    if (!players.some((player) => player.status === 'aboard' && player.isBot)) continue;
+    if (players.some((player) => player.status === 'aboard' && !player.isBot)) continue;
+    if (!startBattleRoyalTeamDrop(state, team, now)) continue;
+    releasedPodCount++;
+  }
+
+  return releasedPodCount;
+}
+
 function advanceAboardPlayer(
   player: BattleRoyalDropPlayerState,
   shipPosition: Vec3,
@@ -709,13 +809,56 @@ function advanceAboardPlayer(
   copyVec3(player.velocity, shipVelocity);
 }
 
+function getGuidedBattleRoyalBotDropInput(
+  player: BattleRoyalDropPlayerState,
+  getGroundY: (position: Vec3) => number | null
+): PlayerInput | null {
+  const input = player.latestInput;
+  const target = player.landingTarget;
+  if (!player.isBot || !input || !target) return input;
+
+  const targetX = target.x - player.position.x;
+  const targetZ = target.z - player.position.z;
+  const targetDistance = Math.hypot(targetX, targetZ);
+  input.moveForward = targetDistance > 0.75;
+  input.moveBackward = false;
+  input.moveLeft = false;
+  input.moveRight = false;
+  if (targetDistance > 0.001) {
+    input.lookYaw = Math.atan2(-targetX, -targetZ);
+  }
+
+  const targetGroundY = getGroundY(target) ?? 0;
+  const remainingFallDistance = Math.max(
+    0.1,
+    player.position.y - targetGroundY - BATTLE_ROYAL_DROP_POD_LANDING_CLEARANCE
+  );
+  const requiredTravelRatio = targetDistance / remainingFallDistance;
+  let lowPitchRatio = -1;
+  let highPitchRatio = 1;
+  for (let iteration = 0; iteration < 10; iteration++) {
+    const pitchRatio = (lowPitchRatio + highPitchRatio) / 2;
+    input.lookPitch = pitchRatio * PITCH_LIMIT;
+    const steer = getBattleRoyalDropInputSteer(input);
+    const travelRatio = steer.speed * steer.multiplier / steer.verticalSpeed;
+    if (travelRatio < requiredTravelRatio) {
+      lowPitchRatio = pitchRatio;
+    } else {
+      highPitchRatio = pitchRatio;
+    }
+  }
+  input.lookPitch = ((lowPitchRatio + highPitchRatio) / 2) * PITCH_LIMIT;
+  return input;
+}
+
 function advanceDroppingPlayer(
   input: AdvanceBattleRoyalDropInput,
   player: BattleRoyalDropPlayerState
 ): void {
+  const guidedInput = getGuidedBattleRoyalBotDropInput(player, input.getGroundY);
   const next = advanceBattleRoyalDropPodMotion({
     position: player.position,
-    input: player.latestInput,
+    input: guidedInput,
     dt: input.dt,
     getGroundY: input.getGroundY,
     clampToPlayableMap: input.clampToPlayableMap,
@@ -825,6 +968,14 @@ export function areAllBattleRoyalHumanDropPlayersLanded(state: BattleRoyalDropSt
     if (player.status !== 'landed') return false;
   }
   return humanCount > 0;
+}
+
+export function getBattleRoyalDeploymentCompletionReason(
+  state: BattleRoyalDropState,
+  deadlineElapsed: boolean
+): BattleRoyalDeploymentCompletionReason | null {
+  if (areAllBattleRoyalDropPlayersLanded(state)) return 'all_players_landed';
+  return deadlineElapsed ? 'deadline_elapsed' : null;
 }
 
 export function buildBattleRoyalDropSnapshot(

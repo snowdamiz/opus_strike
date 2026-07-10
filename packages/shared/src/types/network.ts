@@ -69,6 +69,7 @@ export type ServerMessage =
   | { type: 'voiceTeamChanged'; payload: VoiceTeamChangedMessage }
   | { type: 'devHeroChanged'; payload: { heroId: HeroId; health: number; maxHealth: number } }
   | { type: 'devCommandError'; payload: { message: string } }
+  | { type: 'abilityUsed'; payload: AbilityUsedMessage }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
   | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
@@ -77,6 +78,7 @@ export type ServerMessage =
 
 export type PlayerEventBatchItem =
   | { type: 'powerupCollected'; payload: PowerupCollectedMessage }
+  | { type: 'abilityUsed'; payload: AbilityUsedMessage }
   | { type: 'playerDamaged'; payload: PlayerDamagedEvent }
   | { type: 'playerDowned'; payload: PlayerDownedEvent }
   | { type: 'playerReviveStarted'; payload: PlayerReviveStartedEvent }
@@ -89,6 +91,48 @@ export type PlayerEventBatchItem =
 
 export interface PlayerEventBatchMessage {
   events: PlayerEventBatchItem[];
+}
+
+export interface AbilityUsedMessage {
+  playerId: string;
+  abilityId: string;
+  success?: boolean;
+  castId?: string;
+  position?: Vec3;
+  startPosition?: Vec3;
+  targetPosition?: Vec3;
+  interceptPosition?: Vec3;
+  impactPosition?: Vec3;
+  interceptedByChronosAegis?: boolean;
+  targetIds?: string[];
+  targets?: Array<{
+    targetId: string;
+    position: Vec3;
+    rootUntil: number;
+  }>;
+  rootUntil?: number;
+  mode?: 'allies' | 'self';
+  aimDirection?: Vec3;
+  velocity?: Vec3;
+  maxDistance?: number;
+  direction?: { yaw?: number; pitch?: number; x?: number; y?: number; z?: number };
+  ownerTeam?: Team;
+  launchSide?: -1 | 1;
+  launchYaw?: number;
+  serverTime?: number;
+  durationMs?: number;
+  ammoRemaining?: number;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
+  shockwaveDirection?: Vec3;
+  releaseAt?: number;
+  radius?: number;
+  duration?: number;
+  meteorStartTime?: number;
+  impactTime?: number;
+  active?: boolean;
+  fuel?: number;
+  supercharged?: boolean;
 }
 
 export interface MapPingRequestMessage {

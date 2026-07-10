@@ -72,11 +72,12 @@ import {
   BATTLE_ROYAL_DEPLOYMENT_PHASE_MS,
   addBattleRoyalDropParticipant,
   advanceBattleRoyalDropState,
-  areAllBattleRoyalDropPlayersLanded,
   areAllBattleRoyalHumanDropPlayersLanded,
   buildBattleRoyalDropSnapshot,
   createBattleRoyalDropState,
   forceLandBattleRoyalDropState,
+  getBattleRoyalDeploymentCompletionReason,
+  releaseAboardBattleRoyalBotPods,
   removeBattleRoyalDropParticipant,
   setBattleRoyalDropPlayerInput,
   startBattleRoyalTeamDrop,
@@ -561,6 +562,7 @@ import { buildAuthRejectRecord } from './authRejectRuntime';
 import { buildClientJoinHintRecords } from './clientJoinHintsRuntime';
 import {
   BOT_CLOSE_REVEAL_RANGE,
+  BOT_RECENT_DAMAGE_MEMORY_MS,
   BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX,
   BOT_TACTICS_INTERVAL_MS,
   BOT_THINK_INTERVAL_MS,
@@ -849,6 +851,7 @@ interface DeferredTrackedMessage {
 
 const BATCHABLE_PLAYER_EVENT_TYPES = new Set<string>([
   'powerupCollected',
+  'abilityUsed',
   'playerDamaged',
   'playerDowned',
   'playerReviveStarted',
@@ -1216,6 +1219,11 @@ export class GameRoom extends Room<GameState> {
   private botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
   private botSimulationTierTick = -1;
   private readonly botSimulationTierById = new Map<string, BotSimulationTier>();
+  private readonly botNearBattleRoyalEnemyById = new Map<string, boolean>();
+  private readonly battleRoyalHumanTeams = new Set<Team>();
+  private readonly battleRoyalContestantHumanTeams = new Set<Team>();
+  private readonly battleRoyalHumanSquadSurvivorTeams = new Set<Team>();
+  private hasBattleRoyalDownedPlayer = false;
   private botSnapshotRosterIds: string[] = [];
   private readonly botsWithReusedInputThisTick = new Set<string>();
   private readonly botPerceptionCandidatesScratch: Player[] = [];
@@ -1390,6 +1398,7 @@ export class GameRoom extends Room<GameState> {
   private roomDisposing = false;
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
+  private battleRoyalCombatPrewarmTick = -1;
   private readonly battleRoyalPlacement = new BattleRoyalPlacementTracker();
   private readonly battleRoyalTeamSummarySent = new Set<Team>();
   private readonly battleRoyalDeploymentCombatInputLogAt = new Map<string, number>();
@@ -3719,6 +3728,16 @@ export class GameRoom extends Room<GameState> {
 
   private sendTrackedAfterGameplayWork(client: Client, type: string, payload: unknown): void {
     if (this.tickInProgress && this.state.phase === 'playing') {
+      if (isBatchablePlayerEvent(type)) {
+        let batch = this.deferredPlayerEventBatches.get(client);
+        if (!batch) {
+          batch = [];
+          this.deferredPlayerEventBatches.set(client, batch);
+          this.deferredPlayerEventBatchClients.push(client);
+        }
+        batch.push({ type, payload } as PlayerEventBatchItem);
+        return;
+      }
       this.deferredTrackedMessages.push({ client, type, payload });
       return;
     }
@@ -3726,22 +3745,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private flushDeferredTrackedMessages(): void {
-    if (this.deferredTrackedMessages.length === 0) return;
+    if (
+      this.deferredTrackedMessages.length === 0 &&
+      this.deferredPlayerEventBatchClients.length === 0
+    ) {
+      return;
+    }
     const messages = this.deferredTrackedMessages;
     for (const message of messages) {
-      if (isBatchablePlayerEvent(message.type)) {
-        let batch = this.deferredPlayerEventBatches.get(message.client);
-        if (!batch) {
-          batch = [];
-          this.deferredPlayerEventBatches.set(message.client, batch);
-          this.deferredPlayerEventBatchClients.push(message.client);
-        }
-        batch.push({
-          type: message.type,
-          payload: message.payload,
-        } as PlayerEventBatchItem);
-        continue;
-      }
       this.sendTracked(message.client, message.type, message.payload);
     }
     messages.length = 0;
@@ -3753,9 +3764,8 @@ export class GameRoom extends Room<GameState> {
         const event = batch[0]!;
         this.sendTracked(client, event.type, event.payload);
       } else {
-        this.sendTracked(client, 'playerEventBatch', { events: batch.slice() });
+        this.sendTracked(client, 'playerEventBatch', { events: batch });
       }
-      batch.length = 0;
     }
     this.deferredPlayerEventBatches.clear();
     this.deferredPlayerEventBatchClients.length = 0;
@@ -9096,6 +9106,30 @@ export class GameRoom extends Room<GameState> {
     if (this.botSimulationTierTick === this.state.tick) return;
     this.botSimulationTierTick = this.state.tick;
     this.botSimulationTierById.clear();
+    this.botNearBattleRoyalEnemyById.clear();
+    this.battleRoyalHumanTeams.clear();
+    this.battleRoyalContestantHumanTeams.clear();
+    this.battleRoyalHumanSquadSurvivorTeams.clear();
+    this.hasBattleRoyalDownedPlayer = false;
+
+    if (!isBattleRoyalMode(this.gameplayMode)) return;
+
+    this.state.players.forEach((player) => {
+      if (player.state === 'downed') {
+        this.hasBattleRoyalDownedPlayer = true;
+      }
+      if (player.isBot || !isTeam(player.team) || isObserverPlayer(player)) return;
+      this.battleRoyalHumanTeams.add(player.team);
+      if (isBattleRoyalContestant(player)) {
+        this.battleRoyalContestantHumanTeams.add(player.team);
+      }
+    });
+
+    for (const team of this.battleRoyalHumanTeams) {
+      if (!this.battleRoyalContestantHumanTeams.has(team)) {
+        this.battleRoyalHumanSquadSurvivorTeams.add(team);
+      }
+    }
   }
 
   private getServerOwnedBotSimulationTier(
@@ -9195,7 +9229,7 @@ export class GameRoom extends Room<GameState> {
     if (this.isBattleRoyalSafeZonePriorityBot(bot)) return true;
     if (this.isBattleRoyalHumanSquadSurvivorBot(bot)) return true;
     if (this.isServerOwnedBotNearBattleRoyalDownedPlayer(bot, 18 * 18)) return true;
-    if (this.isServerOwnedBotNearBattleRoyalEnemy(bot, BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ)) return true;
+    if (this.isServerOwnedBotNearCriticalBattleRoyalEnemy(bot)) return true;
     if (
       this.replicationState.getRecentCombatTransformUntil(bot.id) > now &&
       this.isServerOwnedBotNearEnemyHuman(bot, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ)
@@ -9209,15 +9243,8 @@ export class GameRoom extends Room<GameState> {
     if (!isBattleRoyalMode(this.gameplayMode) || !bot.isBot || bot.state !== 'alive' || !isTeam(bot.team)) {
       return false;
     }
-
-    let hasHumanSquadmate = false;
-    for (const player of this.state.players.values()) {
-      if (player.team !== bot.team || player.isBot || isObserverPlayer(player)) continue;
-      hasHumanSquadmate = true;
-      if (isBattleRoyalContestant(player)) return false;
-    }
-
-    return hasHumanSquadmate;
+    this.prepareBotSimulationTierCache();
+    return this.battleRoyalHumanSquadSurvivorTeams.has(bot.team);
   }
 
   private isBattleRoyalSafeZonePriorityBot(bot: Player): boolean {
@@ -9242,6 +9269,9 @@ export class GameRoom extends Room<GameState> {
   }
 
   private isServerOwnedBotNearBattleRoyalDownedPlayer(bot: Player, distanceSq: number): boolean {
+    this.prepareBotSimulationTierCache();
+    if (!this.hasBattleRoyalDownedPlayer) return false;
+
     const radius = Math.sqrt(distanceSq);
     const candidates = this.botSimulationHumanScratch;
     this.queryPlayersRadiusInto(
@@ -9262,6 +9292,19 @@ export class GameRoom extends Room<GameState> {
       if (dx * dx + dy * dy + dz * dz <= distanceSq) return true;
     }
     return false;
+  }
+
+  private isServerOwnedBotNearCriticalBattleRoyalEnemy(bot: Player): boolean {
+    this.prepareBotSimulationTierCache();
+    const cached = this.botNearBattleRoyalEnemyById.get(bot.id);
+    if (cached !== undefined) return cached;
+
+    const nearby = this.isServerOwnedBotNearBattleRoyalEnemy(
+      bot,
+      BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ
+    );
+    this.botNearBattleRoyalEnemyById.set(bot.id, nearby);
+    return nearby;
   }
 
   private isServerOwnedBotNearBattleRoyalEnemy(bot: Player, distanceSq: number): boolean {
@@ -9474,8 +9517,12 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private getBotRecentDamageSources(botId: string, now: number): BotRecentDamageSource[] {
-    return this.damageRuntime.getBotRecentDamageSources(botId, now);
+  private getBotMostRecentDamageSource(botId: string, now: number): BotRecentDamageSource | null {
+    return this.damageRuntime.getBotMostRecentDamageSource(
+      botId,
+      now,
+      BOT_RECENT_DAMAGE_MEMORY_MS
+    );
   }
 
   private getBotPerceptionSets(
@@ -9964,7 +10011,8 @@ export class GameRoom extends Room<GameState> {
 
     clearExpiredBlockedEdges(brain.blockedEdges, now);
     const simulationTier = this.getServerOwnedBotSimulationTier(bot, now, brain);
-    const refreshedPerception = shouldRefreshBotPlanningState(brain, now)
+    const refreshPlanningState = shouldRefreshBotPlanningState(brain, now);
+    const refreshedPerception = refreshPlanningState
       ? this.getBotPerceptionSets(bot, frameContext, simulationTier)
       : null;
     const enemyLineOfSightIds = refreshedPerception?.enemyLineOfSightIds ?? EMPTY_BOT_PERCEPTION_IDS;
@@ -9980,7 +10028,9 @@ export class GameRoom extends Room<GameState> {
       mapPings: frameContext.mapPings,
       visibleEnemyIds,
       enemyLineOfSightIds,
-      recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
+      recentDamageSource: refreshPlanningState
+        ? this.getBotMostRecentDamageSource(bot.id, now)
+        : null,
       teamTactics: tactics,
       routeGraph: this.mapRuntime.getBotRouteGraph(),
       skill,
@@ -11573,6 +11623,7 @@ export class GameRoom extends Room<GameState> {
 
     this.clearMatchStartCancelTimer();
     const now = Date.now();
+    this.battleRoyalCombatPrewarmTick = -1;
     const participants = Array.from(this.state.players.values())
       .filter((player) => !isObserverPlayer(player))
       .map((player) => ({
@@ -11638,6 +11689,7 @@ export class GameRoom extends Room<GameState> {
     this.clearMatchStartCancelTimer();
     const now = Date.now();
     this.battleRoyalDrop = null;
+    this.battleRoyalCombatPrewarmTick = -1;
     const playingPatch = buildPlayingPhaseStatePatch({
       now,
       roundTimeSeconds: this.config.roundTimeSeconds,
@@ -12091,18 +12143,25 @@ export class GameRoom extends Room<GameState> {
 
     this.sendBattleRoyalDropAuthorities(now);
 
-    const allPlayersLanded = areAllBattleRoyalDropPlayersLanded(drop);
-    const allHumansLanded = areAllBattleRoyalHumanDropPlayersLanded(drop);
+    if (areAllBattleRoyalHumanDropPlayersLanded(drop)) {
+      releaseAboardBattleRoyalBotPods(drop, now);
+    }
     const deadlineElapsed = hasPhaseDeadlineElapsed(this.state.phaseEndTime, now);
-    if (allPlayersLanded || allHumansLanded || deadlineElapsed) {
-      this.finishBattleRoyalDeployment(
-        now,
-        allPlayersLanded
-          ? 'all_players_landed'
-          : allHumansLanded
-            ? 'all_humans_landed'
-            : 'deadline_elapsed'
-      );
+    const completionReason = getBattleRoyalDeploymentCompletionReason(drop, deadlineElapsed);
+    if (completionReason) {
+      const deploymentBotCount = this.getBattleRoyalDropStatusCounts(drop).bot;
+      if (
+        completionReason === 'all_players_landed' &&
+        deploymentBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT &&
+        this.battleRoyalCombatPrewarmTick < 0
+      ) {
+        this.measureTickSpan('bot_frame_context', () => this.refreshBotTeamTactics(now));
+        this.tickProfiler.recordCounter('bot_tactics_deployment_prewarm');
+        this.battleRoyalCombatPrewarmTick = this.state.tick;
+        this.broadcastStateStreams({ transforms: true });
+        return;
+      }
+      this.finishBattleRoyalDeployment(now, completionReason);
       return;
     }
 
@@ -12987,7 +13046,7 @@ export class GameRoom extends Room<GameState> {
     const fullRateReason = this.getServerOwnedBotMovementFullRateReason(player, input);
     if (fullRateReason) {
       this.tickProfiler.recordCounter(fullRateReason);
-      if (this.shouldServerOwnedBotMovementReasonBypassBudget(fullRateReason, simulationTier, input)) {
+      if (this.shouldServerOwnedBotMovementReasonBypassBudget(fullRateReason, simulationTier, input, player.id)) {
         return true;
       }
       return this.consumeServerOwnedBotMovementFullStepBudget(this.getAliveBotMovementLodCount(), simulationTier);
@@ -13033,10 +13092,19 @@ export class GameRoom extends Room<GameState> {
   private shouldServerOwnedBotMovementReasonBypassBudget(
     reason: RoomTickCounterName,
     tier: BotSimulationTier,
-    input: PlayerInput
+    input: PlayerInput,
+    botId?: string
   ): boolean {
     if (tier === 'critical' && isBattleRoyalMode(this.gameplayMode)) {
       if (input.interact) return true;
+      if (
+        botId &&
+        this.getAliveBotMovementLodCount() >= BOT_MOVEMENT_LOD_MEDIUM_COUNT &&
+        this.botsWithReusedInputThisTick.has(botId)
+      ) {
+        this.tickProfiler.recordCounter('movement_bot_lod_reused_critical_bypass_suppressed');
+        return false;
+      }
       if (this.isCriticalBattleRoyalBotMovementFullRateReason(reason)) return true;
     }
     return this.isCriticalServerOwnedBotMovementFullRateReason(reason);
@@ -13374,7 +13442,7 @@ export class GameRoom extends Room<GameState> {
     }
     if (
       isBattleRoyalMode(this.gameplayMode) &&
-      this.isServerOwnedBotNearBattleRoyalEnemy(player, BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ)
+      this.isServerOwnedBotNearCriticalBattleRoyalEnemy(player)
     ) {
       return 'movement_bot_lod_full_enemy_battle_royal';
     }

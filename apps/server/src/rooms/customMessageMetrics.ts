@@ -30,6 +30,8 @@ const PLAYER_KILLED_ESTIMATE_BYTES = 300;
 const PLAYER_HEALED_BASE_BYTES = 180;
 const PLAYER_HEALED_TARGET_ESTIMATE_BYTES = 88;
 const POWERUP_COLLECTED_ESTIMATE_BYTES = 180;
+const PLAYER_EVENT_BATCH_BASE_BYTES = 32;
+const PLAYER_EVENT_BATCH_ITEM_BASE_BYTES = 24;
 
 function estimateStringBytes(value: string): number {
   return STRING_WRAPPER_BYTES + Buffer.byteLength(value);
@@ -75,6 +77,20 @@ function estimatePingRequestBytes(payload: unknown): number {
 function estimatePlayerHealedBytes(payload: unknown): number {
   if (!isRecord(payload)) return UNKNOWN_OBJECT_BYTES;
   return PLAYER_HEALED_BASE_BYTES + arrayLength(payload.targets) * PLAYER_HEALED_TARGET_ESTIMATE_BYTES;
+}
+
+function estimatePlayerEventBatchBytes(payload: unknown): number {
+  if (!isRecord(payload) || !Array.isArray(payload.events)) return UNKNOWN_OBJECT_BYTES;
+
+  let bytes = PLAYER_EVENT_BATCH_BASE_BYTES;
+  for (const event of payload.events) {
+    if (!isRecord(event) || typeof event.type !== 'string' || event.type === 'playerEventBatch') {
+      bytes += UNKNOWN_OBJECT_BYTES;
+      continue;
+    }
+    bytes += PLAYER_EVENT_BATCH_ITEM_BASE_BYTES + estimateCustomMessageBytes(event.type, event.payload);
+  }
+  return bytes;
 }
 
 function estimateValueBytes(value: unknown, seen: WeakSet<object>, depth: number): number {
@@ -161,6 +177,8 @@ export function estimateCustomMessageBytes(type: string, payload: unknown): numb
       return estimatePlayerHealedBytes(payload);
     case 'powerupCollected':
       return POWERUP_COLLECTED_ESTIMATE_BYTES;
+    case 'playerEventBatch':
+      return estimatePlayerEventBatchBytes(payload);
     default:
       return estimateFallbackMessageBytes(payload);
   }
