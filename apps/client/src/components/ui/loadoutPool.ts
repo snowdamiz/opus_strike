@@ -329,7 +329,10 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     isPlaceholder: false,
     tagline: def.tagline,
     rarity: 'epic',
-    ownership: heroId === 'blaze' && slot.key === 'primaryFire' && def.key === 'scrapshot'
+    ownership: heroId === 'blaze' && (
+      (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
+      (slot.key === 'secondaryFire' && def.key === 'phosphorflare')
+    )
       ? 'owned'
       : 'locked',
     meta: buildDisplayMeta(item),
@@ -369,6 +372,7 @@ export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
 }
 
 export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
+export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
 
 // E (ability1) and Q (ability2) draw from one shared, interchangeable pool —
 // any ability can occupy either slot.

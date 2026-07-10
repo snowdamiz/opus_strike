@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE,
+  BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
   BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS,
   BLAZE_SCRAPSHOT_PELLET_DAMAGE,
   BLAZE_SCRAPSHOT_RANGE,
@@ -21,6 +26,7 @@ import {
   getAttackPreflightRejection,
   getChronosAegisCollisionRadiusForAttack,
   getRoomAttackConfig,
+  shouldResolveBlazeSecondaryAttack,
   withHookshotHeavyAttackTargetHint,
 } from '../rooms/roomAttackRuntime';
 
@@ -36,6 +42,45 @@ import {
   assert.equal(attack?.damage, BLAZE_SCRAPSHOT_PELLET_DAMAGE);
   assert.equal(attack?.range, BLAZE_SCRAPSHOT_RANGE);
   assert.equal(attack?.collisionRadius, BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS);
+}
+
+{
+  const attack = getRoomAttackConfig({
+    heroId: 'blaze',
+    mode: 'secondary',
+    chronosAscendantActive: false,
+    blazeSecondarySkill: 'phosphor_flare',
+  });
+
+  assert.equal(attack?.damageType, 'phosphor_flare');
+  assert.equal(attack?.damage, BLAZE_PHOSPHOR_FLARE_DAMAGE);
+  assert.equal(attack?.range, BLAZE_PHOSPHOR_FLARE_MAX_RANGE);
+  assert.equal(attack?.radius, BLAZE_PHOSPHOR_FLARE_RADIUS);
+  assert.equal(attack?.cooldownMs, BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS);
+  assert.equal(attack?.collisionRadius, BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS);
+}
+
+{
+  assert.equal(shouldResolveBlazeSecondaryAttack({
+    skill: 'phosphor_flare',
+    secondaryFire: true,
+    previousSecondaryFire: false,
+  }), true);
+  assert.equal(shouldResolveBlazeSecondaryAttack({
+    skill: 'phosphor_flare',
+    secondaryFire: false,
+    previousSecondaryFire: true,
+  }), false);
+  assert.equal(shouldResolveBlazeSecondaryAttack({
+    skill: 'meteor_strike',
+    secondaryFire: true,
+    previousSecondaryFire: false,
+  }), false);
+  assert.equal(shouldResolveBlazeSecondaryAttack({
+    skill: 'meteor_strike',
+    secondaryFire: false,
+    previousSecondaryFire: true,
+  }), true);
 }
 
 {
@@ -168,6 +213,7 @@ import {
 {
   assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'bomb' }), BLAZE_BOMB_AEGIS_COLLISION_RADIUS);
   assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'scrapshot' }), BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS);
+  assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'phosphor_flare' }), BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS);
   assert.equal(getChronosAegisCollisionRadiusForAttack({ damageType: 'missing' }), 0);
 }
 

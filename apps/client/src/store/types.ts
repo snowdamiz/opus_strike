@@ -227,6 +227,21 @@ export interface BombData {
   hasExploded: boolean;
 }
 
+export interface PhosphorFlareData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  targetPosition: { x: number; y: number; z: number };
+  impactPosition: { x: number; y: number; z: number };
+  interceptedByChronosAegis: boolean;
+  impactProgress: number;
+  startTime: number;
+  impactTime: number;
+  poolEndsAt: number;
+  radius: number;
+  ownerId: string;
+  ownerTeam: Team;
+}
+
 // ============================================================================
 // CHRONOS PROJECTILE TYPES
 // ============================================================================

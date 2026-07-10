@@ -336,13 +336,21 @@ export function buildAbilityCastOriginHints(
     }
 
     if (options.bombTargeting || input.secondaryFire) {
+      const secondaryAbilityId = useLoadoutStore.getState().blazeSecondarySkill === 'phosphor_flare'
+        ? 'blaze_phosphor_flare'
+        : 'blaze_bomb';
       pushHint(
         hints,
         seen,
         hintFromOrigin(
           ctx,
-          'blaze_bomb',
-          resolveBlazeStaffOrigin(ctx, 'blaze_bomb', now, getBlazeBombTargetHeldBlend(now))
+          secondaryAbilityId,
+          resolveBlazeStaffOrigin(
+            ctx,
+            secondaryAbilityId,
+            now,
+            secondaryAbilityId === 'blaze_bomb' ? getBlazeBombTargetHeldBlend(now) : 1
+          )
         )
       );
     }

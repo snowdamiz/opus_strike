@@ -17,6 +17,10 @@ import {
 } from './blaze/rocketJumpExplosion';
 import { prewarmRocketResources } from './blaze/rockets';
 import {
+  getPhosphorFlareGpuPrewarmMaterials,
+  prewarmPhosphorFlareResources,
+} from './blaze/phosphorFlare';
+import {
   appendDireBallGpuPrewarmObjects,
   prewarmDireBallResources,
 } from './phantom/direBall';
@@ -82,6 +86,7 @@ export async function prewarmBlazeEffects(): Promise<void> {
   prewarmRocketResources();
   prewarmRocketJumpExplosionResources();
   prewarmBlazeAirstrikeResources();
+  prewarmPhosphorFlareResources();
 }
 
 export async function prewarmHookshotEffects(): Promise<void> {
@@ -309,6 +314,7 @@ function addBlazeGpuPrewarmObjects(scene: THREE.Scene): void {
     BlazeMaterials.getTargetCrossMaterial(),
     BlazeMaterials.getTargetBeamMaterial(),
     BlazeMaterials.getTargetBeamTopMaterial(),
+    ...getPhosphorFlareGpuPrewarmMaterials(),
   ];
 
   addMaterialSwatches(scene, materials, -1.35, -5.4);

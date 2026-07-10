@@ -2,9 +2,12 @@ import { create } from 'zustand';
 import {
   ALL_HERO_IDS,
   DEFAULT_BLAZE_PRIMARY_SKILL,
+  DEFAULT_BLAZE_SECONDARY_SKILL,
   HERO_DEFINITIONS,
   isBlazePrimarySkill,
+  isBlazeSecondarySkill,
   type BlazePrimarySkill,
+  type BlazeSecondarySkill,
   type HeroId,
   type InputState,
 } from '@voxel-strike/shared';
@@ -22,11 +25,13 @@ export type HeroAbilityBindingsMap = Partial<Record<HeroId, HeroAbilityBindings>
 
 interface StoredLoadout {
   blazePrimarySkill: BlazePrimarySkill;
+  blazeSecondarySkill: BlazeSecondarySkill;
   heroAbilityBindings: HeroAbilityBindingsMap;
 }
 
 interface LoadoutState extends StoredLoadout {
   setBlazePrimarySkill: (skill: BlazePrimarySkill) => void;
+  setBlazeSecondarySkill: (skill: BlazeSecondarySkill) => void;
   assignHeroAbility: (heroId: HeroId, slot: HeroAbilitySlot, abilityId: string) => void;
 }
 
@@ -109,6 +114,7 @@ export function loadStoredLoadout(): StoredLoadout {
   if (typeof window === 'undefined') {
     return {
       blazePrimarySkill: DEFAULT_BLAZE_PRIMARY_SKILL,
+      blazeSecondarySkill: DEFAULT_BLAZE_SECONDARY_SKILL,
       heroAbilityBindings: {},
     };
   }
@@ -116,17 +122,22 @@ export function loadStoredLoadout(): StoredLoadout {
   try {
     const raw = JSON.parse(window.localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}') as {
       blazePrimarySkill?: unknown;
+      blazeSecondarySkill?: unknown;
       heroAbilityBindings?: unknown;
     };
     return {
       blazePrimarySkill: isBlazePrimarySkill(raw.blazePrimarySkill)
         ? raw.blazePrimarySkill
         : DEFAULT_BLAZE_PRIMARY_SKILL,
+      blazeSecondarySkill: isBlazeSecondarySkill(raw.blazeSecondarySkill)
+        ? raw.blazeSecondarySkill
+        : DEFAULT_BLAZE_SECONDARY_SKILL,
       heroAbilityBindings: sanitizeHeroAbilityBindings(raw.heroAbilityBindings),
     };
   } catch {
     return {
       blazePrimarySkill: DEFAULT_BLAZE_PRIMARY_SKILL,
+      blazeSecondarySkill: DEFAULT_BLAZE_SECONDARY_SKILL,
       heroAbilityBindings: {},
     };
   }
@@ -145,6 +156,18 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
     set((state) => {
       const stored = {
         blazePrimarySkill,
+        blazeSecondarySkill: state.blazeSecondarySkill,
+        heroAbilityBindings: state.heroAbilityBindings,
+      };
+      persistLoadout(stored);
+      return stored;
+    });
+  },
+  setBlazeSecondarySkill: (blazeSecondarySkill) => {
+    set((state) => {
+      const stored = {
+        blazePrimarySkill: state.blazePrimarySkill,
+        blazeSecondarySkill,
         heroAbilityBindings: state.heroAbilityBindings,
       };
       persistLoadout(stored);
@@ -177,6 +200,7 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
 
       const stored = {
         blazePrimarySkill: state.blazePrimarySkill,
+        blazeSecondarySkill: state.blazeSecondarySkill,
         heroAbilityBindings: nextByHero,
       };
       persistLoadout(stored);

@@ -1,5 +1,4 @@
 import {
-  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
   isPlayerAliveOrDowned,
   type Team,
@@ -50,33 +49,37 @@ export class PendingAreaDamageQueue {
   }
 }
 
-export interface BlazeGearstormInstance {
+export interface BlazeLingeringAreaInstance {
   id: string;
   ownerId: string;
   ownerTeam: Team;
   position: PlainVec3;
   radius: number;
   damage: number;
+  damageIntervalMs: number;
+  damageType: string;
+  abilityId: string;
+  falloffScale: number;
   startTime: number;
   endTime: number;
   lastDamageTick: Map<string, number>;
 }
 
-export interface BlazeGearstormTarget {
+export interface BlazeLingeringAreaTarget {
   id: string;
   state: string;
   position: PlainVec3;
 }
 
-export class BlazeGearstormTracker {
-  private readonly storms: BlazeGearstormInstance[] = [];
+export class BlazeLingeringAreaTracker {
+  private readonly areas: BlazeLingeringAreaInstance[] = [];
 
   get size(): number {
-    return this.storms.length;
+    return this.areas.length;
   }
 
-  add(input: Omit<BlazeGearstormInstance, 'lastDamageTick'>): void {
-    this.storms.push({
+  add(input: Omit<BlazeLingeringAreaInstance, 'lastDamageTick'>): void {
+    this.areas.push({
       ...input,
       position: { ...input.position },
       lastDamageTick: new Map(),
@@ -84,53 +87,57 @@ export class BlazeGearstormTracker {
   }
 
   clear(): void {
-    this.storms.length = 0;
+    this.areas.length = 0;
   }
 
-  update<TTarget extends BlazeGearstormTarget>(
+  update<TTarget extends BlazeLingeringAreaTarget>(
     now: number,
     options: {
       hasOwner: (ownerId: string) => boolean;
-      getTargets: (storm: BlazeGearstormInstance) => Iterable<TTarget>;
+      getTargets: (area: BlazeLingeringAreaInstance) => Iterable<TTarget>;
       applyDamage: (
-        storm: BlazeGearstormInstance,
+        area: BlazeLingeringAreaInstance,
         target: TTarget,
         distance: number
       ) => void;
     }
   ): void {
-    if (this.storms.length === 0) return;
+    if (this.areas.length === 0) return;
 
     let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.storms.length; readIndex++) {
-      const storm = this.storms[readIndex];
-      if (now >= storm.endTime) continue;
-
-      if (!options.hasOwner(storm.ownerId)) {
-        this.storms[writeIndex++] = storm;
+    for (let readIndex = 0; readIndex < this.areas.length; readIndex++) {
+      const area = this.areas[readIndex];
+      if (now >= area.endTime) continue;
+      if (now < area.startTime) {
+        this.areas[writeIndex++] = area;
         continue;
       }
 
-      const radiusSq = storm.radius * storm.radius;
-      for (const target of options.getTargets(storm)) {
+      if (!options.hasOwner(area.ownerId)) {
+        this.areas[writeIndex++] = area;
+        continue;
+      }
+
+      const radiusSq = area.radius * area.radius;
+      for (const target of options.getTargets(area)) {
         if (!isPlayerAliveOrDowned(target)) continue;
 
-        const dx = target.position.x - storm.position.x;
-        const dy = target.position.y - storm.position.y;
-        const dz = target.position.z - storm.position.z;
+        const dx = target.position.x - area.position.x;
+        const dy = target.position.y - area.position.y;
+        const dz = target.position.z - area.position.z;
         const distSq = dx * dx + dy * dy + dz * dz;
         if (distSq > radiusSq) continue;
 
-        const lastDamage = storm.lastDamageTick.get(target.id) || 0;
-        if (now - lastDamage < BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS) continue;
-        storm.lastDamageTick.set(target.id, now);
+        const lastDamage = area.lastDamageTick.get(target.id) || 0;
+        if (now - lastDamage < area.damageIntervalMs) continue;
+        area.lastDamageTick.set(target.id, now);
 
-        options.applyDamage(storm, target, Math.sqrt(distSq));
+        options.applyDamage(area, target, Math.sqrt(distSq));
       }
 
-      this.storms[writeIndex++] = storm;
+      this.areas[writeIndex++] = area;
     }
-    this.storms.length = writeIndex;
+    this.areas.length = writeIndex;
   }
 }
 

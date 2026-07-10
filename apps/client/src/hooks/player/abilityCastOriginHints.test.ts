@@ -59,8 +59,22 @@ try {
   assert.ok(hint, 'Scrapshot should emit a staff-tip cast-origin hint');
   assert.equal(hint.socketName, BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME);
   assert.deepEqual(hint.origin, { x: 1, y: 2, z: 3 });
+
+  useLoadoutStore.getState().setBlazeSecondarySkill('phosphor_flare');
+  const secondaryInput = {
+    ...createEmptyInputState(),
+    secondaryFire: true,
+  };
+  const secondaryHint = buildAbilityCastOriginHints(
+    { ...context, inputState: secondaryInput },
+    secondaryInput,
+  )?.find((candidate) => candidate.abilityId === 'blaze_phosphor_flare');
+  assert.ok(secondaryHint, 'Phosphor Flare should emit a staff-tip cast-origin hint');
+  assert.equal(secondaryHint.socketName, BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME);
+  assert.deepEqual(secondaryHint.origin, { x: 1, y: 2, z: 3 });
 } finally {
   useLoadoutStore.getState().setBlazePrimarySkill('fireball_rockets');
+  useLoadoutStore.getState().setBlazeSecondarySkill('meteor_strike');
   unregisterSampledSocket();
   unregisterLiveSocket();
 }

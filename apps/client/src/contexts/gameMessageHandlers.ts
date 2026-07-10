@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_BOMB_SPLASH_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_PRIMARY_RELOAD_MS,
@@ -2719,6 +2721,60 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       }
       scheduleDelayedGameplayEffect(() => {
         playBlazeWorldSound('blazeBombExplode', visualImpactPosition, { volume: 1.05 });
+      }, impactDelay);
+      return true;
+    }
+
+    case 'blaze_phosphor_flare': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition
+      );
+      if (!startPosition || !targetPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
+      const serverTime = data.serverTime ?? now;
+      const impactDelay = data.impactTime
+        ? Math.max(60, data.impactTime - serverTime)
+        : 700;
+      const impactTime = now + impactDelay;
+      const intercepted = Boolean(data.interceptedByChronosAegis);
+      const durationMs = Math.max(0, (data.duration ?? BLAZE_PHOSPHOR_FLARE_DURATION_MS / 1000) * 1000);
+      const visualImpactPosition = data.impactPosition ?? targetPosition;
+      if (isLocalPlayer) {
+        const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
+        if (abilityDef?.cooldown) {
+          store.setClientCooldown(data.abilityId, now + abilityDef.cooldown * 1000);
+        }
+      }
+      store.addPhosphorFlare({
+        id: castId,
+        startPosition,
+        targetPosition,
+        impactPosition: visualImpactPosition,
+        interceptedByChronosAegis: intercepted,
+        impactProgress: data.impactProgress ?? 1,
+        startTime: now,
+        impactTime,
+        poolEndsAt: impactTime + (intercepted ? 0 : durationMs),
+        radius: data.radius ?? BLAZE_PHOSPHOR_FLARE_RADIUS,
+        ownerId: data.playerId,
+        ownerTeam,
+      });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_phosphor_flare')) {
+        playBlazeWorldSound('blazeBombRelease', startPosition, {
+          startOffsetMs: BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
+          durationMs: Math.min(BLAZE_BOMB_RELEASE_SOUND_DURATION_MS, 520),
+          fadeOutMs: 90,
+          pitch: 1.18,
+          volume: 0.74,
+        });
+      }
+      scheduleDelayedGameplayEffect(() => {
+        playBlazeWorldSound('blazeBombExplode', visualImpactPosition, {
+          pitch: intercepted ? 1.28 : 1.16,
+          volume: intercepted ? 0.56 : 0.72,
+        });
       }, impactDelay);
       return true;
     }

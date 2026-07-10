@@ -4,6 +4,11 @@ import {
   BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_MAX_RANGE,
   BLAZE_BOMB_SPLASH_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE,
+  BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
   BLAZE_ROCKET_COLLISION_RADIUS,
   BLAZE_ROCKET_DAMAGE,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
@@ -33,6 +38,7 @@ import {
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   PHANTOM_VOID_RAY_DAMAGE,
   type BlazePrimarySkill,
+  type BlazeSecondarySkill,
   type HeroId,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
@@ -120,6 +126,16 @@ export const BLAZE_SCRAPSHOT_ATTACK: AttackConfig = {
   damageType: 'scrapshot',
 };
 
+export const BLAZE_PHOSPHOR_FLARE_ATTACK: AttackConfig = {
+  damage: BLAZE_PHOSPHOR_FLARE_DAMAGE,
+  range: BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  cooldownMs: BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS,
+  coneDot: 1,
+  radius: BLAZE_PHOSPHOR_FLARE_RADIUS,
+  collisionRadius: BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS,
+  damageType: 'phosphor_flare',
+};
+
 export const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: {
     damage: PHANTOM_VOID_RAY_DAMAGE,
@@ -166,9 +182,13 @@ export function getRoomAttackConfig(input: {
   mode: AttackMode;
   chronosAscendantActive: boolean;
   blazePrimarySkill?: BlazePrimarySkill;
+  blazeSecondarySkill?: BlazeSecondarySkill;
 }): AttackConfig | null {
   if (input.heroId === 'blaze' && input.mode === 'primary' && input.blazePrimarySkill === 'scrapshot') {
     return BLAZE_SCRAPSHOT_ATTACK;
+  }
+  if (input.heroId === 'blaze' && input.mode === 'secondary' && input.blazeSecondarySkill === 'phosphor_flare') {
+    return BLAZE_PHOSPHOR_FLARE_ATTACK;
   }
   const baseAttack = input.mode === 'primary'
     ? PRIMARY_ATTACKS[input.heroId]
@@ -188,6 +208,16 @@ export function getRoomAttackConfig(input: {
   }
 
   return baseAttack;
+}
+
+export function shouldResolveBlazeSecondaryAttack(input: {
+  skill: BlazeSecondarySkill;
+  secondaryFire: boolean;
+  previousSecondaryFire: boolean;
+}): boolean {
+  return input.skill === 'phosphor_flare'
+    ? input.secondaryFire && !input.previousSecondaryFire
+    : !input.secondaryFire && input.previousSecondaryFire;
 }
 
 export function getAttackPreflightRejection(input: AttackPreflightInput): { reason: string; logEvent: boolean } | null {
@@ -232,6 +262,8 @@ export function getChronosAegisCollisionRadiusForAttack(attack: Pick<AttackConfi
       return BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS;
     case 'bomb':
       return BLAZE_BOMB_AEGIS_COLLISION_RADIUS;
+    case 'phosphor_flare':
+      return BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS;
     case 'verdant_pulse':
       return CHRONOS_VERDANT_PULSE_COLLISION_RADIUS;
     case 'ascendant_verdant_pulse':

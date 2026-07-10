@@ -143,6 +143,16 @@ export const BLAZE_BOMB_SPLASH_RADIUS = 4;
 export const BLAZE_BOMB_MAX_RANGE = 60;
 export const BLAZE_BOMB_MIN_RANGE = 3;
 export const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
+export const BLAZE_PHOSPHOR_FLARE_COOLDOWN_SECONDS = 6;
+export const BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS = BLAZE_PHOSPHOR_FLARE_COOLDOWN_SECONDS * 1000;
+export const BLAZE_PHOSPHOR_FLARE_DAMAGE = 12;
+export const BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS = 500;
+export const BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS = 4;
+export const BLAZE_PHOSPHOR_FLARE_DURATION_MS = BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS * 1000;
+export const BLAZE_PHOSPHOR_FLARE_RADIUS = 3.4;
+export const BLAZE_PHOSPHOR_FLARE_MAX_RANGE = 32;
+export const BLAZE_PHOSPHOR_FLARE_MIN_RANGE = 2.5;
+export const BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS = 0.2;
 export const BLAZE_FLAMETHROWER_COLLISION_RADIUS = 0.42;
 export const BLAZE_GEARSTORM_DAMAGE = 14;
 export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 400;
@@ -200,6 +210,11 @@ export const ABILITY_CARD_STATS = {
   ],
   blaze_bomb: [
     { value: BLAZE_BOMB_DAMAGE, label: 'dmg' },
+  ],
+  blaze_phosphor_flare: [
+    { value: BLAZE_PHOSPHOR_FLARE_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_PHOSPHOR_FLARE_RADIUS, label: 'radius' },
+    { value: BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS, label: 'duration', format: 'seconds' },
   ],
   blaze_flamethrower: [
     { value: BLAZE_FLAMETHROWER_DAMAGE, label: 'dmg/tick' },
@@ -406,6 +421,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     targeting: 'ground',
     cooldown: BLAZE_BOMB_COOLDOWN_SECONDS,
     description: 'Mark a target zone, then call a blazing meteor down at an angle.',
+  },
+  blaze_phosphor_flare: {
+    id: 'blaze_phosphor_flare',
+    name: 'Phosphor Flare',
+    type: 'offensive',
+    targeting: 'ground',
+    cooldown: BLAZE_PHOSPHOR_FLARE_COOLDOWN_SECONDS,
+    duration: BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS,
+    description: 'Lob a thermite canister that burns a ground zone for 4 seconds.',
   },
   blaze_flamethrower: {
     id: 'blaze_flamethrower',

@@ -33,6 +33,7 @@ export * from './utils/chronosAegis.js';
 export * from './utils/blazeMeteor.js';
 export * from './utils/blazeRocketJump.js';
 export * from './utils/blazeScrapshot.js';
+export * from './utils/blazePhosphorFlare.js';
 export * from './utils/battleRoyalDropMovement.js';
 export * from './utils/movementDirection.js';
 export * from './utils/teamHeroLocks.js';

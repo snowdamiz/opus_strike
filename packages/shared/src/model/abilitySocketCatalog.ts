@@ -134,6 +134,14 @@ export const ABILITY_SOCKET_CATALOG = {
     socketNames: [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME],
     fallbackOffset: BLAZE_ROCKET_STAFF_SOCKET,
   },
+  blaze_phosphor_flare: {
+    abilityId: 'blaze_phosphor_flare',
+    heroId: 'blaze',
+    socketRole: 'staffTip',
+    sideMode: 'right',
+    socketNames: [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME],
+    fallbackOffset: BLAZE_ROCKET_STAFF_SOCKET,
+  },
   blaze_flamethrower: {
     abilityId: 'blaze_flamethrower',
     heroId: 'blaze',

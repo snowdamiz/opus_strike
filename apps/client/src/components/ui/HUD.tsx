@@ -1698,6 +1698,7 @@ function ChronosLifelineHelper() {
 
 export function HUD() {
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
+  const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
   const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
   const {
     // Local player decomposed into the specific fields the HUD reads, so the HUD
@@ -1918,6 +1919,7 @@ export function HUD() {
       localHeroId,
       blazePrimarySkill,
       resolveHeroAbilityBindings(localHeroId, heroAbilityBindings),
+      blazeSecondarySkill,
     )
     : [];
   const skillAccent = localHeroId ? HUD_HERO_COLORS[localHeroId].primary : HUD_HERO_COLORS.blaze.primary;

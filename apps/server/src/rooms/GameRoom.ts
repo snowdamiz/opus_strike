@@ -206,7 +206,7 @@ import {
   shouldStartCountdownAfterSceneReady,
 } from './matchStartReadiness';
 import {
-  BlazeGearstormTracker,
+  BlazeLingeringAreaTracker,
   PendingAreaDamageQueue,
   VoidZoneTracker,
   type PendingAreaDamageInstance,
@@ -241,6 +241,7 @@ import {
   getAttackPreflightRejection,
   getChronosAegisCollisionRadiusForAttack,
   getRoomAttackConfig,
+  shouldResolveBlazeSecondaryAttack,
   withHookshotHeavyAttackTargetHint,
   type AttackConfig,
   type AttackMode,
@@ -292,6 +293,7 @@ import {
   BLAZE_FLAMETHROWER_BURN_DAMAGE,
   BLAZE_GEARSTORM_RADIUS,
   BLAZE_GEARSTORM_DAMAGE,
+  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_SCRAPSHOT_MAGAZINE_SIZE,
@@ -301,6 +303,11 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_BOMB_MAX_RANGE,
   BLAZE_BOMB_MIN_RANGE,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+  BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+  BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  BLAZE_PHOSPHOR_FLARE_MIN_RANGE,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
   BLAZE_FLAMETHROWER_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
@@ -368,6 +375,9 @@ import {
   getChronosAegisForward as getSharedChronosAegisForward,
   getChronosAegisForwardDot as getSharedChronosAegisForwardDot,
   getBlazeMeteorPath,
+  getBlazePhosphorFlareFlightDurationMs,
+  getBlazePhosphorFlarePoint,
+  BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS,
   getDefaultHeroSkinId,
   getHeroSkinDefinition,
   getTeamIdsForGameplayMode,
@@ -377,6 +387,7 @@ import {
   getSegmentHitAgainstPlayerCombatHitbox,
   getBlazeScrapshotPelletDirections,
   isBlazePrimarySkill,
+  isBlazeSecondarySkill,
   getSegmentHitAgainstChronosAegis,
   calculateFalloffDamage,
   calculateBlazeScrapshotPelletDamage,
@@ -394,6 +405,7 @@ import {
 import type { 
   AbilityCastOriginHint,
   BlazePrimarySkill,
+  BlazeSecondarySkill,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -1138,6 +1150,7 @@ export class GameRoom extends Room<GameState> {
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
   });
   private readonly blazePrimarySkills = new Map<string, BlazePrimarySkill>();
+  private readonly blazeSecondarySkills = new Map<string, BlazeSecondarySkill>();
   private readonly chronosPrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
     reloadMs: CHRONOS_PRIMARY_RELOAD_MS,
@@ -1154,7 +1167,7 @@ export class GameRoom extends Room<GameState> {
   private readonly powerupBoosts = new PowerupBoostTracker();
   private readonly pendingAreaDamage = new PendingAreaDamageQueue();
   private readonly pendingAreaDamageReady: PendingAreaDamageInstance[] = [];
-  private readonly blazeGearstorms = new BlazeGearstormTracker();
+  private readonly blazeLingeringAreas = new BlazeLingeringAreaTracker();
   private readonly blazeFlamethrowers = new BlazeFlamethrowerRuntimeTracker();
   private readonly blazeBurns = new BlazeBurnEffectTracker();
   private readonly npcs = new RoomNpcRegistry();
@@ -1887,6 +1900,11 @@ export class GameRoom extends Room<GameState> {
       this.handleSetBlazePrimarySkill(client, data.skill);
     });
 
+    this.onRateLimitedMessage('setBlazeSecondarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isBlazeSecondarySkill(data.skill)) return;
+      this.handleSetBlazeSecondarySkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
       this.handleMatchSceneReady(client, data);
     });
@@ -1962,6 +1980,13 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId !== 'blaze') return;
 
     this.resetPrimaryMagazineForHero(player.id, player.heroId);
+  }
+
+  private handleSetBlazeSecondarySkill(client: Client, skill: BlazeSecondarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazeSecondarySkills.has(player.id)) return;
+
+    this.blazeSecondarySkills.set(player.id, skill);
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -2341,6 +2366,7 @@ export class GameRoom extends Room<GameState> {
     this.blazePrimaryMagazines.clear(playerId);
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
+    this.blazeSecondarySkills.delete(playerId);
     this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
@@ -2385,6 +2411,7 @@ export class GameRoom extends Room<GameState> {
       }
     });
     this.stopTickLoop();
+    this.blazeLingeringAreas.clear();
     this.blazeFlamethrowers.clearDamageTicks();
   }
 
@@ -2758,7 +2785,7 @@ export class GameRoom extends Room<GameState> {
     this.updateVoidZones(now);
 
     this.updatePendingAreaDamage(now);
-    this.updateBlazeGearstorms(now);
+    this.updateBlazeLingeringAreas(now);
     this.cleanupDamageWindows(now);
 
     this.updateBlazeFlamethrowers(now, dt);
@@ -6754,35 +6781,39 @@ export class GameRoom extends Room<GameState> {
     now: number,
     durationSeconds: number
   ): void {
-    this.blazeGearstorms.add({
+    this.blazeLingeringAreas.add({
       id: this.abilityIds.nextBlazeGearstormId(player.id),
       ownerId: player.id,
       ownerTeam: player.team as Team,
       position,
       radius: BLAZE_GEARSTORM_RADIUS,
       damage: BLAZE_GEARSTORM_DAMAGE,
+      damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+      damageType: 'airstrike',
+      abilityId: 'blaze_airstrike',
+      falloffScale: 0.35,
       startTime: now,
       endTime: now + durationSeconds * 1000,
     });
   }
 
-  private updateBlazeGearstorms(now: number): void {
-    this.blazeGearstorms.update(now, {
+  private updateBlazeLingeringAreas(now: number): void {
+    this.blazeLingeringAreas.update(now, {
       hasOwner: (ownerId) => this.state.players.has(ownerId),
-      getTargets: (storm) => this.queryPlayersRadius(
-        storm.position,
-        storm.radius,
-        { excludeTeam: storm.ownerTeam, includeDowned: true }
+      getTargets: (area) => this.queryPlayersRadius(
+        area.position,
+        area.radius,
+        { excludeTeam: area.ownerTeam, includeDowned: true }
       ),
-      applyDamage: (storm, target, distance) => {
+      applyDamage: (area, target, distance) => {
         this.applyDamage(
           target,
-          calculateFalloffDamage(storm.damage, distance, storm.radius, 0.35),
-          storm.ownerId,
-          'airstrike',
+          calculateFalloffDamage(area.damage, distance, area.radius, area.falloffScale),
+          area.ownerId,
+          area.damageType,
           {
-            abilityId: 'blaze_airstrike',
-            sourcePosition: storm.position,
+            abilityId: area.abilityId,
+            sourcePosition: area.position,
           }
         );
       },
@@ -7154,26 +7185,31 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private resolveBlazeBombTarget(player: Player): PlainVec3 {
+  private resolveBlazeGroundTarget(
+    player: Player,
+    abilityId: 'blaze_bomb' | 'blaze_phosphor_flare',
+    maxRange: number,
+    minRange: number
+  ): PlainVec3 {
     const aimOrigin = this.getBlazeAimOrigin(player);
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
-    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
+    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, maxRange);
     let targetPosition = this.resolveValidatedCastAimPoint(
       player,
-      'blaze_bomb',
+      abilityId,
       aimOrigin,
       lookDirection,
-      BLAZE_BOMB_MAX_RANGE,
-      terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE)
+      maxRange,
+      terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, maxRange)
     );
 
     const horizontalDistance = distance2D(aimOrigin, targetPosition);
-    if (horizontalDistance < BLAZE_BOMB_MIN_RANGE) {
+    if (horizontalDistance < minRange) {
       const forward = forward2D(player.lookYaw);
       targetPosition = {
-        x: aimOrigin.x + forward.x * BLAZE_BOMB_MIN_RANGE,
+        x: aimOrigin.x + forward.x * minRange,
         y: targetPosition.y,
-        z: aimOrigin.z + forward.z * BLAZE_BOMB_MIN_RANGE,
+        z: aimOrigin.z + forward.z * minRange,
       };
     }
 
@@ -7193,7 +7229,12 @@ export class GameRoom extends Room<GameState> {
 
   private dropBlazeBomb(player: Player, attack: AttackConfig, now: number): void {
     const castId = this.abilityIds.nextBlazeBombCastId(player.id);
-    const targetPosition = this.resolveBlazeBombTarget(player);
+    const targetPosition = this.resolveBlazeGroundTarget(
+      player,
+      'blaze_bomb',
+      BLAZE_BOMB_MAX_RANGE,
+      BLAZE_BOMB_MIN_RANGE
+    );
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_bomb');
     const meteorPath = getBlazeMeteorPath({ id: castId, startPosition, targetPosition });
     const aegisHit = this.getChronosAegisSkillHit(
@@ -7245,6 +7286,112 @@ export class GameRoom extends Room<GameState> {
       meteorStartTime,
       impactTime,
       radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
+    });
+  }
+
+  private getBlazePhosphorFlareAegisHit(
+    player: Player,
+    startPosition: PlainVec3,
+    targetPosition: PlainVec3,
+    projectileRadius: number
+  ): (ChronosAegisSkillHit & { progress: number }) | null {
+    let segmentStart = startPosition;
+
+    for (let index = 0; index < BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS; index++) {
+      const segmentEndProgress = (index + 1) / BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS;
+      const segmentEnd = getBlazePhosphorFlarePoint(startPosition, targetPosition, segmentEndProgress);
+      const segmentDirection = this.normalize3D({
+        x: segmentEnd.x - segmentStart.x,
+        y: segmentEnd.y - segmentStart.y,
+        z: segmentEnd.z - segmentStart.z,
+      });
+      const segmentDistance = distance3D(segmentStart, segmentEnd);
+      if (segmentDirection && segmentDistance > 0.0001) {
+        const hit = this.getChronosAegisSkillHit(
+          player,
+          segmentStart,
+          segmentDirection,
+          segmentDistance,
+          { projectileRadius }
+        );
+        if (hit) {
+          return {
+            ...hit,
+            progress: clamp(
+              (index + hit.distance / segmentDistance) / BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS,
+              0,
+              1
+            ),
+          };
+        }
+      }
+      segmentStart = segmentEnd;
+    }
+
+    return null;
+  }
+
+  private dropBlazePhosphorFlare(player: Player, attack: AttackConfig, now: number): void {
+    const abilityId = 'blaze_phosphor_flare';
+    const castId = this.abilityIds.nextSharedCastId(player.id, abilityId);
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId);
+    const targetPosition = this.resolveBlazeGroundTarget(
+      player,
+      abilityId,
+      BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+      BLAZE_PHOSPHOR_FLARE_MIN_RANGE
+    );
+    const flightDurationMs = getBlazePhosphorFlareFlightDurationMs(startPosition, targetPosition);
+    const aegisHit = this.getBlazePhosphorFlareAegisHit(
+      player,
+      startPosition,
+      targetPosition,
+      getChronosAegisCollisionRadiusForAttack(attack)
+    );
+    const impactProgress = aegisHit?.progress ?? 1;
+    const impactTime = now + Math.max(60, Math.round(flightDurationMs * impactProgress));
+
+    if (aegisHit) {
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
+    } else {
+      this.blazeLingeringAreas.add({
+        id: castId,
+        ownerId: player.id,
+        ownerTeam: player.team as Team,
+        position: targetPosition,
+        radius: attack.radius ?? BLAZE_PHOSPHOR_FLARE_RADIUS,
+        damage: attack.damage,
+        damageIntervalMs: BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+        damageType: attack.damageType,
+        abilityId,
+        falloffScale: 0,
+        startTime: impactTime,
+        endTime: impactTime + BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+      });
+    }
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId,
+      castId,
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      targetPosition,
+      impactPosition: aegisHit?.point ?? targetPosition,
+      interceptedByChronosAegis: Boolean(aegisHit),
+      impactProgress,
+      impactTime,
+      aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      radius: attack.radius,
+      duration: BLAZE_PHOSPHOR_FLARE_DURATION_MS / 1000,
     });
   }
 
@@ -7737,6 +7884,10 @@ export class GameRoom extends Room<GameState> {
     return this.blazePrimarySkills.get(playerId) ?? 'fireball_rockets';
   }
 
+  private getBlazeSecondarySkill(playerId: string): BlazeSecondarySkill {
+    return this.blazeSecondarySkills.get(playerId) ?? 'meteor_strike';
+  }
+
   private getPrimaryMagazineTracker(playerId: string, heroId: string): PrimaryMagazineTracker | null {
     if (heroId === 'phantom') return this.phantomPrimaryMagazines;
     if (heroId === 'blaze') {
@@ -8017,7 +8168,12 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId === 'phantom') {
       this.handlePhantomSecondaryInput(player, input, previous.secondaryFire, now);
     } else if (player.heroId === 'blaze') {
-      if (!input.secondaryFire && previous.secondaryFire) {
+      const blazeSecondarySkill = this.getBlazeSecondarySkill(player.id);
+      if (shouldResolveBlazeSecondaryAttack({
+        skill: blazeSecondarySkill,
+        secondaryFire: input.secondaryFire,
+        previousSecondaryFire: previous.secondaryFire,
+      })) {
         this.tryResolveAttack(player, 'secondary', now);
       }
     } else if (shouldResolveGenericSecondaryAttack(player.heroId, input, previous.secondaryFire, isChronosLifelineCommit)) {
@@ -8102,6 +8258,7 @@ export class GameRoom extends Room<GameState> {
         mode,
         chronosAscendantActive: heroId === 'chronos' && mode === 'primary' && this.isChronosAscendantActive(player),
         blazePrimarySkill: heroId === 'blaze' ? this.getBlazePrimarySkill(player.id) : undefined,
+        blazeSecondarySkill: heroId === 'blaze' ? this.getBlazeSecondarySkill(player.id) : undefined,
       })
       : null;
     const readinessRejection = getAttackPreflightRejection({
@@ -8156,7 +8313,11 @@ export class GameRoom extends Room<GameState> {
           this.fireBlazeRocket(player, attack, now);
         }
       } else {
-        this.dropBlazeBomb(player, attack, now);
+        if (this.getBlazeSecondarySkill(player.id) === 'phosphor_flare') {
+          this.dropBlazePhosphorFlare(player, attack, now);
+        } else {
+          this.dropBlazeBomb(player, attack, now);
+        }
       }
       return;
     }
@@ -11877,6 +12038,7 @@ export class GameRoom extends Room<GameState> {
 
     if (!preserveBattleRoyalDeploymentGameplay) {
       this.blazeBurns.clearAll();
+      this.blazeLingeringAreas.clear();
     }
 
     this.state.players.forEach(player => {

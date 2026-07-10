@@ -1150,6 +1150,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       gameRoomRef.current.send('setBlazePrimarySkill', {
         skill: useLoadoutStore.getState().blazePrimarySkill,
       });
+      gameRoomRef.current.send('setBlazeSecondarySkill', {
+        skill: useLoadoutStore.getState().blazeSecondarySkill,
+      });
 
       setRoomId(gameRoomRef.current.id);
       setPlayerId(gameRoomRef.current.sessionId);

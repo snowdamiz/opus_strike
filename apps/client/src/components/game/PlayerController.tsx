@@ -2338,6 +2338,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const { sendMovementCommands, sendMapPing } = useNetwork();
   const pingKeybinding = useSettingsStore(state => state.settings.keybindings.ping);
   const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
+  const blazeSecondarySkill = useLoadoutStore(state => state.blazeSecondarySkill);
   const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
 
   // Audio hooks
@@ -2356,7 +2357,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
   // Hero ability hooks
   const phantomAbilities = usePhantomAbilities();
-  const blazeAbilities = useBlazeAbilities(blazePrimarySkill);
+  const blazeAbilities = useBlazeAbilities(blazePrimarySkill, blazeSecondarySkill);
   const hookshotAbilities = useHookshotAbilities();
   const chronosAbilities = useChronosAbilities();
   const {
@@ -3692,7 +3693,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
       if (heroId === 'blaze') {
         blazeAbilities.firePrimary(abilityCtx);
-        blazeAbilities.handleBombTargeting(abilityCtx, playerSounds);
+        blazeAbilities.handleSecondaryFire(abilityCtx, playerSounds);
         blazeAbilities.handleFlamethrower(
           abilityCtx,
           playerSounds,

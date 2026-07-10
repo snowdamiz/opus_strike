@@ -13,6 +13,7 @@ import type {
   VoidRayData,
   RocketData,
   BombData,
+  PhosphorFlareData,
   ChronosPulseData,
   HookProjectileData,
   DragHookData,
@@ -44,6 +45,7 @@ export interface ProjectileState {
   blazePrimaryReloadStart: number;
   blazePrimaryReloadEnd: number;
   bombs: BombData[];
+  phosphorFlares: PhosphorFlareData[];
   bombTargeting: boolean;
   bombTargetValid: boolean;
   flamethrowerActive: boolean;
@@ -99,6 +101,11 @@ export interface ProjectileActions {
   removeBomb: (id: string) => void;
   clearExpiredBombs: () => void;
   setBombTargeting: (targeting: boolean, valid?: boolean) => void;
+
+  // Blaze phosphor flare actions
+  addPhosphorFlare: (flare: PhosphorFlareData) => void;
+  removePhosphorFlare: (id: string) => void;
+  clearExpiredPhosphorFlares: () => void;
 
   // Blaze flamethrower actions
   setFlamethrowerActive: (active: boolean) => void;
@@ -169,6 +176,7 @@ export const projectileInitialState: ProjectileState = {
   blazePrimaryReloadStart: 0,
   blazePrimaryReloadEnd: 0,
   bombs: [],
+  phosphorFlares: [],
   bombTargeting: false,
   bombTargetValid: false,
   flamethrowerActive: false,
@@ -195,6 +203,7 @@ const PROJECTILE_LIMITS = {
   voidRays: 32,
   rockets: 96,
   bombs: 32,
+  phosphorFlares: 32,
   chronosPulses: 96,
   hookProjectiles: 64,
   dragHooks: 32,
@@ -231,6 +240,10 @@ function getRocketExpiresAt(rocket: RocketData): number {
 
 function getBombExpiresAt(bomb: BombData): number {
   return bomb.startTime + BOMB_VISUAL_FALLBACK_LIFETIME_MS;
+}
+
+function getPhosphorFlareExpiresAt(flare: PhosphorFlareData): number {
+  return flare.poolEndsAt + 750;
 }
 
 function getChronosPulseExpiresAt(pulse: ChronosPulseData): number {
@@ -566,6 +579,22 @@ export const createProjectileSlice: StateCreator<
     };
   }),
 
+  // ==================== PHOSPHOR FLARES ====================
+  addPhosphorFlare: (flare) => set((state) => {
+    const phosphorFlares = appendUnique(state.phosphorFlares, flare, PROJECTILE_LIMITS.phosphorFlares);
+    return phosphorFlares === state.phosphorFlares ? state : { phosphorFlares };
+  }),
+
+  removePhosphorFlare: (id) => set((state) => {
+    const phosphorFlares = removeById(state.phosphorFlares, id);
+    return phosphorFlares === state.phosphorFlares ? state : { phosphorFlares };
+  }),
+
+  clearExpiredPhosphorFlares: () => set((state) => {
+    const phosphorFlares = filterExpiredByExpiry(state.phosphorFlares, getPhosphorFlareExpiresAt);
+    return phosphorFlares === state.phosphorFlares ? state : { phosphorFlares };
+  }),
+
   // ==================== FLAMETHROWER ====================
   setFlamethrowerActive: (active) => set((state) => (
     state.flamethrowerActive === active ? state : { flamethrowerActive: active }
@@ -772,6 +801,12 @@ export const createProjectileSlice: StateCreator<
     if (bombs !== state.bombs) {
       next ??= {};
       next.bombs = bombs;
+    }
+
+    const phosphorFlares = filterExpiredByExpiryAt(state.phosphorFlares, now, getPhosphorFlareExpiresAt);
+    if (phosphorFlares !== state.phosphorFlares) {
+      next ??= {};
+      next.phosphorFlares = phosphorFlares;
     }
 
     const chronosPulses = filterExpiredByExpiryAt(state.chronosPulses, now, getChronosPulseExpiresAt);

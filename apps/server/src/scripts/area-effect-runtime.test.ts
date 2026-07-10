@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import {
   BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
 } from '@voxel-strike/shared';
 import {
-  BlazeGearstormTracker,
+  BlazeLingeringAreaTracker,
   PendingAreaDamageQueue,
   VoidZoneTracker,
   type PendingAreaDamageInstance,
@@ -23,6 +24,39 @@ function createPendingAreaDamage(
     damageType: 'test',
     resolveAt,
   };
+}
+
+{
+  const tracker = new BlazeLingeringAreaTracker();
+  const hits: number[] = [];
+  tracker.add({
+    id: 'delayed-phosphor-pool',
+    ownerId: 'owner',
+    ownerTeam: 'red',
+    position: { x: 0, y: 0, z: 0 },
+    radius: 3,
+    damage: 12,
+    damageIntervalMs: BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+    damageType: 'phosphor_flare',
+    abilityId: 'blaze_phosphor_flare',
+    falloffScale: 0,
+    startTime: 2_000,
+    endTime: 6_000,
+  });
+  const update = (now: number) => tracker.update(now, {
+    hasOwner: () => true,
+    getTargets: () => [createTarget('inside', { x: 1, y: 0, z: 0 })],
+    applyDamage: () => hits.push(now),
+  });
+
+  update(1_999);
+  assert.deepEqual(hits, []);
+  update(2_000);
+  assert.deepEqual(hits, [2_000]);
+  update(2_000 + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS - 1);
+  assert.deepEqual(hits, [2_000]);
+  update(2_000 + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS);
+  assert.deepEqual(hits, [2_000, 2_000 + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS]);
 }
 
 function createTarget(
@@ -65,7 +99,7 @@ function createTarget(
 }
 
 {
-  const tracker = new BlazeGearstormTracker();
+  const tracker = new BlazeLingeringAreaTracker();
   const position = { x: 0, y: 0, z: 0 };
 
   tracker.add({
@@ -75,6 +109,10 @@ function createTarget(
     position,
     radius: 5,
     damage: 20,
+    damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+    damageType: 'airstrike',
+    abilityId: 'blaze_airstrike',
+    falloffScale: 0.35,
     startTime: 1_000,
     endTime: 5_000,
   });
@@ -128,7 +166,7 @@ function createTarget(
 }
 
 {
-  const tracker = new BlazeGearstormTracker();
+  const tracker = new BlazeLingeringAreaTracker();
   let targetsQueried = false;
 
   tracker.add({
@@ -138,6 +176,10 @@ function createTarget(
     position: { x: 0, y: 0, z: 0 },
     radius: 5,
     damage: 10,
+    damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+    damageType: 'airstrike',
+    abilityId: 'blaze_airstrike',
+    falloffScale: 0.35,
     startTime: 1_000,
     endTime: 2_000,
   });
@@ -165,7 +207,7 @@ function createTarget(
 }
 
 {
-  const tracker = new BlazeGearstormTracker();
+  const tracker = new BlazeLingeringAreaTracker();
 
   tracker.add({
     id: 'storm-clear',
@@ -174,6 +216,10 @@ function createTarget(
     position: { x: 0, y: 0, z: 0 },
     radius: 5,
     damage: 10,
+    damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+    damageType: 'airstrike',
+    abilityId: 'blaze_airstrike',
+    falloffScale: 0.35,
     startTime: 1_000,
     endTime: 2_000,
   });

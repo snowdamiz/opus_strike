@@ -14,6 +14,7 @@ import {
 const expectedAbilityIds = [
   'blaze_bomb',
   'blaze_flamethrower',
+  'blaze_phosphor_flare',
   'blaze_rocket',
   'blaze_rocketjump',
   'blaze_scrapshot',

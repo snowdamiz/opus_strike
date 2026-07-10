@@ -422,6 +422,7 @@ export function MobileControls({
   const setActionPressed = useMobileControlsStore(state => state.setActionPressed);
   const layoutEditing = useSettingsStore(state => state.settings.mobileHudLayoutEditing);
   const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
+  const blazeSecondarySkill = useLoadoutStore(state => state.blazeSecondarySkill);
   const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
   const shouldRender = Boolean(controlsAvailable && !disabled && heroId);
   const gameplayControlsDisabled = disabled || layoutEditing;
@@ -434,9 +435,10 @@ export function MobileControls({
         heroId,
         blazePrimarySkill,
         resolveHeroAbilityBindings(heroId, heroAbilityBindings),
+        blazeSecondarySkill,
       )
       : []),
-    [blazePrimarySkill, heroAbilityBindings, heroId]
+    [blazePrimarySkill, blazeSecondarySkill, heroAbilityBindings, heroId]
   );
   const primarySkill = getSkillByInput(skillItems, 'LMB');
   const secondarySkill = getSkillByInput(skillItems, 'RMB');

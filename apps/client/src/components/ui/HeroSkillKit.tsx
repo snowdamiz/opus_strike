@@ -3,12 +3,13 @@ import {
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
   DEFAULT_BLAZE_PRIMARY_SKILL,
+  DEFAULT_BLAZE_SECONDARY_SKILL,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
-import type { AbilityCardStat, BlazePrimarySkill, HeroId } from '@voxel-strike/shared';
+import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, HeroId } from '@voxel-strike/shared';
 import {
   DRAG_HOOK_COOLDOWN,
   HOOKSHOT_FIRE_INTERVAL,
@@ -184,6 +185,18 @@ export const BLAZE_SCRAPSHOT_SKILL: HeroClickSkill = {
   rarity: 'epic',
 };
 
+export const BLAZE_PHOSPHOR_FLARE_SKILL: HeroClickSkill = {
+  input: 'RMB',
+  abilityId: 'blaze_phosphor_flare',
+  statKey: 'blaze_phosphor_flare',
+  name: ABILITY_DEFINITIONS.blaze_phosphor_flare.name,
+  description: ABILITY_DEFINITIONS.blaze_phosphor_flare.description,
+  cooldown: ABILITY_DEFINITIONS.blaze_phosphor_flare.cooldown,
+  duration: ABILITY_DEFINITIONS.blaze_phosphor_flare.duration,
+  iconType: 'phosphorflare',
+  rarity: 'epic',
+};
+
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   phantom: [
     fromAbility('E', 'phantom_blink'),
@@ -216,18 +229,23 @@ export function getHeroSkillItems(
   heroId: HeroId,
   blazePrimarySkill: BlazePrimarySkill = DEFAULT_BLAZE_PRIMARY_SKILL,
   abilityBindings: HeroAbilityBindings = getDefaultHeroAbilityBindings(heroId),
+  blazeSecondarySkill: BlazeSecondarySkill = DEFAULT_BLAZE_SECONDARY_SKILL,
 ): HeroSkillItem[] {
   const cacheKey = [
     heroId,
     heroId === 'blaze' ? blazePrimarySkill : DEFAULT_BLAZE_PRIMARY_SKILL,
+    heroId === 'blaze' ? blazeSecondarySkill : DEFAULT_BLAZE_SECONDARY_SKILL,
     abilityBindings.ability1,
     abilityBindings.ability2,
   ].join(':');
   const cached = heroSkillItemsCache.get(cacheKey);
   if (cached) return cached;
 
-  const clickSkills = heroId === 'blaze' && blazePrimarySkill === 'scrapshot'
-    ? [BLAZE_SCRAPSHOT_SKILL, HERO_CLICK_SKILLS.blaze[1]]
+  const clickSkills = heroId === 'blaze'
+    ? [
+      blazePrimarySkill === 'scrapshot' ? BLAZE_SCRAPSHOT_SKILL : HERO_CLICK_SKILLS.blaze[0],
+      blazeSecondarySkill === 'phosphor_flare' ? BLAZE_PHOSPHOR_FLARE_SKILL : HERO_CLICK_SKILLS.blaze[1],
+    ]
     : HERO_CLICK_SKILLS[heroId];
   const stockAbilitySkills = HERO_ABILITY_SKILLS[heroId];
   const stockAbilityById = new Map(
