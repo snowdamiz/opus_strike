@@ -4758,6 +4758,77 @@ a {
   outline-offset: 0.12rem;
 }
 
+/* Compact stand-in for the earnings plate on short touch-landscape screens.
+   Hidden by default; the phone-landscape ladder swaps plate -> pill. */
+.play-earnings-pill {
+  display: none;
+  align-items: center;
+  gap: 0.32rem;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgb(24 26 32 / 0.86), rgb(8 9 12 / 0.8));
+  box-shadow: 0 0.35rem 0.9rem rgb(0 0 0 / 0.3);
+  color: rgb(255 255 255 / 0.88);
+  font-family: 'Rajdhani', 'Exo 2', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  line-height: 1;
+  text-transform: uppercase;
+  padding: 0.34rem 0.7rem;
+  pointer-events: auto;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.play-earnings-pill svg {
+  width: 0.78rem;
+  height: 0.78rem;
+  color: rgb(var(--color-accent-primary) / 0.92);
+}
+
+.play-earnings-pill:focus-visible {
+  outline: 1px solid rgb(var(--color-accent-primary) / 0.74);
+  outline-offset: 0.12rem;
+}
+
+.play-earnings-dialog-list {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.play-earnings-dialog-list li {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.play-earnings-dialog-label {
+  color: rgb(var(--color-accent-primary) / 0.95);
+  font-family: 'Rajdhani', 'Exo 2', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.play-earnings-dialog-value {
+  color: white;
+  font-family: 'Rajdhani', 'Exo 2', sans-serif;
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.play-earnings-dialog-detail {
+  color: rgb(255 255 255 / 0.56);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 .play-earnings-rule-info svg {
   width: 0.82rem;
   height: 0.82rem;
@@ -8609,6 +8680,12 @@ a {
   overscroll-behavior: contain;
 }
 
+/* Dialogs can mount inside pointer-events:none HUD stacks (e.g. the play tab's
+   bottom-right stack); the overlay must always be interactive regardless. */
+.game-dialog-overlay {
+  pointer-events: auto;
+}
+
 .game-dialog {
   --dialog-font-xs: clamp(0.75rem, 0.71rem + 0.12vw, 0.84375rem);
   --dialog-font-sm: clamp(0.875rem, 0.82rem + 0.14vw, 0.96875rem);
@@ -11426,6 +11503,43 @@ input[type="color"]::-webkit-color-swatch {
 
   .battle-royal-lobby-team-card {
     min-height: 9.7rem !important;
+  }
+}
+
+/* Touch landscape keeps the earnings plate in a narrow (~30vw) column; stack
+   each rule's label above its value so long values wrap cleanly instead of
+   squeezing into a starved middle column. */
+@media (pointer: coarse) and (orientation: landscape),
+  (hover: none) and (orientation: landscape),
+  (max-width: 920px) and (orientation: landscape) {
+  .play-earnings-rule-list li {
+    grid-template-columns: minmax(0, 1fr) 1rem;
+  }
+
+  .play-earnings-rule-label,
+  .play-earnings-rule-value {
+    grid-column: 1;
+  }
+
+  .play-earnings-rule-info {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+/* Phone landscape (short viewports): the expanded earnings plate cannot fit —
+   it overflows the viewport top and buries the nav. Swap it for a compact
+   pill that opens the rules in a dialog. Placed after the taller-device
+   blocks above so this hide wins the cascade. */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 520px),
+  (hover: none) and (orientation: landscape) and (max-height: 520px),
+  (max-width: 920px) and (orientation: landscape) and (max-height: 520px) {
+  .play-earnings-plate {
+    display: none;
+  }
+
+  .play-earnings-pill {
+    display: inline-flex;
   }
 }
 
