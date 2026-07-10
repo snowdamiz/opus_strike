@@ -3003,11 +3003,42 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
 }
 
 function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | null; economy: RewardEconomy | null }) {
+  const [isRulesDialogOpen, setIsRulesDialogOpen] = useState(false);
   const rules = getEarningRules(tokenSymbol, economy);
   if (rules.length === 0) return null;
 
   return (
-    <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
+    <>
+      {/* Short touch-landscape viewports swap the plate for this pill via CSS:
+          the expanded rule list cannot fit a phone-landscape screen. */}
+      <button
+        type="button"
+        className="play-earnings-pill"
+        onClick={() => setIsRulesDialogOpen(true)}
+        aria-haspopup="dialog"
+      >
+        <Info aria-hidden="true" />
+        <span>Ways to earn</span>
+      </button>
+      {isRulesDialogOpen && (
+        <GameDialog
+          title="Ways to earn"
+          icon={<Info aria-hidden="true" />}
+          size="sm"
+          onClose={() => setIsRulesDialogOpen(false)}
+        >
+          <ul className="play-earnings-dialog-list">
+            {rules.map((rule) => (
+              <li key={rule.label}>
+                <span className="play-earnings-dialog-label">{rule.label}</span>
+                <span className="play-earnings-dialog-value">{rule.value}</span>
+                <span className="play-earnings-dialog-detail">{rule.tooltip}</span>
+              </li>
+            ))}
+          </ul>
+        </GameDialog>
+      )}
+      <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
       <TooltipPrimitive.Provider delayDuration={180}>
         <ul className="play-earnings-rule-list">
           {rules.map((rule) => (
@@ -3038,6 +3069,7 @@ function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | nul
         </ul>
       </TooltipPrimitive.Provider>
     </aside>
+    </>
   );
 }
 
