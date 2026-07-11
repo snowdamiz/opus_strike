@@ -21,6 +21,7 @@ import {
   isGameplayMode,
   isMatchPerspective,
   normalizeVoxelMapSizeId,
+  PHANTOM_SOULREND_SPEED,
   type PublicRankSnapshot,
 } from '@voxel-strike/shared';
 import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
@@ -2214,7 +2215,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
   const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
 
   switch (data.abilityId) {
-    case 'phantom_dire_ball': {
+    case 'phantom_dire_ball':
+    case 'phantom_soulrend_daggers': {
+      const primaryAbilityId = data.abilityId as 'phantom_dire_ball' | 'phantom_soulrend_daggers';
       const launchSide = data.launchSide ?? 1;
       const startPosition = resolveObservedStartPosition(
         data,
@@ -2224,31 +2227,45 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, launchSide);
       const direction = normalizeAimDirection(data);
+      const projectileSpeed = primaryAbilityId === 'phantom_soulrend_daggers'
+        ? PHANTOM_SOULREND_SPEED
+        : PHANTOM_PROJECTILE_SPEED;
       const predictedVisualId = isLocalPlayer
-        ? consumePredictedLocalAbilityVisual('phantom_dire_ball', data.playerId, { launchSide: data.launchSide })
+        ? consumePredictedLocalAbilityVisual(primaryAbilityId, data.playerId, { launchSide: data.launchSide })
         : null;
       if (isLocalPlayer) {
         applyPhantomPrimaryState(data);
+      }
+      if (predictedVisualId && primaryAbilityId === 'phantom_soulrend_daggers') {
+        store.updateDireBall(predictedVisualId, {
+          abilityId: primaryAbilityId,
+          impactPosition: data.impactPosition,
+          ricochetPosition: data.ricochetPosition,
+        });
       }
       if (!predictedVisualId) {
         store.addDireBall({
           id: castId,
           position: startPosition,
           velocity: {
-            x: direction.x * PHANTOM_PROJECTILE_SPEED,
-            y: direction.y * PHANTOM_PROJECTILE_SPEED,
-            z: direction.z * PHANTOM_PROJECTILE_SPEED,
+            x: direction.x * projectileSpeed,
+            y: direction.y * projectileSpeed,
+            z: direction.z * projectileSpeed,
           },
-          impactPosition: data.interceptedByChronosAegis ? data.impactPosition : undefined,
+          impactPosition: primaryAbilityId === 'phantom_soulrend_daggers' || data.interceptedByChronosAegis
+            ? data.impactPosition
+            : undefined,
           interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: Date.now(),
           ownerId: data.playerId,
           ownerTeam,
           launchSide: data.launchSide,
           launchYaw: data.launchYaw,
+          abilityId: primaryAbilityId,
+          ricochetPosition: data.ricochetPosition,
         });
       }
-      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_dire_ball')) {
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound(primaryAbilityId)) {
         playPhantomWorldSound('phantomBasic', startPosition);
       }
       return true;

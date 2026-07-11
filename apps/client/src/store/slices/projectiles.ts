@@ -76,12 +76,13 @@ export interface ProjectileActions {
 
   // Dire ball actions
   addDireBall: (ball: DireBallData) => void;
+  updateDireBall: (id: string, updates: Partial<DireBallData>) => void;
   removeDireBall: (id: string) => void;
   removeDireBalls: (ids: readonly string[]) => void;
   clearExpiredDireBalls: () => void;
   setPhantomPrimaryAmmo: (ammo: number) => void;
   setPhantomPrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
-  resetPhantomPrimaryMagazine: () => void;
+  resetPhantomPrimaryMagazine: (magazineSize?: number) => void;
 
   // Void ray actions
   addVoidRay: (ray: VoidRayData) => void;
@@ -421,6 +422,14 @@ export const createProjectileSlice: StateCreator<
     return direBalls === state.direBalls ? state : { direBalls };
   }),
 
+  updateDireBall: (id, updates) => set((state) => {
+    const index = state.direBalls.findIndex((ball) => ball.id === id);
+    if (index < 0) return state;
+    const direBalls = [...state.direBalls];
+    direBalls[index] = { ...direBalls[index], ...updates };
+    return { direBalls };
+  }),
+
   removeDireBall: (id) => set((state) => {
     const direBalls = removeById(state.direBalls, id);
     return direBalls === state.direBalls ? state : { direBalls };
@@ -457,9 +466,9 @@ export const createProjectileSlice: StateCreator<
     };
   }),
 
-  resetPhantomPrimaryMagazine: () => set((state) => {
+  resetPhantomPrimaryMagazine: (magazineSize = PHANTOM_PRIMARY_MAGAZINE_SIZE) => set((state) => {
     if (
-      state.phantomPrimaryAmmo === PHANTOM_PRIMARY_MAGAZINE_SIZE &&
+      state.phantomPrimaryAmmo === magazineSize &&
       !state.phantomPrimaryReloading &&
       state.phantomPrimaryReloadStart === 0 &&
       state.phantomPrimaryReloadEnd === 0
@@ -468,7 +477,7 @@ export const createProjectileSlice: StateCreator<
     }
 
     return {
-      phantomPrimaryAmmo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+      phantomPrimaryAmmo: magazineSize,
       phantomPrimaryReloading: false,
       phantomPrimaryReloadStart: 0,
       phantomPrimaryReloadEnd: 0,

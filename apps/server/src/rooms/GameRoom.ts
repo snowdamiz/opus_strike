@@ -242,6 +242,7 @@ import {
   getAttackPreflightRejection,
   getChronosAegisCollisionRadiusForAttack,
   getRoomAttackConfig,
+  selectSoulrendRicochetTarget,
   shouldResolveBlazeSecondaryAttack,
   withHookshotHeavyAttackTargetHint,
   type AttackConfig,
@@ -352,6 +353,8 @@ import {
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_SOULREND_MAGAZINE_SIZE,
+  PHANTOM_SOULREND_RICOCHET_RADIUS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_CROUCH_HEIGHT,
@@ -408,6 +411,7 @@ import {
   getSegmentHitAgainstPlayerCombatHitbox,
   getBlazeScrapshotPelletDirections,
   isBlazePrimarySkill,
+  isPhantomPrimarySkill,
   isBlazeSecondarySkill,
   isBlazeUltimateSkill,
   getBlazeUltimateAbilityId,
@@ -433,6 +437,7 @@ import type {
   BlazeSecondarySkill,
   BlazeUltimateSkill,
   BlazeAbilityBindings,
+  PhantomPrimarySkill,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -835,6 +840,8 @@ interface PhantomCastPayload {
   startPosition?: PlainVec3;
   targetPosition?: PlainVec3;
   impactPosition?: PlainVec3;
+  ricochetPosition?: PlainVec3;
+  ricochetTargetId?: string;
   interceptedByChronosAegis?: boolean;
   aimDirection?: PlainVec3;
   velocity?: PlainVec3;
@@ -1190,6 +1197,11 @@ export class GameRoom extends Room<GameState> {
     magazineSize: PHANTOM_PRIMARY_MAGAZINE_SIZE,
     reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
   });
+  private readonly phantomSoulrendPrimaryMagazines = new PrimaryMagazineTracker({
+    magazineSize: PHANTOM_SOULREND_MAGAZINE_SIZE,
+    reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
+  });
+  private readonly phantomPrimarySkills = new Map<string, PhantomPrimarySkill>();
   private readonly blazePrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
@@ -1949,6 +1961,11 @@ export class GameRoom extends Room<GameState> {
       this.handleTeamSelect(client, team);
     });
 
+    this.onRateLimitedMessage('setPhantomPrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isPhantomPrimarySkill(data.skill)) return;
+      this.handleSetPhantomPrimarySkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('setBlazePrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       if (!isRecord(data) || !isBlazePrimarySkill(data.skill)) return;
       this.handleSetBlazePrimarySkill(client, data.skill);
@@ -2044,6 +2061,16 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId !== 'blaze') return;
 
     this.resetPrimaryMagazineForHero(player.id, player.heroId);
+  }
+
+  private handleSetPhantomPrimarySkill(client: Client, skill: PhantomPrimarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.phantomPrimarySkills.has(player.id)) return;
+
+    this.phantomPrimarySkills.set(player.id, skill);
+    if (player.heroId === 'phantom') {
+      this.resetPrimaryMagazineForHero(player.id, player.heroId);
+    }
   }
 
   private handleSetBlazeSecondarySkill(client: Client, skill: BlazeSecondarySkill): void {
@@ -2450,6 +2477,8 @@ export class GameRoom extends Room<GameState> {
   private clearCombatPlayerRuntimeState(playerId: string): void {
     this.playerPressStates.clear(playerId);
     this.phantomPrimaryMagazines.clear(playerId);
+    this.phantomSoulrendPrimaryMagazines.clear(playerId);
+    this.phantomPrimarySkills.delete(playerId);
     this.blazePrimaryMagazines.clear(playerId);
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
@@ -7879,14 +7908,14 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastPhantomAttackCast(
     player: Player,
-    abilityId: 'phantom_dire_ball' | 'phantom_void_ray',
+    abilityId: 'phantom_dire_ball' | 'phantom_soulrend_daggers' | 'phantom_void_ray',
     now: number,
     range: number,
     impactHint: SkillImpactHint = {}
   ): void {
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getPlayerEyePosition(player);
-    const launchSide = abilityId === 'phantom_dire_ball'
+    const launchSide = abilityId === 'phantom_dire_ball' || abilityId === 'phantom_soulrend_daggers'
       ? this.getNextPhantomPrimaryLaunchSide(player.id)
       : 1;
     const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
@@ -7903,7 +7932,7 @@ export class GameRoom extends Room<GameState> {
       y: aimPoint.y - startPosition.y,
       z: aimPoint.z - startPosition.z,
     }) ?? lookDirection;
-    const magazine = abilityId === 'phantom_dire_ball'
+    const magazine = abilityId === 'phantom_dire_ball' || abilityId === 'phantom_soulrend_daggers'
       ? this.getOrCreatePrimaryMagazine(player)
       : null;
 
@@ -7917,6 +7946,133 @@ export class GameRoom extends Room<GameState> {
       ownerTeam: player.team as Team,
       impactPosition: impactHint.impactPosition,
       interceptedByChronosAegis: impactHint.interceptedByChronosAegis,
+      launchSide,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      ammoRemaining: magazine?.ammo,
+      reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
+      reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
+    });
+  }
+
+  private firePhantomSoulrend(player: Player, attack: AttackConfig, now: number): void {
+    const abilityId = 'phantom_soulrend_daggers';
+    const origin = this.getPlayerEyePosition(player);
+    const rawForward = getForwardVector(player.lookYaw, player.lookPitch);
+    const forward = this.resolveValidatedCastAimDirection(
+      player,
+      abilityId,
+      origin,
+      rawForward,
+      attack.range,
+    );
+    const primaryTargetHit = this.findTargetHitInAimCone(
+      player,
+      attack.range,
+      attack.coneDot,
+      attack.collisionRadius ?? 0,
+      'enemy',
+      { origin, forward },
+    );
+    const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
+      projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
+    });
+    const aegisBlocksPrimary = Boolean(
+      aegisHit && (!primaryTargetHit || aegisHit.distance <= primaryTargetHit.hit.distance)
+    );
+    const launchSide = this.getNextPhantomPrimaryLaunchSide(player.id);
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
+    const magazine = this.getOrCreatePrimaryMagazine(player);
+    let impactPosition: PlainVec3 | undefined;
+    let ricochetPosition: PlainVec3 | undefined;
+    let ricochetTargetId: string | undefined;
+    const targetIds: string[] = [];
+
+    if (aegisBlocksPrimary && aegisHit) {
+      impactPosition = aegisHit.point;
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
+    } else if (primaryTargetHit) {
+      const primaryTarget = primaryTargetHit.target;
+      impactPosition = primaryTargetHit.hit.targetPoint;
+      targetIds.push(primaryTarget.id);
+      this.recordCombatVisibilityAtHit(player, primaryTarget, 'primary', attack.damageType, now);
+      this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType, {
+        abilityId,
+        sourcePosition: origin,
+        sourceDirection: forward,
+      });
+
+      const ricochetTarget = selectSoulrendRicochetTarget(
+        impactPosition,
+        this.queryPlayersRadius(impactPosition, PHANTOM_SOULREND_RICOCHET_RADIUS, {
+          excludeTeam: player.team as Team,
+          excludeId: player.id,
+          includeDowned: true,
+        }),
+        new Set([player.id, primaryTarget.id]),
+      );
+
+      if (ricochetTarget) {
+        const targetPosition = this.getPlayerBodyAimPosition(ricochetTarget);
+        const distance = distance3D(impactPosition, targetPosition);
+        const ricochetDirection = this.normalize3D({
+          x: targetPosition.x - impactPosition.x,
+          y: targetPosition.y - impactPosition.y,
+          z: targetPosition.z - impactPosition.z,
+        });
+        const ricochetAegisHit = ricochetDirection
+          ? this.getChronosAegisSkillHit(player, impactPosition, ricochetDirection, distance, {
+            projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
+            targetPoint: targetPosition,
+          })
+          : null;
+
+        if (ricochetAegisHit && ricochetAegisHit.distance <= distance) {
+          ricochetPosition = ricochetAegisHit.point;
+          this.absorbDamageWithChronosAegis(ricochetAegisHit.blocker, attack.damage, now, {
+            source: player,
+            damageType: attack.damageType,
+            position: ricochetAegisHit.point,
+            direction: ricochetAegisHit.normal,
+          });
+        } else {
+          ricochetPosition = targetPosition;
+          ricochetTargetId = ricochetTarget.id;
+          targetIds.push(ricochetTarget.id);
+          this.applyDamage(ricochetTarget, attack.damage, player.id, attack.damageType, {
+            abilityId,
+            sourcePosition: impactPosition,
+            sourceDirection: ricochetDirection ?? forward,
+          });
+        }
+      }
+    }
+
+    const aimPoint = impactPosition ?? this.addScaled3D(origin, forward, attack.range);
+    const aimDirection = this.normalize3D({
+      x: aimPoint.x - startPosition.x,
+      y: aimPoint.y - startPosition.y,
+      z: aimPoint.z - startPosition.z,
+    }) ?? forward;
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId,
+      castId: this.abilityIds.nextSharedCastId(player.id, abilityId),
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      impactPosition,
+      ricochetPosition,
+      ricochetTargetId,
+      interceptedByChronosAegis: aegisBlocksPrimary,
+      targetIds,
+      aimDirection,
+      ownerTeam: player.team as Team,
       launchSide,
       launchYaw: player.lookYaw,
       serverTime: now,
@@ -8415,6 +8571,10 @@ export class GameRoom extends Room<GameState> {
     return this.blazePrimarySkills.get(playerId) ?? 'fireball_rockets';
   }
 
+  private getPhantomPrimarySkill(playerId: string): PhantomPrimarySkill {
+    return this.phantomPrimarySkills.get(playerId) ?? 'dire_ball';
+  }
+
   private getBlazeSecondarySkill(playerId: string): BlazeSecondarySkill {
     return this.blazeSecondarySkills.get(playerId) ?? 'meteor_strike';
   }
@@ -8424,7 +8584,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getPrimaryMagazineTracker(playerId: string, heroId: string): PrimaryMagazineTracker | null {
-    if (heroId === 'phantom') return this.phantomPrimaryMagazines;
+    if (heroId === 'phantom') {
+      return this.getPhantomPrimarySkill(playerId) === 'soulrend_daggers'
+        ? this.phantomSoulrendPrimaryMagazines
+        : this.phantomPrimaryMagazines;
+    }
     if (heroId === 'blaze') {
       return this.getBlazePrimarySkill(playerId) === 'scrapshot'
         ? this.blazeScrapshotPrimaryMagazines
@@ -8438,7 +8602,9 @@ export class GameRoom extends Room<GameState> {
     this.phantomPrimaryHolds.clear(playerId);
 
     if (heroId === 'phantom') {
-      this.phantomPrimaryMagazines.reset(playerId);
+      this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
+      this.getPrimaryMagazineTracker(playerId, heroId)?.reset(playerId);
       this.blazePrimaryMagazines.clear(playerId);
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
@@ -8447,14 +8613,17 @@ export class GameRoom extends Room<GameState> {
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.getPrimaryMagazineTracker(playerId, heroId)?.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
     } else if (heroId === 'chronos') {
       this.chronosPrimaryMagazines.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
     } else {
       this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
@@ -8792,6 +8961,7 @@ export class GameRoom extends Room<GameState> {
         heroId,
         mode,
         chronosAscendantActive: heroId === 'chronos' && mode === 'primary' && this.isChronosAscendantActive(player),
+        phantomPrimarySkill: heroId === 'phantom' ? this.getPhantomPrimarySkill(player.id) : undefined,
         blazePrimarySkill: heroId === 'blaze' ? this.getBlazePrimarySkill(player.id) : undefined,
         blazeSecondarySkill: heroId === 'blaze' ? this.getBlazeSecondarySkill(player.id) : undefined,
       })
@@ -8857,9 +9027,22 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    if (
+      heroId === 'phantom' &&
+      mode === 'primary' &&
+      this.getPhantomPrimarySkill(player.id) === 'soulrend_daggers'
+    ) {
+      this.firePhantomSoulrend(player, attack, now);
+      return;
+    }
+
     const origin = this.getPlayerEyePosition(player);
     const rawForward = getForwardVector(player.lookYaw, player.lookPitch);
-    const castKind = getAttackCastKind({ heroId, mode });
+    const castKind = getAttackCastKind({
+      heroId,
+      mode,
+      phantomPrimarySkill: heroId === 'phantom' ? this.getPhantomPrimarySkill(player.id) : undefined,
+    });
     const forward = this.resolveValidatedCastAimDirection(
       player,
       castKind,
@@ -8883,7 +9066,11 @@ export class GameRoom extends Room<GameState> {
       aegisBlocksAttack,
       aegisPoint: aegisHit?.point,
     });
-    if (castKind === 'phantom_dire_ball' || castKind === 'phantom_void_ray') {
+    if (
+      castKind === 'phantom_dire_ball' ||
+      castKind === 'phantom_soulrend_daggers' ||
+      castKind === 'phantom_void_ray'
+    ) {
       this.broadcastPhantomAttackCast(player, castKind, now, attack.range, impactHint);
     } else if (castKind === 'hookshot_basic_attack' || castKind === 'hookshot_heavy_attack') {
       this.broadcastHookshotAttackCast(player, castKind, now, withHookshotHeavyAttackTargetHint({

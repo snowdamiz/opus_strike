@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ALL_HERO_IDS,
   BLAZE_ABILITY_SKILLS,
+  DEFAULT_PHANTOM_PRIMARY_SKILL,
   DEFAULT_BLAZE_PRIMARY_SKILL,
   DEFAULT_BLAZE_SECONDARY_SKILL,
   DEFAULT_BLAZE_ULTIMATE_SKILL,
@@ -10,12 +11,14 @@ import {
   isBlazePrimarySkill,
   isBlazeSecondarySkill,
   isBlazeUltimateSkill,
+  isPhantomPrimarySkill,
   type BlazePrimarySkill,
   type BlazeSecondarySkill,
   type BlazeUltimateSkill,
   type BlazeAbilityBindings,
   type HeroId,
   type InputState,
+  type PhantomPrimarySkill,
 } from '@voxel-strike/shared';
 
 export const LOADOUT_STORAGE_KEY = 'voxel-strike-loadout';
@@ -30,6 +33,7 @@ export interface HeroAbilityBindings {
 export type HeroAbilityBindingsMap = Partial<Record<HeroId, HeroAbilityBindings>>;
 
 interface StoredLoadout {
+  phantomPrimarySkill: PhantomPrimarySkill;
   blazePrimarySkill: BlazePrimarySkill;
   blazeSecondarySkill: BlazeSecondarySkill;
   blazeUltimateSkill: BlazeUltimateSkill;
@@ -37,6 +41,7 @@ interface StoredLoadout {
 }
 
 interface LoadoutState extends StoredLoadout {
+  setPhantomPrimarySkill: (skill: PhantomPrimarySkill) => void;
   setBlazePrimarySkill: (skill: BlazePrimarySkill) => void;
   setBlazeSecondarySkill: (skill: BlazeSecondarySkill) => void;
   setBlazeUltimateSkill: (skill: BlazeUltimateSkill) => void;
@@ -152,6 +157,7 @@ export function applyHeroAbilityBindings(
 export function loadStoredLoadout(): StoredLoadout {
   if (typeof window === 'undefined') {
     return {
+      phantomPrimarySkill: DEFAULT_PHANTOM_PRIMARY_SKILL,
       blazePrimarySkill: DEFAULT_BLAZE_PRIMARY_SKILL,
       blazeSecondarySkill: DEFAULT_BLAZE_SECONDARY_SKILL,
       blazeUltimateSkill: DEFAULT_BLAZE_ULTIMATE_SKILL,
@@ -161,12 +167,16 @@ export function loadStoredLoadout(): StoredLoadout {
 
   try {
     const raw = JSON.parse(window.localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}') as {
+      phantomPrimarySkill?: unknown;
       blazePrimarySkill?: unknown;
       blazeSecondarySkill?: unknown;
       blazeUltimateSkill?: unknown;
       heroAbilityBindings?: unknown;
     };
     return {
+      phantomPrimarySkill: isPhantomPrimarySkill(raw.phantomPrimarySkill)
+        ? raw.phantomPrimarySkill
+        : DEFAULT_PHANTOM_PRIMARY_SKILL,
       blazePrimarySkill: isBlazePrimarySkill(raw.blazePrimarySkill)
         ? raw.blazePrimarySkill
         : DEFAULT_BLAZE_PRIMARY_SKILL,
@@ -180,6 +190,7 @@ export function loadStoredLoadout(): StoredLoadout {
     };
   } catch {
     return {
+      phantomPrimarySkill: DEFAULT_PHANTOM_PRIMARY_SKILL,
       blazePrimarySkill: DEFAULT_BLAZE_PRIMARY_SKILL,
       blazeSecondarySkill: DEFAULT_BLAZE_SECONDARY_SKILL,
       blazeUltimateSkill: DEFAULT_BLAZE_ULTIMATE_SKILL,
@@ -197,9 +208,23 @@ const initialLoadout = loadStoredLoadout();
 
 export const useLoadoutStore = create<LoadoutState>((set) => ({
   ...initialLoadout,
+  setPhantomPrimarySkill: (phantomPrimarySkill) => {
+    set((state) => {
+      const stored = {
+        phantomPrimarySkill,
+        blazePrimarySkill: state.blazePrimarySkill,
+        blazeSecondarySkill: state.blazeSecondarySkill,
+        blazeUltimateSkill: state.blazeUltimateSkill,
+        heroAbilityBindings: state.heroAbilityBindings,
+      };
+      persistLoadout(stored);
+      return stored;
+    });
+  },
   setBlazePrimarySkill: (blazePrimarySkill) => {
     set((state) => {
       const stored = {
+        phantomPrimarySkill: state.phantomPrimarySkill,
         blazePrimarySkill,
         blazeSecondarySkill: state.blazeSecondarySkill,
         blazeUltimateSkill: state.blazeUltimateSkill,
@@ -212,6 +237,7 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
   setBlazeSecondarySkill: (blazeSecondarySkill) => {
     set((state) => {
       const stored = {
+        phantomPrimarySkill: state.phantomPrimarySkill,
         blazePrimarySkill: state.blazePrimarySkill,
         blazeSecondarySkill,
         blazeUltimateSkill: state.blazeUltimateSkill,
@@ -224,6 +250,7 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
   setBlazeUltimateSkill: (blazeUltimateSkill) => {
     set((state) => {
       const stored = {
+        phantomPrimarySkill: state.phantomPrimarySkill,
         blazePrimarySkill: state.blazePrimarySkill,
         blazeSecondarySkill: state.blazeSecondarySkill,
         blazeUltimateSkill,
@@ -262,6 +289,7 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
       }
 
       const stored = {
+        phantomPrimarySkill: state.phantomPrimarySkill,
         blazePrimarySkill: state.blazePrimarySkill,
         blazeSecondarySkill: state.blazeSecondarySkill,
         blazeUltimateSkill: state.blazeUltimateSkill,

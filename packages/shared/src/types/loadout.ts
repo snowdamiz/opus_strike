@@ -1,3 +1,13 @@
+export const PHANTOM_PRIMARY_SKILLS = ['dire_ball', 'soulrend_daggers'] as const;
+
+export type PhantomPrimarySkill = (typeof PHANTOM_PRIMARY_SKILLS)[number];
+
+export const DEFAULT_PHANTOM_PRIMARY_SKILL: PhantomPrimarySkill = 'dire_ball';
+
+export function isPhantomPrimarySkill(value: unknown): value is PhantomPrimarySkill {
+  return typeof value === 'string' && PHANTOM_PRIMARY_SKILLS.includes(value as PhantomPrimarySkill);
+}
+
 export const BLAZE_PRIMARY_SKILLS = ['fireball_rockets', 'scrapshot'] as const;
 
 export type BlazePrimarySkill = (typeof BLAZE_PRIMARY_SKILLS)[number];

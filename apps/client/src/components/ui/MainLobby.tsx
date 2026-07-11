@@ -345,7 +345,10 @@ function ContractAddressBadge({ address }: { address: string }) {
       onClick={() => void handleCopy()}
     >
       <span className="main-lobby-ca-label">{copied ? 'COPIED' : 'CA'}</span>
-      <span className="main-lobby-ca-address">{formatContractAddress(address)}</span>
+      <span className="main-lobby-ca-address main-lobby-ca-address-full">{address}</span>
+      <span className="main-lobby-ca-address main-lobby-ca-address-compact" aria-hidden="true">
+        {formatContractAddress(address)}
+      </span>
     </button>
   );
 }

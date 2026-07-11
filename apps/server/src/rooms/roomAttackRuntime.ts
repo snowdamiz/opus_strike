@@ -34,12 +34,16 @@ import {
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_COOLDOWN_MS,
+  PHANTOM_SOULREND_COLLISION_RADIUS,
+  PHANTOM_SOULREND_DAMAGE,
+  PHANTOM_SOULREND_RICOCHET_RADIUS,
   PHANTOM_VOID_RAY_COLLISION_RADIUS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   PHANTOM_VOID_RAY_DAMAGE,
   type BlazePrimarySkill,
   type BlazeSecondarySkill,
   type HeroId,
+  type PhantomPrimarySkill,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
 
@@ -65,6 +69,7 @@ export interface SkillImpactHint {
 
 export type AttackCastKind =
   | 'phantom_dire_ball'
+  | 'phantom_soulrend_daggers'
   | 'phantom_void_ray'
   | 'hookshot_basic_attack'
   | 'hookshot_heavy_attack'
@@ -126,6 +131,15 @@ export const BLAZE_SCRAPSHOT_ATTACK: AttackConfig = {
   damageType: 'scrapshot',
 };
 
+export const PHANTOM_SOULREND_ATTACK: AttackConfig = {
+  damage: PHANTOM_SOULREND_DAMAGE,
+  range: 30,
+  cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS,
+  coneDot: Math.cos(0.18),
+  collisionRadius: PHANTOM_SOULREND_COLLISION_RADIUS,
+  damageType: 'soulrend_daggers',
+};
+
 export const BLAZE_PHOSPHOR_FLARE_ATTACK: AttackConfig = {
   damage: BLAZE_PHOSPHOR_FLARE_DAMAGE,
   range: BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
@@ -181,9 +195,13 @@ export function getRoomAttackConfig(input: {
   heroId: HeroId;
   mode: AttackMode;
   chronosAscendantActive: boolean;
+  phantomPrimarySkill?: PhantomPrimarySkill;
   blazePrimarySkill?: BlazePrimarySkill;
   blazeSecondarySkill?: BlazeSecondarySkill;
 }): AttackConfig | null {
+  if (input.heroId === 'phantom' && input.mode === 'primary' && input.phantomPrimarySkill === 'soulrend_daggers') {
+    return PHANTOM_SOULREND_ATTACK;
+  }
   if (input.heroId === 'blaze' && input.mode === 'primary' && input.blazePrimarySkill === 'scrapshot') {
     return BLAZE_SCRAPSHOT_ATTACK;
   }
@@ -256,6 +274,8 @@ export function getChronosAegisCollisionRadiusForAttack(attack: Pick<AttackConfi
       return HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS;
     case 'dire_ball':
       return PHANTOM_DIRE_BALL_COLLISION_RADIUS;
+    case 'soulrend_daggers':
+      return PHANTOM_SOULREND_COLLISION_RADIUS;
     case 'rocket':
       return BLAZE_ROCKET_COLLISION_RADIUS;
     case 'scrapshot':
@@ -288,8 +308,12 @@ export function buildAttackImpactHint(input: {
 export function getAttackCastKind(input: {
   heroId: HeroId;
   mode: AttackMode;
+  phantomPrimarySkill?: PhantomPrimarySkill;
 }): AttackCastKind | null {
   if (input.heroId === 'phantom') {
+    if (input.mode === 'primary' && input.phantomPrimarySkill === 'soulrend_daggers') {
+      return 'phantom_soulrend_daggers';
+    }
     return input.mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray';
   }
   if (input.heroId === 'hookshot') {
@@ -299,6 +323,36 @@ export function getAttackCastKind(input: {
     return 'chronos_verdant_pulse';
   }
   return null;
+}
+
+export interface SoulrendRicochetCandidate {
+  id: string;
+  position: PlainVec3;
+}
+
+export function selectSoulrendRicochetTarget<T extends SoulrendRicochetCandidate>(
+  origin: PlainVec3,
+  candidates: Iterable<T>,
+  excludedIds: ReadonlySet<string>,
+  radius = PHANTOM_SOULREND_RICOCHET_RADIUS,
+): T | null {
+  const radiusSq = radius * radius;
+  let best: T | null = null;
+  let bestDistanceSq = radiusSq;
+
+  for (const candidate of candidates) {
+    if (excludedIds.has(candidate.id)) continue;
+    const dx = candidate.position.x - origin.x;
+    const dy = candidate.position.y - origin.y;
+    const dz = candidate.position.z - origin.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq > bestDistanceSq) continue;
+    if (distanceSq === bestDistanceSq && best && candidate.id >= best.id) continue;
+    best = candidate;
+    bestDistanceSq = distanceSq;
+  }
+
+  return best;
 }
 
 export function withHookshotHeavyAttackTargetHint(input: {

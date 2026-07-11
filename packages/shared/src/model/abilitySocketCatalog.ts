@@ -62,6 +62,14 @@ export const ABILITY_SOCKET_CATALOG = {
     socketNames: sideSocketNames(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, 'both'),
     fallbackOffset: PHANTOM_DIRE_BALL_SOCKET,
   },
+  phantom_soulrend_daggers: {
+    abilityId: 'phantom_soulrend_daggers',
+    heroId: 'phantom',
+    socketRole: 'primaryPalm',
+    sideMode: 'launchSide',
+    socketNames: sideSocketNames(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, 'both'),
+    fallbackOffset: PHANTOM_DIRE_BALL_SOCKET,
+  },
   phantom_void_ray_charge: {
     abilityId: 'phantom_void_ray_charge',
     heroId: 'phantom',

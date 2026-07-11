@@ -18,6 +18,8 @@ import {
   HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS,
   HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
+  PHANTOM_SOULREND_COLLISION_RADIUS,
+  PHANTOM_SOULREND_DAMAGE,
 } from '@voxel-strike/shared';
 import {
   buildAttackImpactHint,
@@ -26,6 +28,7 @@ import {
   getAttackPreflightRejection,
   getChronosAegisCollisionRadiusForAttack,
   getRoomAttackConfig,
+  selectSoulrendRicochetTarget,
   shouldResolveBlazeSecondaryAttack,
   withHookshotHeavyAttackTargetHint,
 } from '../rooms/roomAttackRuntime';
@@ -42,6 +45,19 @@ import {
   assert.equal(attack?.damage, BLAZE_SCRAPSHOT_PELLET_DAMAGE);
   assert.equal(attack?.range, BLAZE_SCRAPSHOT_RANGE);
   assert.equal(attack?.collisionRadius, BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS);
+}
+
+{
+  const attack = getRoomAttackConfig({
+    heroId: 'phantom',
+    mode: 'primary',
+    chronosAscendantActive: false,
+    phantomPrimarySkill: 'soulrend_daggers',
+  });
+
+  assert.equal(attack?.damageType, 'soulrend_daggers');
+  assert.equal(attack?.damage, PHANTOM_SOULREND_DAMAGE);
+  assert.equal(attack?.collisionRadius, PHANTOM_SOULREND_COLLISION_RADIUS);
 }
 
 {
@@ -233,9 +249,40 @@ import {
 
 {
   assert.equal(getAttackCastKind({ heroId: 'phantom', mode: 'primary' }), 'phantom_dire_ball');
+  assert.equal(getAttackCastKind({
+    heroId: 'phantom',
+    mode: 'primary',
+    phantomPrimarySkill: 'soulrend_daggers',
+  }), 'phantom_soulrend_daggers');
   assert.equal(getAttackCastKind({ heroId: 'hookshot', mode: 'secondary' }), 'hookshot_heavy_attack');
   assert.equal(getAttackCastKind({ heroId: 'chronos', mode: 'primary' }), 'chronos_verdant_pulse');
   assert.equal(getAttackCastKind({ heroId: 'chronos', mode: 'secondary' }), null);
+}
+
+{
+  const candidates = [
+    { id: 'excluded', position: { x: 1, y: 0, z: 0 } },
+    { id: 'far', position: { x: 7, y: 0, z: 0 } },
+    { id: 'near-b', position: { x: 3, y: 0, z: 0 } },
+    { id: 'near-a', position: { x: -3, y: 0, z: 0 } },
+    { id: 'outside', position: { x: 9, y: 0, z: 0 } },
+  ];
+  assert.equal(
+    selectSoulrendRicochetTarget(
+      { x: 0, y: 0, z: 0 },
+      candidates,
+      new Set(['excluded']),
+    )?.id,
+    'near-a',
+  );
+  assert.equal(
+    selectSoulrendRicochetTarget(
+      { x: 0, y: 0, z: 0 },
+      candidates,
+      new Set(candidates.map((candidate) => candidate.id)),
+    ),
+    null,
+  );
 }
 
 {

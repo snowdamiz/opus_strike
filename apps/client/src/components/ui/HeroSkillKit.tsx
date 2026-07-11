@@ -5,12 +5,13 @@ import {
   DEFAULT_BLAZE_PRIMARY_SKILL,
   DEFAULT_BLAZE_SECONDARY_SKILL,
   DEFAULT_BLAZE_ULTIMATE_SKILL,
+  DEFAULT_PHANTOM_PRIMARY_SKILL,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
-import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, HeroId } from '@voxel-strike/shared';
+import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, HeroId, PhantomPrimarySkill } from '@voxel-strike/shared';
 import {
   DRAG_HOOK_COOLDOWN,
   HOOKSHOT_FIRE_INTERVAL,
@@ -186,6 +187,16 @@ export const BLAZE_SCRAPSHOT_SKILL: HeroClickSkill = {
   rarity: 'epic',
 };
 
+export const PHANTOM_SOULREND_SKILL: HeroClickSkill = {
+  input: 'LMB',
+  statKey: 'phantom_soulrend_daggers',
+  name: 'Soulrend Daggers',
+  description: 'Throw spectral daggers that ricochet once to the nearest enemy within 8 meters of the first target.',
+  cooldown: secondsFromMs(PHANTOM_FIRE_INTERVAL),
+  iconType: 'soulrend',
+  rarity: 'epic',
+};
+
 export const BLAZE_PHOSPHOR_FLARE_SKILL: HeroClickSkill = {
   input: 'RMB',
   abilityId: 'blaze_phosphor_flare',
@@ -246,6 +257,7 @@ export function getHeroSkillItems(
   abilityBindings: HeroAbilityBindings = getDefaultHeroAbilityBindings(heroId),
   blazeSecondarySkill: BlazeSecondarySkill = DEFAULT_BLAZE_SECONDARY_SKILL,
   blazeUltimateSkill: BlazeUltimateSkill = DEFAULT_BLAZE_ULTIMATE_SKILL,
+  phantomPrimarySkill: PhantomPrimarySkill = DEFAULT_PHANTOM_PRIMARY_SKILL,
 ): HeroSkillItem[] {
   const cacheKey = [
     heroId,
@@ -254,6 +266,7 @@ export function getHeroSkillItems(
     heroId === 'blaze' ? blazeUltimateSkill : DEFAULT_BLAZE_ULTIMATE_SKILL,
     abilityBindings.ability1,
     abilityBindings.ability2,
+    heroId === 'phantom' ? phantomPrimarySkill : DEFAULT_PHANTOM_PRIMARY_SKILL,
   ].join(':');
   const cached = heroSkillItemsCache.get(cacheKey);
   if (cached) return cached;
@@ -263,7 +276,9 @@ export function getHeroSkillItems(
       blazePrimarySkill === 'scrapshot' ? BLAZE_SCRAPSHOT_SKILL : HERO_CLICK_SKILLS.blaze[0],
       blazeSecondarySkill === 'phosphor_flare' ? BLAZE_PHOSPHOR_FLARE_SKILL : HERO_CLICK_SKILLS.blaze[1],
     ]
-    : HERO_CLICK_SKILLS[heroId];
+    : heroId === 'phantom' && phantomPrimarySkill === 'soulrend_daggers'
+      ? [PHANTOM_SOULREND_SKILL, HERO_CLICK_SKILLS.phantom[1]]
+      : HERO_CLICK_SKILLS[heroId];
   const stockAbilitySkills = HERO_ABILITY_SKILLS[heroId];
   const stockAbilityById = new Map(
     stockAbilitySkills.slice(0, 2).map((skill) => [skill.abilityId, skill]),

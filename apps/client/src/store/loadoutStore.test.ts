@@ -16,13 +16,27 @@ const {
   resolveHeroAbilityBindings,
   useLoadoutStore,
 } = await import('./loadoutStore');
+const {
+  PHANTOM_DIRE_BALL_SPEED,
+  PHANTOM_SOULREND_MAGAZINE_SIZE,
+  PHANTOM_SOULREND_SPEED,
+  getPhantomPrimaryMagazineSize,
+  getPhantomPrimaryProjectileSpeed,
+} = await import('@voxel-strike/shared');
 
+assert.equal(PHANTOM_SOULREND_MAGAZINE_SIZE, 10);
+assert.equal(getPhantomPrimaryMagazineSize('soulrend_daggers'), 10);
+assert.equal(getPhantomPrimaryProjectileSpeed('soulrend_daggers'), PHANTOM_SOULREND_SPEED);
+assert.ok(PHANTOM_SOULREND_SPEED > PHANTOM_DIRE_BALL_SPEED);
+
+assert.equal(loadStoredLoadout().phantomPrimarySkill, 'dire_ball');
 assert.equal(loadStoredLoadout().blazePrimarySkill, 'fireball_rockets');
 assert.equal(loadStoredLoadout().blazeSecondarySkill, 'meteor_strike');
 assert.equal(loadStoredLoadout().blazeUltimateSkill, 'infernal_gearstorm');
 assert.deepEqual(loadStoredLoadout().heroAbilityBindings, {});
 
 localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
+  phantomPrimarySkill: 'soulrend_daggers',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
   blazeUltimateSkill: 'phoenix_dive',
@@ -34,6 +48,7 @@ localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
   },
 }));
 const storedLoadout = loadStoredLoadout();
+assert.equal(storedLoadout.phantomPrimarySkill, 'soulrend_daggers');
 assert.equal(storedLoadout.blazePrimarySkill, 'scrapshot');
 assert.equal(storedLoadout.blazeSecondarySkill, 'phosphor_flare');
 assert.equal(storedLoadout.blazeUltimateSkill, 'phoenix_dive');
@@ -43,6 +58,7 @@ assert.deepEqual(storedLoadout.heroAbilityBindings.phantom, {
 });
 
 localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
+  phantomPrimarySkill: 'invalid',
   blazePrimarySkill: 'invalid',
   blazeSecondarySkill: 'invalid',
   blazeUltimateSkill: 'invalid',
@@ -51,14 +67,19 @@ localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
   },
 }));
 const invalidLoadout = loadStoredLoadout();
+assert.equal(invalidLoadout.phantomPrimarySkill, 'dire_ball');
 assert.equal(invalidLoadout.blazePrimarySkill, 'fireball_rockets');
 assert.equal(invalidLoadout.blazeSecondarySkill, 'meteor_strike');
 assert.equal(invalidLoadout.blazeUltimateSkill, 'infernal_gearstorm');
 assert.deepEqual(invalidLoadout.heroAbilityBindings, {});
 
+useLoadoutStore.getState().setPhantomPrimarySkill('soulrend_daggers');
+assert.equal(useLoadoutStore.getState().phantomPrimarySkill, 'soulrend_daggers');
+
 useLoadoutStore.getState().setBlazePrimarySkill('scrapshot');
 assert.equal(useLoadoutStore.getState().blazePrimarySkill, 'scrapshot');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
+  phantomPrimarySkill: 'soulrend_daggers',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'meteor_strike',
   blazeUltimateSkill: 'infernal_gearstorm',
@@ -68,6 +89,7 @@ assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), 
 useLoadoutStore.getState().setBlazeSecondarySkill('phosphor_flare');
 assert.equal(useLoadoutStore.getState().blazeSecondarySkill, 'phosphor_flare');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
+  phantomPrimarySkill: 'soulrend_daggers',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
   blazeUltimateSkill: 'infernal_gearstorm',
@@ -77,6 +99,7 @@ assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), 
 useLoadoutStore.getState().setBlazeUltimateSkill('phoenix_dive');
 assert.equal(useLoadoutStore.getState().blazeUltimateSkill, 'phoenix_dive');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
+  phantomPrimarySkill: 'soulrend_daggers',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
   blazeUltimateSkill: 'phoenix_dive',
@@ -141,12 +164,18 @@ const {
   BLAZE_PHOSPHOR_FLARE_OPTION_ID,
   BLAZE_SCRAPSHOT_OPTION_ID,
   BLAZE_PHOENIX_DIVE_OPTION_ID,
+  PHANTOM_SOULREND_OPTION_ID,
   HERO_LOADOUT_POOL,
 } = await import('../components/ui/loadoutPool');
 const scrapshotOption = HERO_LOADOUT_POOL.blaze.primaryFire.find((option) => (
   option.id === BLAZE_SCRAPSHOT_OPTION_ID
 ));
 assert.equal(scrapshotOption?.ownership, 'owned');
+const soulrendOption = HERO_LOADOUT_POOL.phantom.primaryFire.find((option) => (
+  option.id === PHANTOM_SOULREND_OPTION_ID
+));
+assert.equal(soulrendOption?.ownership, 'owned');
+assert.ok(soulrendOption?.meta?.includes('10 ammo'));
 const phosphorFlareOption = HERO_LOADOUT_POOL.blaze.secondaryFire.find((option) => (
   option.id === BLAZE_PHOSPHOR_FLARE_OPTION_ID
 ));
@@ -180,5 +209,16 @@ assert.equal(
 const phantomSkills = getHeroSkillItems('phantom', 'fireball_rockets', phantomBindings);
 assert.equal(phantomSkills.find((skill) => skill.input === 'E')?.abilityId, 'phantom_personal_shield');
 assert.equal(phantomSkills.find((skill) => skill.input === 'Q')?.abilityId, 'phantom_blink');
+assert.equal(
+  getHeroSkillItems(
+    'phantom',
+    'fireball_rockets',
+    phantomBindings,
+    'meteor_strike',
+    'infernal_gearstorm',
+    'soulrend_daggers',
+  )[0]?.name,
+  'Soulrend Daggers',
+);
 
 console.log('loadout store tests passed');

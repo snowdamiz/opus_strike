@@ -2739,6 +2739,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const { sendMovementCommands, sendMapPing } = useNetwork();
   const pingKeybinding = useSettingsStore(state => state.settings.keybindings.ping);
   const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
+  const phantomPrimarySkill = useLoadoutStore(state => state.phantomPrimarySkill);
   const blazeSecondarySkill = useLoadoutStore(state => state.blazeSecondarySkill);
   const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
 
@@ -2757,7 +2758,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const abilitySystem = useAbilitySystem();
 
   // Hero ability hooks
-  const phantomAbilities = usePhantomAbilities();
+  const phantomAbilities = usePhantomAbilities(phantomPrimarySkill);
   const blazeAbilities = useBlazeAbilities(blazePrimarySkill, blazeSecondarySkill);
   const hookshotAbilities = useHookshotAbilities();
   const chronosAbilities = useChronosAbilities();
@@ -3781,6 +3782,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       soundFrameArg.blazePrimaryAmmo = blazeAbilities.blazePrimaryAmmoRef.current;
       soundFrameArg.blazePrimaryReloading = blazePrimaryReloading;
       soundFrameArg.blazePrimarySkill = blazePrimarySkill;
+      soundFrameArg.phantomPrimarySkill = phantomPrimarySkill;
       soundFrameArg.chronosPrimaryAmmo = chronosAbilities.chronosPrimaryAmmoRef.current;
       soundFrameArg.chronosPrimaryReloading = chronosAbilities.chronosPrimaryReloadingRef.current;
       soundFrameArg.canUseAbility = abilitySystem.canUseAbility;

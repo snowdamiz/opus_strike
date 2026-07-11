@@ -1150,6 +1150,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         });
 
       setupGameListeners(gameRoomRef.current, playerName);
+      gameRoomRef.current.send('setPhantomPrimarySkill', {
+        skill: useLoadoutStore.getState().phantomPrimarySkill,
+      });
       gameRoomRef.current.send('setBlazePrimarySkill', {
         skill: useLoadoutStore.getState().blazePrimarySkill,
       });

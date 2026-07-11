@@ -248,14 +248,17 @@ export function buildAbilityCastOriginHints(
 
   if (ctx.heroId === 'phantom') {
     if (input.primaryFire) {
+      const primaryAbilityId = useLoadoutStore.getState().phantomPrimarySkill === 'soulrend_daggers'
+        ? 'phantom_soulrend_daggers'
+        : 'phantom_dire_ball';
       for (const side of [-1, 1] as const) {
         pushHint(
           hints,
           seen,
           hintFromOrigin(
             ctx,
-            'phantom_dire_ball',
-            resolvePhantomPrimaryOrigin(ctx, 'phantom_dire_ball', side, now)
+            primaryAbilityId,
+            resolvePhantomPrimaryOrigin(ctx, primaryAbilityId, side, now)
           )
         );
       }

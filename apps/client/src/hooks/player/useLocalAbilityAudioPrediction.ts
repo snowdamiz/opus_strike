@@ -12,6 +12,8 @@ import {
   type BlazePrimarySkill,
   getBlazePrimaryAbilityId,
   getBlazeUltimateAbilityId,
+  getPhantomPrimaryAbilityId,
+  type PhantomPrimarySkill,
 } from '@voxel-strike/shared';
 import { playSharedBlazeAirstrikeSound, playSharedSound } from '../useAudio';
 import { resolveRuntimeHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
@@ -64,6 +66,7 @@ export interface LocalAbilityAudioPredictionFrame {
   bombTargeting: boolean;
   phantomPrimaryAmmo: number;
   phantomPrimaryReloading: boolean;
+  phantomPrimarySkill: PhantomPrimarySkill;
   blazePrimaryAmmo: number;
   blazePrimaryReloading: boolean;
   blazePrimarySkill: BlazePrimarySkill;
@@ -265,6 +268,7 @@ export function useLocalAbilityAudioPrediction() {
       bombTargeting,
       phantomPrimaryAmmo,
       phantomPrimaryReloading,
+      phantomPrimarySkill,
       blazePrimaryAmmo,
       blazePrimaryReloading,
       blazePrimarySkill,
@@ -357,7 +361,7 @@ export function useLocalAbilityAudioPrediction() {
           canPlayPrimary(now, PHANTOM_FIRE_INTERVAL / tempoMultiplier)
         ) {
           predictedPhantomAmmoRef.current--;
-          markPredictedLocalAbilitySound('phantom_dire_ball', now);
+          markPredictedLocalAbilitySound(getPhantomPrimaryAbilityId(phantomPrimarySkill), now);
           void playSharedSound('phantomBasic');
         }
         break;

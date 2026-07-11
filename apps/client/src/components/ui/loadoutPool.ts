@@ -99,7 +99,7 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
       tagline: 'Spectral daggers that ricochet to a second nearby target.',
       description:
         'Replaces the Dire Ball stream with thrown spectral daggers that ricochet once to a nearby enemy — less single-target DPS, but tags flankers around cover and punishes grouped backlines.',
-      meta: ['14 dmg', 'ricochets x1', '8 ammo'],
+      meta: ['14 dmg', 'ricochets x1', '10 ammo'],
     },
     secondaryFire: {
       key: 'riftbolt',
@@ -333,12 +333,13 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     isPlaceholder: false,
     tagline: def.tagline,
     rarity: 'epic',
-    ownership: heroId === 'blaze' && (
+    ownership: (heroId === 'phantom' && slot.key === 'primaryFire' && def.key === 'soulrend') ||
+      (heroId === 'blaze' && (
       (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
       (slot.key === 'secondaryFire' && def.key === 'phosphorflare') ||
       (slot.key === 'ability1' && def.key === 'afterburner') ||
       (slot.key === 'ultimate' && def.key === 'phoenixdive')
-    )
+      ))
       ? 'owned'
       : 'locked',
     meta: buildDisplayMeta(item),
@@ -378,6 +379,7 @@ export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
 }
 
 export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
+export const PHANTOM_SOULREND_OPTION_ID = 'phantom-primaryFire-soulrend';
 export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
 export const BLAZE_AFTERBURNER_OPTION_ID = 'blaze-ability1-afterburner';
 export const BLAZE_PHOENIX_DIVE_OPTION_ID = 'blaze-ultimate-phoenixdive';

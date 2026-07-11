@@ -13,10 +13,13 @@ import { useRef, useCallback } from 'react';
 import {
   ABILITY_DEFINITIONS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
-  PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   VOID_RAY_CHARGE_TIME,
+  getPhantomPrimaryAbilityId,
+  getPhantomPrimaryMagazineSize,
+  getPhantomPrimaryProjectileSpeed,
+  type PhantomPrimarySkill,
   type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -25,7 +28,6 @@ import type { AbilityContext, PlayerSounds } from '../types';
 import {
   PHANTOM_DIRE_BALL_SOCKET,
   PHANTOM_FIRE_INTERVAL,
-  PHANTOM_PROJECTILE_SPEED,
   PHANTOM_VOID_RAY_SOCKET,
   calculatePlayerSocketPosition,
 } from '../constants';
@@ -95,11 +97,16 @@ export interface UsePhantomAbilitiesReturn {
   ) => boolean;
 }
 
-export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
+export function usePhantomAbilities(
+  phantomPrimarySkill: PhantomPrimarySkill
+): UsePhantomAbilitiesReturn {
+  const primaryMagazineSize = getPhantomPrimaryMagazineSize(phantomPrimarySkill);
+  const primaryAbilityId = getPhantomPrimaryAbilityId(phantomPrimarySkill);
+  const primaryProjectileSpeed = getPhantomPrimaryProjectileSpeed(phantomPrimarySkill);
   // Fire state
   const lastFireTimeRef = useRef(0);
   const direBallIdRef = useRef(0);
-  const phantomPrimaryAmmoRef = useRef(PHANTOM_PRIMARY_MAGAZINE_SIZE);
+  const phantomPrimaryAmmoRef = useRef(primaryMagazineSize);
   const phantomPrimaryReloadingRef = useRef(false);
   const phantomPrimaryReloadStartRef = useRef(0);
 
@@ -120,7 +127,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     if (!ctx.camera) return null;
     return resolveAbilitySocketOrigin({
       ownerScope: 'localViewmodel',
-      abilityId: 'phantom_dire_ball',
+      abilityId: primaryAbilityId,
       side: launchSide,
       sampledContext: {
         camera: ctx.camera,
@@ -153,22 +160,22 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   }
 
   const completePhantomPrimaryReload = useCallback(() => {
-    phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+    phantomPrimaryAmmoRef.current = primaryMagazineSize;
     phantomPrimaryReloadingRef.current = false;
     phantomPrimaryReloadStartRef.current = 0;
     phantomPrimaryHoldStartedAtRef.current = 0;
 
     const store = useGameStore.getState();
-    store.setPhantomPrimaryAmmo(PHANTOM_PRIMARY_MAGAZINE_SIZE);
+    store.setPhantomPrimaryAmmo(primaryMagazineSize);
     store.setPhantomPrimaryReload(false, 0, 0);
-  }, []);
+  }, [primaryMagazineSize]);
 
   const beginPhantomPrimaryReload = useCallback((now = Date.now()): boolean => {
     const store = useGameStore.getState();
     const currentAmmo = Math.min(store.phantomPrimaryAmmo, phantomPrimaryAmmoRef.current);
 
     if (store.phantomPrimaryReloading || phantomPrimaryReloadingRef.current) return false;
-    if (currentAmmo >= PHANTOM_PRIMARY_MAGAZINE_SIZE) return false;
+    if (currentAmmo >= primaryMagazineSize) return false;
 
     phantomPrimaryAmmoRef.current = Math.max(0, currentAmmo);
     phantomPrimaryReloadingRef.current = true;
@@ -179,7 +186,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     store.setPhantomPrimaryReload(true, now);
     playPredictedPhantomPrimaryReload(now);
     return true;
-  }, []);
+  }, [primaryMagazineSize]);
 
   const updatePhantomPrimaryReload = useCallback((now = Date.now()) => {
     const store = useGameStore.getState();
@@ -207,14 +214,14 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const resetPhantomPrimaryMagazine = useCallback(() => {
     lastFireTimeRef.current = 0;
     phantomPrimaryHoldStartedAtRef.current = 0;
-    phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+    phantomPrimaryAmmoRef.current = primaryMagazineSize;
     phantomPrimaryReloadingRef.current = false;
     phantomPrimaryReloadStartRef.current = 0;
     voidRayChargingRef.current = false;
     voidRayChargeStartRef.current = 0;
     localVoidRayLastReleaseAtRef.current = 0;
-    useGameStore.getState().resetPhantomPrimaryMagazine();
-  }, []);
+    useGameStore.getState().resetPhantomPrimaryMagazine(primaryMagazineSize);
+  }, [primaryMagazineSize]);
 
   // Fire Dire Ball (primary fire)
   const fireDireBall = useCallback((ctx: AbilityContext, _sounds: PlayerSounds) => {
@@ -260,9 +267,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       id: visualId,
       position: spawnPosition,
       velocity: {
-        x: direction.x * PHANTOM_PROJECTILE_SPEED,
-        y: direction.y * PHANTOM_PROJECTILE_SPEED,
-        z: direction.z * PHANTOM_PROJECTILE_SPEED,
+        x: direction.x * primaryProjectileSpeed,
+        y: direction.y * primaryProjectileSpeed,
+        z: direction.z * primaryProjectileSpeed,
       },
       startTime: now - PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS * 1000,
       ownerId: ctx.localPlayer.id,
@@ -270,12 +277,13 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       launchSide,
       launchYaw: ctx.yaw,
       viewmodelEventId: visualId,
+      abilityId: primaryAbilityId,
     });
-    markPredictedLocalAbilityVisual('phantom_dire_ball', ctx.localPlayer.id, visualId, {
+    markPredictedLocalAbilityVisual(primaryAbilityId, ctx.localPlayer.id, visualId, {
       launchSide,
       now,
     });
-  }, [beginPhantomPrimaryReload, updatePhantomPrimaryReload]);
+  }, [beginPhantomPrimaryReload, primaryAbilityId, primaryProjectileSpeed, updatePhantomPrimaryReload]);
 
   // Locally predict charge and release poses; server confirmation owns damage/cooldown.
   const handleVoidRay = useCallback((ctx: AbilityContext, _sounds: PlayerSounds) => {

@@ -183,6 +183,8 @@ export interface DireBallData {
   launchSide?: -1 | 1;
   launchYaw?: number;
   viewmodelEventId?: string;
+  abilityId?: 'phantom_dire_ball' | 'phantom_soulrend_daggers';
+  ricochetPosition?: { x: number; y: number; z: number };
 }
 
 export interface VoidRayData {

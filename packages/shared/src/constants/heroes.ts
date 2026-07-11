@@ -32,6 +32,11 @@ export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
 export const PHANTOM_DIRE_BALL_DAMAGE = 18;
 export const PHANTOM_DIRE_BALL_SPEED = 91;
 export const PHANTOM_DIRE_BALL_COLLISION_RADIUS = 0.21;
+export const PHANTOM_SOULREND_DAMAGE = 14;
+export const PHANTOM_SOULREND_MAGAZINE_SIZE = 10;
+export const PHANTOM_SOULREND_SPEED = 120;
+export const PHANTOM_SOULREND_COLLISION_RADIUS = 0.16;
+export const PHANTOM_SOULREND_RICOCHET_RADIUS = 8;
 export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
 export const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 export const HERO_OUT_OF_COMBAT_REGEN_DELAY_MS = 4000;
@@ -183,6 +188,12 @@ export const ABILITY_CARD_STATS = {
   phantom_dire_ball: [
     { value: PHANTOM_DIRE_BALL_DAMAGE, label: 'dmg' },
     { value: PHANTOM_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: PHANTOM_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
+  ],
+  phantom_soulrend_daggers: [
+    { value: PHANTOM_SOULREND_DAMAGE, label: 'dmg' },
+    { value: 1, label: 'ricochet' },
+    { value: PHANTOM_SOULREND_MAGAZINE_SIZE, label: 'ammo' },
     { value: PHANTOM_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
   ],
   phantom_void_ray: [

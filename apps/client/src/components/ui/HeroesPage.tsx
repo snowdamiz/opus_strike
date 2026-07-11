@@ -25,6 +25,7 @@ interface HeroesPageProps {
 }
 
 export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
+  const phantomPrimarySkill = useLoadoutStore((state) => state.phantomPrimarySkill);
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
   const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
   const blazeUltimateSkill = useLoadoutStore((state) => state.blazeUltimateSkill);
@@ -37,6 +38,7 @@ export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
     resolveHeroAbilityBindings(selectedHero, heroAbilityBindings),
     blazeSecondarySkill,
     blazeUltimateSkill,
+    phantomPrimarySkill,
   );
 
   return (
