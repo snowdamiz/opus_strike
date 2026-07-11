@@ -1,7 +1,17 @@
 import {
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
   BLAZE_AFTERBURNER_DASH_SPEED,
 } from '../constants/physics.js';
+import { BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING } from '../constants/heroes.js';
 import type { Vec3 } from '../types/vector.js';
+
+// The dash normally emits 21 points. The small allowance covers the initial
+// point and tick-boundary interpolation without permitting an unbounded trail.
+export const BLAZE_AFTERBURNER_MAX_TRAIL_POINTS = Math.ceil(
+  BLAZE_AFTERBURNER_DASH_SPEED
+    * (BLAZE_AFTERBURNER_DASH_DURATION_MS / 1000)
+    / BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING
+) + 4;
 
 export function getBlazeAfterburnerDirection(lookYaw: number): Vec3 {
   return {
@@ -23,7 +33,7 @@ export function calculateBlazeAfterburnerVelocity(
   };
 }
 
-export function getDistanceToBlazeAfterburnerTrail(
+export function getSquaredDistanceToBlazeAfterburnerTrail(
   point: Vec3,
   start: Vec3,
   end: Vec3
@@ -33,7 +43,10 @@ export function getDistanceToBlazeAfterburnerTrail(
   const segmentZ = end.z - start.z;
   const segmentLengthSq = segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
   if (segmentLengthSq <= 0.000001) {
-    return Math.hypot(point.x - start.x, point.y - start.y, point.z - start.z);
+    const pointX = point.x - start.x;
+    const pointY = point.y - start.y;
+    const pointZ = point.z - start.z;
+    return pointX * pointX + pointY * pointY + pointZ * pointZ;
   }
 
   const progress = Math.max(0, Math.min(1, (
@@ -44,5 +57,10 @@ export function getDistanceToBlazeAfterburnerTrail(
   const closestX = start.x + segmentX * progress;
   const closestY = start.y + segmentY * progress;
   const closestZ = start.z + segmentZ * progress;
-  return Math.hypot(point.x - closestX, point.y - closestY, point.z - closestZ);
+  const closestDeltaX = point.x - closestX;
+  const closestDeltaY = point.y - closestY;
+  const closestDeltaZ = point.z - closestZ;
+  return closestDeltaX * closestDeltaX
+    + closestDeltaY * closestDeltaY
+    + closestDeltaZ * closestDeltaZ;
 }

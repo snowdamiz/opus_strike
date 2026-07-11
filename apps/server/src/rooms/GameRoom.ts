@@ -63,6 +63,7 @@ import { buildRoomChatPayload, getRoomChatRecipientIds } from './roomChatRuntime
 import { RoomNpcRegistry } from './roomNpcRegistry';
 import { RoomParticipantRegistry } from './roomParticipantRegistry';
 import { RoomMapRuntime } from './roomMapRuntime';
+import { raycastVoxelTerrain } from './voxelTerrainRaycast';
 import {
   createBattleRoyalSafeZoneState,
   isOutsideBattleRoyalSafeZone,
@@ -317,6 +318,7 @@ import {
   BLAZE_AFTERBURNER_TRAIL_DAMAGE,
   BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
   BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+  BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
   BLAZE_AFTERBURNER_TRAIL_RADIUS,
   BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING,
   BLAZE_PHOENIX_DIVE_DAMAGE,
@@ -1343,6 +1345,9 @@ export class GameRoom extends Room<GameState> {
   private readonly deferredPlayerEventBatchClients: Client[] = [];
   private readonly visibleHealedTargetIdsScratch = new Set<string>();
   private readonly terrainRaycastPointScratch: PlainVec3 = { x: 0, y: 0, z: 0 };
+  private readonly isCollisionTerrainPoint = (point: PlainVec3): boolean => (
+    isCollisionBlock(this.getBlockAtWorld(point))
+  );
   private readonly chronosAegisPoseScratch: ChronosAegisPose = {
     playerId: '',
     position: { x: 0, y: 0, z: 0 },
@@ -6813,6 +6818,26 @@ export class GameRoom extends Room<GameState> {
     return null;
   }
 
+  private raycastScrapshotTerrain(
+    start: PlainVec3,
+    direction: PlainVec3,
+    maxDistance: number
+  ): PlainVec3 | null {
+    const { origin, voxelSize } = this.mapRuntime.terrain;
+    if (!origin || !voxelSize) {
+      return this.raycastTerrain(start, direction, maxDistance, 0.18);
+    }
+    return raycastVoxelTerrain(
+      start,
+      direction,
+      maxDistance,
+      origin,
+      voxelSize,
+      this.isCollisionTerrainPoint,
+      this.terrainRaycastPointScratch,
+    );
+  }
+
   private isNearCollisionSurface(point: PlainVec3, radius = HOOKSHOT_GRAPPLE_HINT_SURFACE_PROBE_DISTANCE): boolean {
     const probes = [
       { x: 0, y: 0, z: 0 },
@@ -7282,7 +7307,10 @@ export class GameRoom extends Room<GameState> {
     const dz = position.z - dash.lastSamplePosition.z;
     const horizontalDistance = Math.hypot(dx, dz);
     if (horizontalDistance <= 0.02) return;
-    const sampleCount = Math.max(1, Math.ceil(horizontalDistance / BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING));
+    const sampleCount = Math.min(
+      BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
+      Math.max(1, Math.ceil(horizontalDistance / BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING)),
+    );
     for (let sampleIndex = 1; sampleIndex <= sampleCount; sampleIndex++) {
       const alpha = sampleIndex / sampleCount;
       const groundedPoint = this.getBlazeAfterburnerGroundPoint({
@@ -7291,7 +7319,7 @@ export class GameRoom extends Room<GameState> {
         z: dash.lastSamplePosition.z + dz * alpha,
       });
       if (groundedPoint) {
-        this.blazeAfterburnerTrails.appendPoint(dash.trailId, groundedPoint);
+        if (!this.blazeAfterburnerTrails.appendPoint(dash.trailId, groundedPoint)) break;
       }
     }
     dash.lastSamplePosition = position;
@@ -7316,30 +7344,9 @@ export class GameRoom extends Room<GameState> {
       hasOwner: (ownerId) => this.state.players.has(ownerId),
       getTargets: (trail) => {
         if (trail.points.length === 0) return [];
-        let minX = trail.points[0]?.x ?? 0;
-        let maxX = minX;
-        let minY = trail.points[0]?.y ?? 0;
-        let maxY = minY;
-        let minZ = trail.points[0]?.z ?? 0;
-        let maxZ = minZ;
-        for (let index = 1; index < trail.points.length; index++) {
-          const point = trail.points[index];
-          minX = Math.min(minX, point.x);
-          maxX = Math.max(maxX, point.x);
-          minY = Math.min(minY, point.y);
-          maxY = Math.max(maxY, point.y);
-          minZ = Math.min(minZ, point.z);
-          maxZ = Math.max(maxZ, point.z);
-        }
-        const center = {
-          x: (minX + maxX) * 0.5,
-          y: (minY + maxY) * 0.5,
-          z: (minZ + maxZ) * 0.5,
-        };
-        const halfLength = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5;
         return this.queryPlayersRadius(
-          center,
-          halfLength + trail.radius,
+          trail.boundsCenter,
+          trail.boundsHalfLength + trail.radius,
           { excludeTeam: trail.ownerTeam, excludeId: trail.ownerId, includeDowned: true }
         );
       },
@@ -7538,7 +7545,11 @@ export class GameRoom extends Room<GameState> {
 
     for (const pelletDirection of getBlazeScrapshotPelletDirections(aimDirection)) {
       const fallbackEndpoint = this.addScaled3D(aimOrigin, pelletDirection, BLAZE_SCRAPSHOT_RANGE);
-      const terrainHit = this.raycastTerrain(aimOrigin, pelletDirection, BLAZE_SCRAPSHOT_RANGE, 0.18);
+      const terrainHit = this.raycastScrapshotTerrain(
+        aimOrigin,
+        pelletDirection,
+        BLAZE_SCRAPSHOT_RANGE,
+      );
       const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Number.POSITIVE_INFINITY;
       const aegisHit = this.getChronosAegisSkillHit(
         player,

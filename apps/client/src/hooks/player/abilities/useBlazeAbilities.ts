@@ -9,7 +9,7 @@
  * - Infernal Gearstorm (Ultimate - hero-centered AOE)
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import * as THREE from 'three';
 import {
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
@@ -257,8 +257,17 @@ export function useBlazeAbilities(
   const lastAuthoritativeFlamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
   const flamethrowerActiveRef = useRef(false);
   const pendingRocketJumpRef = useRef<PendingRocketJump | null>(null);
+  const phosphorImpactSoundTimeoutRef = useRef<number | null>(null);
 
   const actionLockUntilRef = useRef(0);
+
+  const clearPhosphorImpactSoundTimeout = useCallback(() => {
+    if (phosphorImpactSoundTimeoutRef.current === null) return;
+    window.clearTimeout(phosphorImpactSoundTimeoutRef.current);
+    phosphorImpactSoundTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => clearPhosphorImpactSoundTimeout, [clearPhosphorImpactSoundTimeout]);
 
   const getOwnerTeam = (team?: string | null): Team => team || 'red';
 
@@ -623,8 +632,12 @@ export function useBlazeAbilities(
       ownerId: store.localPlayer.id,
       ownerTeam: getOwnerTeam(store.localPlayer.team),
     });
-    window.setTimeout(() => sounds.playBlazeBombExplode(), flightDurationMs);
-  }, [lockActions]);
+    clearPhosphorImpactSoundTimeout();
+    phosphorImpactSoundTimeoutRef.current = window.setTimeout(() => {
+      phosphorImpactSoundTimeoutRef.current = null;
+      sounds.playBlazeBombExplode();
+    }, flightDurationMs);
+  }, [clearPhosphorImpactSoundTimeout, lockActions]);
 
   // Handle flamethrower (E ability - hold)
   const handleFlamethrower = useCallback((
@@ -765,8 +778,9 @@ export function useBlazeAbilities(
 
   const resetRocketJump = useCallback(() => {
     pendingRocketJumpRef.current = null;
+    clearPhosphorImpactSoundTimeout();
     clearBlazeRocketJumpStaffSlam();
-  }, []);
+  }, [clearPhosphorImpactSoundTimeout]);
 
   // Handle bomb target updates
   const handleBombTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {

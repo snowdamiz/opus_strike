@@ -1,8 +1,7 @@
 import {
   PHANTOM_RIFT_BOLT_LIFETIME_MS,
   PHANTOM_RIFT_BOLT_MAX_DISTANCE,
-  PHANTOM_RIFT_BOLT_SPEED,
-  getPhantomRiftBoltPosition,
+  writePhantomRiftBoltPosition,
   type Team,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
@@ -27,8 +26,15 @@ export interface PhantomRiftBoltAdvance {
   distance: number;
 }
 
+export interface PhantomRiftBoltAdvanceResult {
+  advances: PhantomRiftBoltAdvance[];
+  expired: PhantomRiftBoltState[];
+}
+
 export class PhantomRiftBoltTracker {
   private readonly activeByOwner = new Map<string, PhantomRiftBoltState>();
+  private readonly advancesByOwner = new Map<string, PhantomRiftBoltAdvance>();
+  private readonly advanceResult: PhantomRiftBoltAdvanceResult = { advances: [], expired: [] };
 
   launch(input: {
     castId: string;
@@ -48,6 +54,12 @@ export class PhantomRiftBoltTracker {
       stopped: false,
     };
     this.activeByOwner.set(input.ownerId, state);
+    this.advancesByOwner.set(input.ownerId, {
+      state,
+      startPosition: { ...state.position },
+      endPosition: state.position,
+      distance: 0,
+    });
     return state;
   }
 
@@ -57,22 +69,31 @@ export class PhantomRiftBoltTracker {
 
   consume(ownerId: string): PhantomRiftBoltState | null {
     const state = this.get(ownerId);
-    if (state) this.activeByOwner.delete(ownerId);
+    if (state) {
+      this.activeByOwner.delete(ownerId);
+      this.advancesByOwner.delete(ownerId);
+    }
     return state;
   }
 
   clear(ownerId: string): boolean {
+    this.advancesByOwner.delete(ownerId);
     return this.activeByOwner.delete(ownerId);
   }
 
   clearAll(): void {
     this.activeByOwner.clear();
+    this.advancesByOwner.clear();
+    this.advanceResult.advances.length = 0;
+    this.advanceResult.expired.length = 0;
   }
 
   stop(ownerId: string, position: PlainVec3): PhantomRiftBoltState | null {
     const state = this.get(ownerId);
     if (!state) return null;
-    state.position = { ...position };
+    state.position.x = position.x;
+    state.position.y = position.y;
+    state.position.z = position.z;
     state.distanceTraveled = Math.min(
       PHANTOM_RIFT_BOLT_MAX_DISTANCE,
       Math.hypot(
@@ -85,26 +106,34 @@ export class PhantomRiftBoltTracker {
     return state;
   }
 
-  advance(now: number): { advances: PhantomRiftBoltAdvance[]; expired: PhantomRiftBoltState[] } {
-    const advances: PhantomRiftBoltAdvance[] = [];
-    const expired: PhantomRiftBoltState[] = [];
+  /** Returned arrays and entries are reused and remain valid until the next advance call. */
+  advance(now: number): PhantomRiftBoltAdvanceResult {
+    const result = this.advanceResult;
+    result.advances.length = 0;
+    result.expired.length = 0;
 
     for (const [ownerId, state] of this.activeByOwner) {
       if (now >= state.expiresAt) {
         this.activeByOwner.delete(ownerId);
-        expired.push(state);
+        this.advancesByOwner.delete(ownerId);
+        result.expired.push(state);
         continue;
       }
       if (state.stopped) continue;
 
-      const endPosition = getPhantomRiftBoltPosition(state, now);
+      const advance = this.advancesByOwner.get(ownerId);
+      if (!advance) continue;
+      advance.startPosition.x = state.position.x;
+      advance.startPosition.y = state.position.y;
+      advance.startPosition.z = state.position.z;
+      writePhantomRiftBoltPosition(state.position, state, now);
       const remainingDistance = Math.max(0, PHANTOM_RIFT_BOLT_MAX_DISTANCE - state.distanceTraveled);
       const distance = Math.min(
         remainingDistance,
         Math.hypot(
-          endPosition.x - state.position.x,
-          endPosition.y - state.position.y,
-          endPosition.z - state.position.z,
+          state.position.x - advance.startPosition.x,
+          state.position.y - advance.startPosition.y,
+          state.position.z - advance.startPosition.z,
         ),
       );
       if (distance <= 0.0001) {
@@ -112,8 +141,6 @@ export class PhantomRiftBoltTracker {
         continue;
       }
 
-      const startPosition = { ...state.position };
-      state.position = { ...endPosition };
       state.distanceTraveled = Math.min(
         PHANTOM_RIFT_BOLT_MAX_DISTANCE,
         state.distanceTraveled + distance,
@@ -121,9 +148,10 @@ export class PhantomRiftBoltTracker {
       if (state.distanceTraveled >= PHANTOM_RIFT_BOLT_MAX_DISTANCE - 0.0001) {
         state.stopped = true;
       }
-      advances.push({ state, startPosition, endPosition: { ...state.position }, distance });
+      advance.distance = distance;
+      result.advances.push(advance);
     }
 
-    return { advances, expired };
+    return result;
   }
 }

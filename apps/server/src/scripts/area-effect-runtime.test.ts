@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
   BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
   BLAZE_AFTERBURNER_TRAIL_RADIUS,
   BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
@@ -94,24 +95,76 @@ function createTarget(
     createTarget('endpoint', { x: 8.5, y: 2, z: 0 }),
     createTarget('outside', { x: 4, y: 4, z: 0 }),
   ];
-  const hits: Array<{ targetId: string; distance: number }> = [];
+  const hits: string[] = [];
+  let observedBounds: { center: { x: number; y: number; z: number }; halfLength: number } | null = null;
   const update = (now: number) => tracker.update(now, {
     hasOwner: () => true,
-    getTargets: () => targets,
-    applyDamage: (_trail, target, distance) => hits.push({ targetId: target.id, distance }),
+    getTargets: (trail) => {
+      observedBounds = {
+        center: { ...trail.boundsCenter },
+        halfLength: trail.boundsHalfLength,
+      };
+      return targets;
+    },
+    applyDamage: (_trail, target) => hits.push(target.id),
   });
 
   update(1_000);
-  assert.deepEqual(hits, [
-    { targetId: 'middle', distance: 0.5 },
-    { targetId: 'endpoint', distance: 0.5 },
-  ]);
+  assert.deepEqual(hits, ['middle', 'endpoint']);
+  assert.deepEqual(observedBounds, {
+    center: { x: 4, y: 2, z: 0 },
+    halfLength: 4,
+  });
   update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS - 1);
   assert.equal(hits.length, 2);
   update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS);
   assert.equal(hits.length, 4);
   update(3_400);
   assert.equal(tracker.size, 0);
+}
+
+{
+  const tracker = new BlazeAfterburnerTrailTracker();
+  tracker.add({
+    id: 'capped-trail',
+    ownerId: 'owner',
+    ownerTeam: 'red',
+    points: [{ x: 0, y: 0, z: 0 }],
+    radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+    damage: 6,
+    damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+    startTime: 1_000,
+    endTime: 4_000,
+  });
+  for (let index = 1; index < BLAZE_AFTERBURNER_MAX_TRAIL_POINTS; index++) {
+    assert.equal(tracker.appendPoint('capped-trail', { x: index, y: 0, z: 0 }), true);
+  }
+  assert.equal(tracker.appendPoint('capped-trail', { x: 999, y: 0, z: 0 }), false);
+
+  let positionReads = 0;
+  const target = createTarget('inside', { x: 0.5, y: 0, z: 0 });
+  const trackedPosition = target.position;
+  Object.defineProperty(target, 'position', {
+    get: () => {
+      positionReads += 1;
+      return trackedPosition;
+    },
+  });
+  let hitCount = 0;
+  const update = (now: number) => tracker.update(now, {
+    hasOwner: () => true,
+    getTargets: () => [target],
+    applyDamage: () => { hitCount += 1; },
+  });
+
+  update(1_000);
+  assert.equal(hitCount, 1);
+  const readsAfterDamage = positionReads;
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS - 1);
+  assert.equal(positionReads, readsAfterDamage);
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS);
+  assert.ok(positionReads > readsAfterDamage);
+  assert.equal(hitCount, 2);
 }
 
 {

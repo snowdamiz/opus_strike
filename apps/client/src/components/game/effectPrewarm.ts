@@ -21,6 +21,10 @@ import {
   prewarmPhosphorFlareResources,
 } from './blaze/phosphorFlare';
 import {
+  appendScrapshotGpuPrewarmObjects,
+  prewarmScrapshotResources,
+} from './Effects';
+import {
   appendDireBallGpuPrewarmObjects,
   prewarmDireBallResources,
 } from './phantom/direBall';
@@ -87,6 +91,7 @@ export async function prewarmBlazeEffects(): Promise<void> {
   prewarmRocketJumpExplosionResources();
   prewarmBlazeAirstrikeResources();
   prewarmPhosphorFlareResources();
+  prewarmScrapshotResources();
 }
 
 export async function prewarmHookshotEffects(): Promise<void> {
@@ -320,6 +325,7 @@ function addBlazeGpuPrewarmObjects(scene: THREE.Scene): void {
   addMaterialSwatches(scene, materials, -1.35, -5.4);
   appendRocketJumpExplosionGpuPrewarmObjects(scene);
   appendBlazeAirstrikeGpuPrewarmObjects(scene);
+  appendScrapshotGpuPrewarmObjects(scene);
   addInstancedMesh(scene, SHARED_GEOMETRIES.sphere8, BlazeMaterials.getFireballCoreMaterial(), [-0.7, -0.65, -4.2], 0.22, 'gpu-prewarm-blaze-fireball-core');
   addInstancedMesh(scene, SHARED_GEOMETRIES.sphere12, BlazeMaterials.getFireballOuterMaterial(), [-0.35, -0.65, -4.2], 0.28, 'gpu-prewarm-blaze-fireball-outer');
   addInstancedMesh(scene, SHARED_GEOMETRIES.cylinder8, BlazeMaterials.getFireballTrailOuterMaterial(), [0, -0.65, -4.2], 0.26, 'gpu-prewarm-blaze-fireball-trail');

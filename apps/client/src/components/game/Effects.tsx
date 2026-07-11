@@ -66,6 +66,8 @@ const SCRAPSHOT_SMOKE_PUFF_COUNT = 4;
 const SCRAPSHOT_VISUAL_TRAVEL_SPEED = 68;
 const SCRAPSHOT_MIN_TRAVEL_SECONDS = 0.09;
 const SCRAPSHOT_MAX_TRAVEL_SECONDS = 0.22;
+const SCRAPSHOT_MATERIAL_POOL_PREWARM_COUNT = 8;
+const GLOBAL_EFFECT_MATERIAL_POOL_LIMIT = 12;
 const CHRONOS_AEGIS_BREAK_SHARD_COUNT = 14;
 type GlobalEffectUpdater = (state: RootState, delta: number) => void;
 const globalEffectUpdaters = createFrameUpdaterRegistry<RootState>();
@@ -113,6 +115,13 @@ const GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY: Record<GlobalEffectMaterialKind, n
   chronosAegisBreakShard: 0,
 };
 const globalEffectMaterialPools = new Map<GlobalEffectMaterialKind, THREE.MeshBasicMaterial[]>();
+const SCRAPSHOT_MATERIAL_KINDS = [
+  'scrapshotCore',
+  'scrapshotGlow',
+  'scrapshotMuzzle',
+  'scrapshotImpact',
+  'scrapshotSmoke',
+] as const satisfies readonly GlobalEffectMaterialKind[];
 
 function createGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial {
   switch (kind) {
@@ -195,15 +204,16 @@ function createAdditiveBasicMaterial(
   opacity: number,
   options: { side?: THREE.Side } = {}
 ): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
+  const material = new THREE.MeshBasicMaterial({
     color,
     transparent: true,
     opacity,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     toneMapped: false,
-    side: options.side,
   });
+  if (options.side !== undefined) material.side = options.side;
+  return material;
 }
 
 function acquireGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial {
@@ -222,21 +232,110 @@ function releaseGlobalEffectMaterial(kind: GlobalEffectMaterialKind, material: T
     pool = [];
     globalEffectMaterialPools.set(kind, pool);
   }
+  if (pool.length >= GLOBAL_EFFECT_MATERIAL_POOL_LIMIT) {
+    material.dispose();
+    return;
+  }
   pool.push(material);
 }
 
-function useGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial {
+function useGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial;
+function useGlobalEffectMaterial(kind: GlobalEffectMaterialKind, enabled: boolean): THREE.MeshBasicMaterial | null;
+function useGlobalEffectMaterial(
+  kind: GlobalEffectMaterialKind,
+  enabled = true,
+): THREE.MeshBasicMaterial | null {
   const materialRef = useRef<THREE.MeshBasicMaterial | null>(null);
-  if (!materialRef.current) {
+  if (enabled && !materialRef.current) {
     materialRef.current = acquireGlobalEffectMaterial(kind);
   }
-  useEffect(() => () => {
-    const material = materialRef.current;
-    if (!material) return;
-    materialRef.current = null;
-    releaseGlobalEffectMaterial(kind, material);
-  }, [kind]);
+  useEffect(() => {
+    if (enabled && !materialRef.current) {
+      materialRef.current = acquireGlobalEffectMaterial(kind);
+    } else if (!enabled && materialRef.current) {
+      releaseGlobalEffectMaterial(kind, materialRef.current);
+      materialRef.current = null;
+    }
+
+    return () => {
+      const material = materialRef.current;
+      if (!material) return;
+      materialRef.current = null;
+      releaseGlobalEffectMaterial(kind, material);
+    };
+  }, [enabled, kind]);
   return materialRef.current;
+}
+
+export function prewarmScrapshotResources(): void {
+  for (const kind of SCRAPSHOT_MATERIAL_KINDS) {
+    let pool = globalEffectMaterialPools.get(kind);
+    if (!pool) {
+      pool = [];
+      globalEffectMaterialPools.set(kind, pool);
+    }
+    while (pool.length < SCRAPSHOT_MATERIAL_POOL_PREWARM_COUNT) {
+      pool.push(createGlobalEffectMaterial(kind));
+    }
+  }
+}
+
+function appendScrapshotPrewarmMesh(
+  target: THREE.Object3D,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  index: number,
+  instanceCount: number,
+): void {
+  const x = -2.3 + (index % 8) * 0.32;
+  const y = -0.95 + Math.floor(index / 8) * 0.32;
+  if (instanceCount > 0) {
+    const mesh = new THREE.InstancedMesh(geometry, material, instanceCount);
+    SCRAPSHOT_INSTANCE_DUMMY.position.set(x, y, -4.35);
+    SCRAPSHOT_INSTANCE_DUMMY.quaternion.identity();
+    SCRAPSHOT_INSTANCE_DUMMY.scale.setScalar(0.12);
+    SCRAPSHOT_INSTANCE_DUMMY.updateMatrix();
+    for (let instanceIndex = 0; instanceIndex < instanceCount; instanceIndex++) {
+      mesh.setMatrixAt(instanceIndex, SCRAPSHOT_INSTANCE_DUMMY.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.frustumCulled = false;
+    mesh.name = 'gpu-prewarm-scrapshot-instanced';
+    target.add(mesh);
+    return;
+  }
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x, y, -4.35);
+  mesh.scale.setScalar(0.12);
+  mesh.frustumCulled = false;
+  mesh.name = 'gpu-prewarm-scrapshot-mesh';
+  target.add(mesh);
+}
+
+export function appendScrapshotGpuPrewarmObjects(target: THREE.Object3D): void {
+  const core = createGlobalEffectMaterial('scrapshotCore');
+  const glow = createGlobalEffectMaterial('scrapshotGlow');
+  const muzzle = createGlobalEffectMaterial('scrapshotMuzzle');
+  const impact = createGlobalEffectMaterial('scrapshotImpact');
+  const smoke = createGlobalEffectMaterial('scrapshotSmoke');
+  const objects: Array<[THREE.BufferGeometry, THREE.Material, number]> = [
+    [SHARED_GEOMETRIES.cylinder8, glow, 6],
+    [SHARED_GEOMETRIES.cylinder8, core, 6],
+    [SHARED_GEOMETRIES.sphere8, core, 6],
+    [SHARED_GEOMETRIES.sphere8, muzzle, 0],
+    [SHARED_GEOMETRIES.cone8, muzzle, 0],
+    [SHARED_GEOMETRIES.ring16, muzzle, 0],
+    [SHARED_GEOMETRIES.ring8, muzzle, 0],
+    [SHARED_GEOMETRIES.box, muzzle, SCRAPSHOT_MUZZLE_SPARK_COUNT],
+    [SHARED_GEOMETRIES.sphere8, smoke, SCRAPSHOT_SMOKE_PUFF_COUNT],
+    [SHARED_GEOMETRIES.sphere8, impact, 6],
+    [SHARED_GEOMETRIES.ring16, impact, 6],
+    [SHARED_GEOMETRIES.box, impact, 6 * SCRAPSHOT_IMPACT_SPARKS_PER_HIT],
+  ];
+  objects.forEach(([geometry, material, instanceCount], index) => {
+    appendScrapshotPrewarmMesh(target, geometry, material, index, instanceCount);
+  });
 }
 
 interface ChronosAegisBreakShard {
@@ -827,6 +926,8 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
   const muzzleRingBRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const mode = effect.scrapshotMode ?? 'full';
+  const showMuzzle = mode !== 'impacts';
+  const showTrails = mode !== 'impacts';
   const compactMuzzle = mode === 'prediction';
   const muzzleFlashDuration = compactMuzzle ? 0.075 : 0.11;
   const muzzleOpacity = compactMuzzle ? 0.38 : 0.62;
@@ -847,22 +948,23 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
     [forward],
   );
   const muzzleSparks = useMemo(
-    () => createScrapshotMuzzleSparks(effect, pelletVisuals),
-    [effect, pelletVisuals],
+    () => showMuzzle ? createScrapshotMuzzleSparks(effect, pelletVisuals) : [],
+    [effect, pelletVisuals, showMuzzle],
   );
   const impactSparks = useMemo(
     () => createScrapshotImpactSparks(effect, pelletVisuals, mode === 'impacts'),
     [effect, mode, pelletVisuals],
   );
-  const smoke = useMemo(() => createScrapshotSmoke(effect, forward), [effect, forward]);
-  const showMuzzle = mode !== 'impacts';
-  const showTrails = mode !== 'impacts';
+  const smoke = useMemo(
+    () => showMuzzle ? createScrapshotSmoke(effect, forward) : [],
+    [effect, forward, showMuzzle],
+  );
   const showImpacts = impactVisuals.length > 0;
-  const tracerCoreMaterial = useGlobalEffectMaterial('scrapshotCore');
-  const tracerGlowMaterial = useGlobalEffectMaterial('scrapshotGlow');
-  const muzzleMaterial = useGlobalEffectMaterial('scrapshotMuzzle');
-  const impactMaterial = useGlobalEffectMaterial('scrapshotImpact');
-  const smokeMaterial = useGlobalEffectMaterial('scrapshotSmoke');
+  const tracerCoreMaterial = useGlobalEffectMaterial('scrapshotCore', showTrails);
+  const tracerGlowMaterial = useGlobalEffectMaterial('scrapshotGlow', showTrails);
+  const muzzleMaterial = useGlobalEffectMaterial('scrapshotMuzzle', showMuzzle);
+  const impactMaterial = useGlobalEffectMaterial('scrapshotImpact', showImpacts);
+  const smokeMaterial = useGlobalEffectMaterial('scrapshotSmoke', showMuzzle);
 
   useLayoutEffect(() => {
     const dynamicMeshes = [
@@ -902,7 +1004,7 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
     const flashFade = 1 - flashT;
     const trailEnvelope = 1 - clamp01((elapsed - 0.08) / 0.22);
 
-    if (showTrails) {
+    if (showTrails && tracerCoreMaterial && tracerGlowMaterial) {
       pelletVisuals.forEach((pellet, index) => {
         const travelT = clamp01(elapsed / pellet.travelSeconds);
         const headDistance = pellet.length * travelT;
@@ -952,7 +1054,7 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
       commitScrapshotInstances(pelletHeadRef.current);
     }
 
-    if (showMuzzle) {
+    if (showMuzzle && muzzleMaterial && smokeMaterial) {
       muzzleMaterial.opacity = muzzleOpacity * flashFade;
       if (muzzleCoreRef.current) {
         muzzleCoreRef.current.scale.setScalar(
@@ -1034,7 +1136,7 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
       if (sparkT >= 1 && lightRef.current) lightRef.current.intensity = 0;
     }
 
-    if (showImpacts) {
+    if (showImpacts && impactMaterial) {
       const impactFade = 1 - clamp01((elapsed - 0.1) / 0.3);
       impactMaterial.opacity = 0.92 * impactFade;
       impactVisuals.forEach((pellet, index) => {
@@ -1088,7 +1190,7 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
 
   return (
     <group frustumCulled={false}>
-      {showTrails && (
+      {showTrails && tracerCoreMaterial && tracerGlowMaterial && (
         <>
           <instancedMesh
             ref={tracerGlowRef}
@@ -1108,7 +1210,7 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
         </>
       )}
 
-      {showMuzzle && (
+      {showMuzzle && muzzleMaterial && smokeMaterial && (
         <>
           <group position={effect.position} quaternion={muzzleQuaternion} frustumCulled={false}>
             <mesh ref={muzzleGlowRef} geometry={SHARED_GEOMETRIES.sphere8} material={muzzleMaterial} />
@@ -1149,7 +1251,7 @@ function ScrapshotBlastEffect({ effect }: EffectProps) {
         </>
       )}
 
-      {showImpacts && impactVisuals.length > 0 && (
+      {showImpacts && impactMaterial && (
         <>
           <instancedMesh
             ref={impactFlareRef}

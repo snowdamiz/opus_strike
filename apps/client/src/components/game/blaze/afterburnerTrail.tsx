@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { checkGroundWithNormal } from '../../../hooks/usePhysics';
@@ -146,6 +146,15 @@ function setInstance(mesh: THREE.InstancedMesh, index: number, dummy: THREE.Obje
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
+function commitInstances(mesh: THREE.InstancedMesh, count: number): void {
+  mesh.count = count;
+  if (count === 0) return;
+
+  mesh.instanceMatrix.clearUpdateRanges();
+  mesh.instanceMatrix.addUpdateRange(0, count * mesh.instanceMatrix.itemSize);
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
 export function AfterburnerTrails() {
   const outerFlameRef = useRef<THREE.InstancedMesh>(null);
   const sideFlameRef = useRef<THREE.InstancedMesh>(null);
@@ -154,6 +163,7 @@ export function AfterburnerTrails() {
   const smokeRef = useRef<THREE.InstancedMesh>(null);
   const glowRef = useRef<THREE.InstancedMesh>(null);
   const scorchRef = useRef<THREE.InstancedMesh>(null);
+  const wasActiveRef = useRef(false);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const outerFlameMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: BLAZE_COLORS.fireOrange,
@@ -210,7 +220,7 @@ export function AfterburnerTrails() {
     depthWrite: false,
   }), []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const meshes = [
       outerFlameRef.current,
       sideFlameRef.current,
@@ -220,8 +230,14 @@ export function AfterburnerTrails() {
       glowRef.current,
       scorchRef.current,
     ];
-    for (const mesh of meshes) mesh?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (const mesh of meshes) {
+      if (!mesh) continue;
+      mesh.count = 0;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    }
     return () => {
+      afterburnerTrails.length = 0;
+      nextTrailId = 0;
       outerFlameMaterial.dispose();
       sideFlameMaterial.dispose();
       innerFlameMaterial.dispose();
@@ -243,16 +259,31 @@ export function AfterburnerTrails() {
     if (!outerFlameMesh || !sideFlameMesh || !innerFlameMesh || !emberMesh || !smokeMesh || !glowMesh || !scorchMesh) return;
 
     const now = getFrameClock().nowMs || performance.now();
+    for (let trailIndex = afterburnerTrails.length - 1; trailIndex >= 0; trailIndex--) {
+      if (now >= afterburnerTrails[trailIndex].expiresAt) afterburnerTrails.splice(trailIndex, 1);
+    }
+
+    if (afterburnerTrails.length === 0) {
+      if (wasActiveRef.current) {
+        outerFlameMesh.count = 0;
+        sideFlameMesh.count = 0;
+        innerFlameMesh.count = 0;
+        emberMesh.count = 0;
+        smokeMesh.count = 0;
+        glowMesh.count = 0;
+        scorchMesh.count = 0;
+        wasActiveRef.current = false;
+      }
+      return;
+    }
+
+    wasActiveRef.current = true;
     let pointInstance = 0;
     let sideFlameInstance = 0;
     let emberInstance = 0;
 
     for (let trailIndex = afterburnerTrails.length - 1; trailIndex >= 0; trailIndex--) {
       const trail = afterburnerTrails[trailIndex];
-      if (now >= trail.expiresAt) {
-        afterburnerTrails.splice(trailIndex, 1);
-        continue;
-      }
       if (trail.points.length === 0) {
         appendTerrainPoint(trail, trail.lastSourcePosition, now);
       }
@@ -357,20 +388,13 @@ export function AfterburnerTrails() {
       }
     }
 
-    outerFlameMesh.count = pointInstance;
-    sideFlameMesh.count = sideFlameInstance;
-    innerFlameMesh.count = pointInstance;
-    smokeMesh.count = pointInstance;
-    glowMesh.count = pointInstance;
-    scorchMesh.count = pointInstance;
-    emberMesh.count = emberInstance;
-    outerFlameMesh.instanceMatrix.needsUpdate = true;
-    sideFlameMesh.instanceMatrix.needsUpdate = true;
-    innerFlameMesh.instanceMatrix.needsUpdate = true;
-    smokeMesh.instanceMatrix.needsUpdate = true;
-    glowMesh.instanceMatrix.needsUpdate = true;
-    scorchMesh.instanceMatrix.needsUpdate = true;
-    emberMesh.instanceMatrix.needsUpdate = true;
+    commitInstances(outerFlameMesh, pointInstance);
+    commitInstances(sideFlameMesh, sideFlameInstance);
+    commitInstances(innerFlameMesh, pointInstance);
+    commitInstances(smokeMesh, pointInstance);
+    commitInstances(glowMesh, pointInstance);
+    commitInstances(scorchMesh, pointInstance);
+    commitInstances(emberMesh, emberInstance);
   });
 
   return (

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -151,7 +151,9 @@ export const PhosphorFlareEffect = React.memo(({ flare }: PhosphorFlareEffectPro
   const ringRef = useRef<THREE.Mesh>(null);
   const burstRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const flameRefs = useRef<Array<THREE.Group | null>>([]);
+  const outerFlamesRef = useRef<THREE.InstancedMesh>(null);
+  const innerFlamesRef = useRef<THREE.InstancedMesh>(null);
+  const flameDummyRef = useRef(new THREE.Object3D());
   const positionRef = useRef(new THREE.Vector3());
   const nextPositionRef = useRef(new THREE.Vector3());
   const directionRef = useRef(new THREE.Vector3());
@@ -164,8 +166,14 @@ export const PhosphorFlareEffect = React.memo(({ flare }: PhosphorFlareEffectPro
   const startFrameTimeRef = useRef(createdFrameTimeMs - (createdAtMs - flare.startTime));
   const impactFrameTimeRef = useRef(createdFrameTimeMs - (createdAtMs - flare.impactTime));
   const poolEndFrameTimeRef = useRef(createdFrameTimeMs - (createdAtMs - flare.poolEndsAt));
+  const nextDamageScanFrameTimeRef = useRef(impactFrameTimeRef.current);
 
   useEffect(() => () => disposePhosphorMaterials(materials), [materials]);
+
+  useLayoutEffect(() => {
+    outerFlamesRef.current?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    innerFlamesRef.current?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }, []);
 
   useFrame(() => measureFrameWork('frame.effects.blazePhosphorFlare', () => {
     const now = getFrameClock().nowMs;
@@ -252,33 +260,47 @@ export const PhosphorFlareEffect = React.memo(({ flare }: PhosphorFlareEffectPro
       materials.flameInner.opacity = 0.92 * fade;
       if (ringRef.current) ringRef.current.rotation.z = now * 0.0014;
 
+      const outerFlames = outerFlamesRef.current;
+      const innerFlames = innerFlamesRef.current;
+      const flameDummy = flameDummyRef.current;
       for (let index = 0; index < POOL_FLAMES.length; index++) {
-        const flame = flameRefs.current[index];
-        if (!flame) continue;
         const config = POOL_FLAMES[index];
         const flicker = 0.72 + Math.sin(now * 0.018 + config.phase) * 0.28;
         const height = config.size * (0.72 + flicker * 0.68) * fade;
-        flame.position.set(
+        const width = 0.34 * config.size * fade;
+        flameDummy.position.set(
           config.x * flare.radius,
           0.18 + height * 0.42,
           config.z * flare.radius
         );
-        flame.rotation.y = -config.phase + Math.sin(now * 0.003 + config.phase) * 0.22;
-        flame.scale.set(0.34 * config.size * fade, height, 0.34 * config.size * fade);
-      }
+        flameDummy.rotation.set(0, -config.phase + Math.sin(now * 0.003 + config.phase) * 0.22, 0);
+        flameDummy.scale.set(width, height, width);
+        flameDummy.updateMatrix();
+        outerFlames?.setMatrixAt(index, flameDummy.matrix);
 
-      applyTutorialOfflineTrainingAreaDamage({
-        center: flare.targetPosition,
-        radius: flare.radius,
-        damage: BLAZE_PHOSPHOR_FLARE_DAMAGE,
-        damageType: 'phosphor_flare',
-        sourceId: flare.ownerId,
-        sourceTeam: flare.ownerTeam,
-        abilityId: 'blaze_phosphor_flare',
-        falloffScale: 0,
-        damageIntervalMs: BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
-        lastDamageTick: lastDamageTickRef.current,
-      });
+        flameDummy.position.y -= height * 0.05;
+        flameDummy.scale.set(width * 0.52, height * 0.72, width * 0.52);
+        flameDummy.updateMatrix();
+        innerFlames?.setMatrixAt(index, flameDummy.matrix);
+      }
+      if (outerFlames) outerFlames.instanceMatrix.needsUpdate = true;
+      if (innerFlames) innerFlames.instanceMatrix.needsUpdate = true;
+
+      if (now >= nextDamageScanFrameTimeRef.current) {
+        nextDamageScanFrameTimeRef.current = now + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS;
+        applyTutorialOfflineTrainingAreaDamage({
+          center: flare.targetPosition,
+          radius: flare.radius,
+          damage: BLAZE_PHOSPHOR_FLARE_DAMAGE,
+          damageType: 'phosphor_flare',
+          sourceId: flare.ownerId,
+          sourceTeam: flare.ownerTeam,
+          abilityId: 'blaze_phosphor_flare',
+          falloffScale: 0,
+          damageIntervalMs: BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+          lastDamageTick: lastDamageTickRef.current,
+        });
+      }
       if (lightRef.current) lightRef.current.intensity = 11 * fade;
     } else {
       if (poolRef.current) poolRef.current.visible = false;
@@ -313,16 +335,16 @@ export const PhosphorFlareEffect = React.memo(({ flare }: PhosphorFlareEffectPro
         <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.circle32} scale={[flare.radius, flare.radius, 1]} material={materials.pool} />
         <mesh rotation-x={-Math.PI / 2} position-y={0.025} geometry={SHARED_GEOMETRIES.circle16} scale={[flare.radius * 0.58, flare.radius * 0.58, 1]} material={materials.poolCore} />
         <mesh ref={ringRef} rotation-x={-Math.PI / 2} position-y={0.045} geometry={SHARED_GEOMETRIES.ring32} scale={[flare.radius, flare.radius, 1]} material={materials.ring} />
-        {POOL_FLAMES.map((flame, index) => (
-          <group
-            key={index}
-            ref={(node) => { flameRefs.current[index] = node; }}
-            position={[flame.x * flare.radius, 0.4, flame.z * flare.radius]}
-          >
-            <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.flameOuter} />
-            <mesh position-y={-0.05} scale={[0.52, 0.72, 0.52]} geometry={SHARED_GEOMETRIES.cone8} material={materials.flameInner} />
-          </group>
-        ))}
+        <instancedMesh
+          ref={outerFlamesRef}
+          args={[SHARED_GEOMETRIES.cone8, materials.flameOuter, POOL_FLAME_COUNT]}
+          frustumCulled={false}
+        />
+        <instancedMesh
+          ref={innerFlamesRef}
+          args={[SHARED_GEOMETRIES.cone8, materials.flameInner, POOL_FLAME_COUNT]}
+          frustumCulled={false}
+        />
       </group>
 
       <BudgetedPointLight ref={lightRef} budgetPriority={1.15} color={0xff6a00} intensity={6} distance={16} decay={2} />
