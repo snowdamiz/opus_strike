@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ALL_HERO_IDS,
   BLAZE_ABILITY_SKILLS,
+  PHANTOM_ABILITY_SKILLS,
   DEFAULT_PHANTOM_PRIMARY_SKILL,
   DEFAULT_PHANTOM_SECONDARY_SKILL,
   DEFAULT_BLAZE_PRIMARY_SKILL,
@@ -9,6 +10,7 @@ import {
   DEFAULT_BLAZE_ULTIMATE_SKILL,
   HERO_DEFINITIONS,
   hasBlazeAfterburner,
+  hasPhantomUmbralDecoy,
   isBlazePrimarySkill,
   isBlazeSecondarySkill,
   isBlazeUltimateSkill,
@@ -22,6 +24,7 @@ import {
   type InputState,
   type PhantomPrimarySkill,
   type PhantomSecondarySkill,
+  type PhantomAbilityBindings,
 } from '@voxel-strike/shared';
 
 export const LOADOUT_STORAGE_KEY = 'voxel-strike-loadout';
@@ -72,7 +75,9 @@ function isValidHeroAbilityBindings(
   const supportedAbilityIds = new Set(
     heroId === 'blaze'
       ? BLAZE_ABILITY_SKILLS
-      : [defaults.ability1, defaults.ability2]
+      : heroId === 'phantom'
+        ? PHANTOM_ABILITY_SKILLS
+        : [defaults.ability1, defaults.ability2]
   );
 
   return (
@@ -118,6 +123,9 @@ export function resolveRuntimeHeroAbilityBindings(
   if (heroId === 'blaze' && hasBlazeAfterburner(bindings as BlazeAbilityBindings)) {
     return bindings;
   }
+  if (heroId === 'phantom' && hasPhantomUmbralDecoy(bindings as PhantomAbilityBindings)) {
+    return bindings;
+  }
   return getDefaultHeroAbilityBindings(heroId);
 }
 
@@ -141,6 +149,9 @@ export function applyHeroAbilityBindings(
   const defaults = getDefaultHeroAbilityBindings(heroId);
   const selectedBindings = resolveHeroAbilityBindings(heroId, bindingsByHero);
   if (heroId === 'blaze' && hasBlazeAfterburner(selectedBindings as BlazeAbilityBindings)) {
+    return input;
+  }
+  if (heroId === 'phantom' && hasPhantomUmbralDecoy(selectedBindings as PhantomAbilityBindings)) {
     return input;
   }
   const bindings = selectedBindings;
@@ -296,7 +307,9 @@ export const useLoadoutStore = create<LoadoutState>((set) => ({
       const supportedAbilityIds = new Set(
         heroId === 'blaze'
           ? BLAZE_ABILITY_SKILLS
-          : [defaults.ability1, defaults.ability2]
+          : heroId === 'phantom'
+            ? PHANTOM_ABILITY_SKILLS
+            : [defaults.ability1, defaults.ability2]
       );
       if (!supportedAbilityIds.has(abilityId)) return state;
 

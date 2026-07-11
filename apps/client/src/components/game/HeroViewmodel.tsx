@@ -6,6 +6,7 @@ import {
   BLAZE_PRIMARY_RELOAD_MS,
   CHRONOS_PRIMARY_RELOAD_MS,
   HERO_DEFINITIONS,
+  isPhantomUmbralDecoyCloaked,
   PHANTOM_PRIMARY_RELOAD_MS,
   SPRINT_MULTIPLIER,
   VOID_RAY_CHARGE_TIME,
@@ -4756,6 +4757,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
   const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
   const processedHookshotSecondaryEventIdRef = useRef<string | null>(null);
+  const phantomCloakOpacityRef = useRef(1);
   const materials = useMemo(() => getViewmodelMaterialsForSkin(heroId, skinId), [heroId, skinId]);
 
   useEffect(() => {
@@ -4764,6 +4766,16 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
     materials.accent.emissiveIntensity = accentBase;
     materials.glass.emissiveIntensity = glassBase;
     materials.glow.opacity = config.allowDecorativeGlows ? 1 : 0.62;
+  }, [config.allowDecorativeGlows, materials]);
+
+  useEffect(() => () => {
+    const glowOpacity = config.allowDecorativeGlows ? 1 : 0.62;
+    for (const [token, material] of Object.entries(materials)) {
+      material.opacity = token === 'glow' ? glowOpacity : 1;
+      material.transparent = token === 'glow';
+      material.depthWrite = true;
+      material.needsUpdate = true;
+    }
   }, [config.allowDecorativeGlows, materials]);
 
   useEffect(() => {
@@ -4845,6 +4857,26 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
 
     if (heroId === 'phantom') {
       const store = useGameStore.getState();
+      const nowMs = Date.now();
+      const decoyAbility = store.localPlayer?.abilities?.phantom_umbral_decoy;
+      const cloakTargetOpacity = isPhantomUmbralDecoyCloaked(decoyAbility, nowMs) ? 0.34 : 1;
+      phantomCloakOpacityRef.current = THREE.MathUtils.damp(
+        phantomCloakOpacityRef.current,
+        cloakTargetOpacity,
+        cloakTargetOpacity < 1 ? 14 : 9,
+        delta,
+      );
+      const glowOpacity = config.allowDecorativeGlows ? 1 : 0.62;
+      for (const [token, material] of Object.entries(materials)) {
+        const nextOpacity = (token === 'glow' ? glowOpacity : 1) * phantomCloakOpacityRef.current;
+        const shouldBeTransparent = token === 'glow' || phantomCloakOpacityRef.current < 0.999;
+        material.opacity = nextOpacity;
+        if (material.transparent !== shouldBeTransparent) {
+          material.transparent = shouldBeTransparent;
+          material.needsUpdate = true;
+        }
+        material.depthWrite = phantomCloakOpacityRef.current >= 0.999;
+      }
       const localPlayerId = store.localPlayer?.id;
       if (localPlayerId) {
         const release = phantomVoidRayReleaseRef.current;

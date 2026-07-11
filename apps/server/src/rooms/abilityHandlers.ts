@@ -313,6 +313,12 @@ export function executeAbility(
       break;
     }
 
+    case 'phantom_umbral_decoy': {
+      abilityState.isActive = true;
+      abilityState.activatedAt = now;
+      break;
+    }
+
     case 'phantom_veil': {
       abilityState.isActive = true;
       abilityState.activatedAt = now;

@@ -11,6 +11,7 @@ import {
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   type AbilityDefinition,
+  type HeroSkinId,
   type Team,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
@@ -26,6 +27,8 @@ export interface AbilityCasterSnapshot {
   id: string;
   team: Team;
   heroId: string;
+  skinId?: HeroSkinId | null;
+  isBot?: boolean;
   position: PlainVec3;
   velocity: PlainVec3;
   lookYaw: number;
@@ -283,11 +286,13 @@ export function buildStandardAbilityCastPlan(input: {
       aimDirection: getForwardVector(input.caster.lookYaw, input.caster.lookPitch),
       velocity,
       ownerTeam: input.caster.team,
+      skinId: input.abilityId === 'phantom_umbral_decoy' ? input.caster.skinId : undefined,
+      isBot: input.abilityId === 'phantom_umbral_decoy' ? input.caster.isBot : undefined,
       serverTime: input.usedAt,
       releaseAt: input.abilityId === 'chronos_timebreak'
         ? input.abilityActivatedAt
         : undefined,
-      duration: input.abilityId === 'chronos_timebreak'
+      duration: input.abilityId === 'chronos_timebreak' || input.abilityId === 'phantom_umbral_decoy'
         ? input.abilityDef.duration
         : input.abilityId === 'chronos_ascendant_paradox'
           ? input.abilityDef.duration

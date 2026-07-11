@@ -14,6 +14,7 @@ const {
   LOADOUT_STORAGE_KEY,
   loadStoredLoadout,
   resolveHeroAbilityBindings,
+  resolveRuntimeHeroAbilityBindings,
   useLoadoutStore,
 } = await import('./loadoutStore');
 const {
@@ -177,6 +178,7 @@ const {
   BLAZE_PHOENIX_DIVE_OPTION_ID,
   PHANTOM_RIFT_BOLT_OPTION_ID,
   PHANTOM_SOULREND_OPTION_ID,
+  PHANTOM_UMBRAL_DECOY_OPTION_ID,
   HERO_LOADOUT_POOL,
 } = await import('../components/ui/loadoutPool');
 const blazeLoadoutOptions = Object.values(HERO_LOADOUT_POOL.blaze).flat();
@@ -203,6 +205,11 @@ const riftBoltOption = HERO_LOADOUT_POOL.phantom.secondaryFire.find((option) => 
 assert.equal(riftBoltOption?.abilityId, 'phantom_rift_bolt');
 assert.equal(riftBoltOption?.ownership, 'owned');
 assert.ok(riftBoltOption?.meta?.includes('22 dmg'));
+const umbralDecoyOption = HERO_LOADOUT_POOL.phantom.ability1.find((option) => (
+  option.id === PHANTOM_UMBRAL_DECOY_OPTION_ID
+));
+assert.equal(umbralDecoyOption?.abilityId, 'phantom_umbral_decoy');
+assert.equal(umbralDecoyOption?.ownership, 'owned');
 const phosphorFlareOption = HERO_LOADOUT_POOL.blaze.secondaryFire.find((option) => (
   option.id === BLAZE_PHOSPHOR_FLARE_OPTION_ID
 ));
@@ -236,6 +243,25 @@ assert.equal(
 const phantomSkills = getHeroSkillItems('phantom', 'fireball_rockets', phantomBindings);
 assert.equal(phantomSkills.find((skill) => skill.input === 'E')?.abilityId, 'phantom_personal_shield');
 assert.equal(phantomSkills.find((skill) => skill.input === 'Q')?.abilityId, 'phantom_blink');
+useLoadoutStore.getState().assignHeroAbility('phantom', 'ability1', 'phantom_umbral_decoy');
+const umbralBindings = resolveRuntimeHeroAbilityBindings(
+  'phantom',
+  useLoadoutStore.getState().heroAbilityBindings,
+);
+assert.deepEqual(umbralBindings, {
+  ability1: 'phantom_umbral_decoy',
+  ability2: 'phantom_blink',
+});
+assert.equal(
+  applyHeroAbilityBindings(physicalEInput, 'phantom', useLoadoutStore.getState().heroAbilityBindings),
+  physicalEInput,
+  'Umbral Decoy loadouts keep physical E/Q slots for server-side ability resolution',
+);
+assert.equal(
+  getHeroSkillItems('phantom', 'fireball_rockets', umbralBindings)
+    .find((skill) => skill.input === 'E')?.name,
+  'Umbral Decoy',
+);
 assert.equal(
   getHeroSkillItems(
     'phantom',

@@ -24,12 +24,13 @@ import {
   PHANTOM_SOULREND_SPEED,
   PHANTOM_RIFT_BOLT_COOLDOWN_MS,
   PHANTOM_RIFT_BOLT_LIFETIME_MS,
+  PHANTOM_UMBRAL_DECOY_DURATION_SECONDS,
   type PublicRankSnapshot,
 } from '@voxel-strike/shared';
 import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
 import { useStreamerStore } from '../store/streamerStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
-import { setGameTiming } from '../store/gameTimingStore';
+import { gameTimingStore, setGameTiming } from '../store/gameTimingStore';
 import {
   addDeathVisual,
   clearAllDeathVisuals,
@@ -63,7 +64,7 @@ import {
   recordTransformMessage,
 } from '../movement/networkDiagnostics';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
-import { addEffect, addScrapshotEffects } from '../components/game/Effects';
+import { addEffect, addScrapshotEffects, addUmbralDecoyEffect } from '../components/game/Effects';
 import { triggerTerrainImpact } from '../components/game/TerrainImpactEffects';
 import {
   triggerAfterburnerTrail,
@@ -2129,7 +2130,10 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
   if (!abilityDef) return;
 
   const store = useGameStore.getState();
-  const player = store.players.get(data.playerId);
+  const isLocalPlayer = data.playerId === (store.localPlayer?.id ?? store.playerId);
+  const player = isLocalPlayer
+    ? store.localPlayer ?? store.players.get(data.playerId)
+    : store.players.get(data.playerId);
   if (!player) return;
 
   const existingAbility = player.abilities?.[data.abilityId];
@@ -2149,7 +2153,7 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
     },
   };
 
-  if (data.playerId === (store.localPlayer?.id ?? store.playerId)) {
+  if (isLocalPlayer) {
     store.updateLocalPlayer({
       abilities,
       ultimateCharge: data.abilityId === 'phantom_veil' ? 0 : player.ultimateCharge,
@@ -2244,6 +2248,39 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
   const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
 
   switch (data.abilityId) {
+    case 'phantom_umbral_decoy': {
+      if (!position) return true;
+      const direction = normalizeAimDirection(data);
+      const owner = isLocalPlayer ? store.localPlayer : store.players.get(data.playerId);
+      const durationMs = (data.duration ?? PHANTOM_UMBRAL_DECOY_DURATION_SECONDS) * 1000;
+      const latestServerTime = gameTimingStore.getState().serverTime;
+      const ageOffsetMs = data.serverTime && latestServerTime > 0
+        ? Math.min(durationMs, Math.max(0, latestServerTime - data.serverTime))
+        : 0;
+      addUmbralDecoyEffect({
+        position,
+        direction,
+        durationMs,
+        ownerTeam,
+        ownerSkinId: data.skinId ?? owner?.skinId,
+        ownerIsBot: data.isBot ?? owner?.isBot,
+        castId,
+        ageOffsetMs,
+      });
+      applyConfirmedPhantomActiveAbility(data);
+      if (isLocalPlayer) {
+        const abilityDef = ABILITY_DEFINITIONS.phantom_umbral_decoy;
+        store.setClientCooldown(
+          'phantom_umbral_decoy',
+          Date.now() + (abilityDef?.cooldown ?? 0) * 1000,
+        );
+      }
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_umbral_decoy')) {
+        playPhantomWorldSound('phantomBlink', position, { volume: 0.82, pitch: 0.88 });
+      }
+      return true;
+    }
+
     case 'phantom_dire_ball':
     case 'phantom_soulrend_daggers': {
       const primaryAbilityId = data.abilityId as 'phantom_dire_ball' | 'phantom_soulrend_daggers';

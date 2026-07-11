@@ -60,6 +60,10 @@ export const PHANTOM_VOID_ZONE_DAMAGE = 12;
 export const PHANTOM_VOID_ZONE_DURATION_SECONDS = 4;
 export const PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS = 500;
 export const PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS = 1;
+export const PHANTOM_UMBRAL_DECOY_COOLDOWN_SECONDS = 12;
+export const PHANTOM_UMBRAL_DECOY_DURATION_SECONDS = 3;
+export const PHANTOM_UMBRAL_DECOY_CLOAK_DURATION_SECONDS = 1.5;
+export const PHANTOM_UMBRAL_DECOY_SPEED = 5.4;
 export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
 export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
 
@@ -217,6 +221,10 @@ export const ABILITY_CARD_STATS = {
   ],
   phantom_personal_shield: [
     { value: PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS, label: 'hit', prefix: 'absorbs ' },
+  ],
+  phantom_umbral_decoy: [
+    { value: PHANTOM_UMBRAL_DECOY_DURATION_SECONDS, label: 'decoy', format: 'seconds' },
+    { value: PHANTOM_UMBRAL_DECOY_CLOAK_DURATION_SECONDS, label: 'cloak', format: 'seconds' },
   ],
   phantom_veil: [
     { value: PHANTOM_VEIL_SPEED_BONUS_PERCENT, label: 'speed', prefix: '+', suffix: '%' },
@@ -407,6 +415,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 10,
     duration: 10,
     description: 'Surround yourself with a protective shadow bubble that absorbs one hit or lasts 10 seconds.',
+  },
+  phantom_umbral_decoy: {
+    id: 'phantom_umbral_decoy',
+    name: 'Umbral Decoy',
+    type: 'defensive',
+    targeting: 'direction',
+    cooldown: PHANTOM_UMBRAL_DECOY_COOLDOWN_SECONDS,
+    duration: PHANTOM_UMBRAL_DECOY_DURATION_SECONDS,
+    description: 'Send a deceptive clone weaving forward and faking Phantom casts for 3 seconds while cloaking for 1.5 seconds.',
   },
   phantom_veil: {
     id: 'phantom_veil',

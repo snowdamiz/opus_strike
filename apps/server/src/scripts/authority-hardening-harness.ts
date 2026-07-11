@@ -477,6 +477,34 @@ function runPhantomShieldCooldownTests(): void {
   assert.equal(expiredShield.cooldownRemaining, 10, 'expired shield should start cooldown');
 }
 
+function runPhantomUmbralDecoyTests(): void {
+  const player = createAbilityHarnessPlayer('phantom');
+  initializePlayerAbilities(player, 'phantom', {
+    ability1: 'phantom_umbral_decoy',
+    ability2: 'phantom_personal_shield',
+  });
+  assert.equal(player.abilities.has('phantom_umbral_decoy'), true);
+  assert.equal(player.abilities.has('phantom_blink'), false);
+
+  const result = tryUseAbility(player, 'ability1', 'phantom_umbral_decoy');
+  assert.equal(result.success, true);
+  assert.equal(result.abilityId, 'phantom_umbral_decoy');
+  assert.equal(result.abilityState?.cooldownRemaining, 12, 'decoy cooldown starts on cast');
+  executeAbility(
+    player,
+    result.abilityId!,
+    result.abilityState!,
+    result.abilityDef,
+    { createVoidZone: () => undefined },
+  );
+  const activatedAt = result.abilityState!.activatedAt;
+  assert.equal(result.abilityState?.isActive, true);
+  updateActiveAbilities(player, activatedAt + 2_999);
+  assert.equal(result.abilityState?.isActive, true);
+  updateActiveAbilities(player, activatedAt + 3_000);
+  assert.equal(result.abilityState?.isActive, false);
+}
+
 runMovementTests();
 runTicketTests();
 runProtocolTests();
@@ -487,5 +515,6 @@ runLobbyBotRosterTests();
 runTeamSpawnAssignmentTests();
 runAbilityBarrierTests();
 runPhantomShieldCooldownTests();
+runPhantomUmbralDecoyTests();
 
 console.log('authority hardening harness passed');

@@ -6,6 +6,10 @@ import {
   BLAZE_AFTERBURNER_TRAIL_RADIUS,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+  PHANTOM_UMBRAL_DECOY_DURATION_SECONDS,
+  getPhantomUmbralDecoyCastSchedule,
+  getPhantomUmbralDecoySeed,
+  getPhantomUmbralDecoyPosition,
 } from '@voxel-strike/shared';
 import {
   HOOKSHOT_ANCHOR_WALL_DURATION,
@@ -20,6 +24,55 @@ import {
 } from '../rooms/roomAbilityCastRuntime';
 
 const NOW = 10_000;
+
+const decoySeed = getPhantomUmbralDecoySeed('phantom_umbral_decoy_player-a_1');
+const initialDecoyPosition = getPhantomUmbralDecoyPosition(
+  { x: 1, y: 2, z: 3 },
+  { x: 0, y: 0, z: -1 },
+  0,
+  decoySeed,
+);
+const oneSecondDecoyPosition = getPhantomUmbralDecoyPosition(
+  initialDecoyPosition,
+  { x: 0, y: 0, z: -1 },
+  1_000,
+  decoySeed,
+);
+assert.deepEqual(initialDecoyPosition, { x: 1, y: 2, z: 3 });
+assert.equal(oneSecondDecoyPosition.y, 2);
+assert.ok(oneSecondDecoyPosition.z < 0, 'decoy should make strong progress in its cast direction');
+assert.notEqual(oneSecondDecoyPosition.x, 1, 'decoy should strafe off the straight cast line');
+assert.deepEqual(
+  getPhantomUmbralDecoyPosition(
+    initialDecoyPosition,
+    { x: 0, y: 0, z: -1 },
+    1_000,
+    decoySeed,
+  ),
+  oneSecondDecoyPosition,
+  'seeded decoy motion must stay deterministic for server/client parity',
+);
+assert.notDeepEqual(
+  getPhantomUmbralDecoyPosition(
+    initialDecoyPosition,
+    { x: 0, y: 0, z: -1 },
+    1_000,
+    getPhantomUmbralDecoySeed('phantom_umbral_decoy_player-a_2'),
+  ),
+  oneSecondDecoyPosition,
+  'different casts should produce different evasive paths',
+);
+const finalDecoyPosition = getPhantomUmbralDecoyPosition(
+  initialDecoyPosition,
+  { x: 0, y: 0, z: -1 },
+  PHANTOM_UMBRAL_DECOY_DURATION_SECONDS * 1_000,
+  decoySeed,
+);
+assert.ok(finalDecoyPosition.z < oneSecondDecoyPosition.z, 'decoy should ultimately continue in its cast direction');
+const decoySchedule = getPhantomUmbralDecoyCastSchedule(decoySeed);
+assert.ok(decoySchedule.primaryCastTimesMs[0] < decoySchedule.shieldCastTimeMs);
+assert.ok(decoySchedule.shieldCastTimeMs < decoySchedule.blinkCastTimeMs);
+assert.ok(decoySchedule.blinkCastTimeMs < decoySchedule.primaryCastTimesMs[1]);
 
 function caster(overrides: Partial<AbilityCasterSnapshot> = {}): AbilityCasterSnapshot {
   return {
@@ -249,6 +302,34 @@ function caster(overrides: Partial<AbilityCasterSnapshot> = {}): AbilityCasterSn
   assert.equal(plan.payload.releaseAt, 10_210);
   assert.equal(plan.payload.radius, 11);
   assert.deepEqual(plan.payload.startPosition, { x: 3, y: 4, z: 5 });
+}
+
+{
+  const plan = buildStandardAbilityCastPlan({
+    caster: caster({
+      heroId: 'phantom',
+      skinId: 'phantom.void-monarch',
+      isBot: false,
+      lookYaw: 0,
+      lookPitch: 0,
+    }),
+    abilityId: 'phantom_umbral_decoy',
+    abilityDef: { duration: PHANTOM_UMBRAL_DECOY_DURATION_SECONDS },
+    castId: 'phantom_umbral_decoy_player-a_1',
+    startedAt: { x: 1, y: 2, z: 3 },
+    abilityStartPosition: { x: 1, y: 2, z: 3 },
+    abilityActivatedAt: NOW,
+    usedAt: NOW,
+  });
+
+  assert.equal(plan.payload.duration, PHANTOM_UMBRAL_DECOY_DURATION_SECONDS);
+  const aimDirection = plan.payload.aimDirection as { x: number; y: number; z: number };
+  assert.ok(Math.abs(aimDirection.x) < 1e-9);
+  assert.equal(aimDirection.y, 0);
+  assert.equal(aimDirection.z, -1);
+  assert.equal(plan.payload.ownerTeam, 'red');
+  assert.equal(plan.payload.skinId, 'phantom.void-monarch');
+  assert.equal(plan.payload.isBot, false);
 }
 
 {

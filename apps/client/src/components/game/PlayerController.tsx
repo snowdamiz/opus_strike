@@ -144,6 +144,7 @@ import {
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
+  PHANTOM_UMBRAL_DECOY_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_RADIUS,
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
@@ -209,6 +210,7 @@ import {
 import { BombTargetingIndicator, triggerAirStrike, triggerRocketJumpExplosion } from './BlazeEffects';
 import { triggerBlinkEffect } from './PhantomEffects';
 import { triggerPhantomShieldCastEffect } from './phantom';
+import { addUmbralDecoyEffect } from './Effects';
 import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from './chronos/lifeline';
 import { addChronosTimebreakEffect } from './chronos/timebreak';
 import { triggerTeleportEffect } from '../ui/TeleportEffects';
@@ -3829,6 +3831,97 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         }
       };
 
+      const executePhantomSlottedAbility = (abilityId: string) => {
+        if (!abilitySystem.canUseAbility(abilityId, false)) return;
+        const phantomLocalPlayer = localPlayer!;
+
+        if (abilityId === 'phantom_umbral_decoy') {
+          if (isPracticeMode) {
+            const direction = calculateLookDirection(abilityCtx.yaw, 0);
+            abilitySystem.startClientCooldown(abilityId);
+            abilitySystem.setAbilityActive(abilityId, true, { startTime: now });
+            updateLocalPlayer({
+              abilities: {
+                ...phantomLocalPlayer.abilities,
+                [abilityId]: buildPracticeAbilityState(phantomLocalPlayer.abilities, abilityId, now, true),
+              },
+            });
+            addUmbralDecoyEffect({
+              position: { x: position.x, y: position.y, z: position.z },
+              direction,
+              durationMs: PHANTOM_UMBRAL_DECOY_DURATION_SECONDS * 1000,
+              ownerTeam: phantomLocalPlayer.team,
+              ownerSkinId: phantomLocalPlayer.skinId,
+              ownerIsBot: phantomLocalPlayer.isBot,
+              castId: `practice_phantom_umbral_decoy_${phantomLocalPlayer.id}_${now}`,
+            });
+          }
+          useGameStore.getState().recordSkillCast(now);
+          lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+          return;
+        }
+
+        if (abilityId === 'phantom_blink') {
+          if (isPracticeMode) {
+            const startPosition = { x: position.x, y: position.y, z: position.z };
+            if (!consumePracticeAbilityCharge(abilityId)) return;
+            const nextState = predictLocalPhantomBlink(phantomLocalPlayer, abilityCtx.yaw, abilityCtx.pitch);
+            applyPracticePredictedState(nextState);
+            triggerBlinkEffect(startPosition, nextState.position);
+            triggerTeleportEffect('blink');
+            useGameStore.getState().addVoidZone({
+              id: `practice_void_${phantomLocalPlayer.id}_${now}`,
+              position: {
+                x: nextState.position.x,
+                y: nextState.position.y - 0.9,
+                z: nextState.position.z,
+              },
+              radius: PHANTOM_VOID_ZONE_RADIUS,
+              duration: PHANTOM_VOID_ZONE_DURATION_SECONDS,
+              startTime: now,
+              ownerId: phantomLocalPlayer.id,
+              ownerTeam: phantomLocalPlayer.team,
+            });
+          } else if (!phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge)) {
+            return;
+          }
+          useGameStore.getState().recordSkillCast(now);
+          lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+          return;
+        }
+
+        if (abilityId !== 'phantom_personal_shield') return;
+        const playLocalShieldCast = () => {
+          markPredictedLocalAbilitySound(abilityId, now, 1600);
+          triggerPhantomShieldCastEffect({
+            playerId: abilityCtx.localPlayer.id,
+            isLocalPlayer: true,
+            position: { x: position.x, y: position.y, z: position.z },
+            yaw: abilityCtx.yaw,
+          });
+        };
+        if (isPracticeMode) {
+          abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
+          updateLocalPlayer({
+            abilities: {
+              ...phantomLocalPlayer.abilities,
+              [abilityId]: buildPracticeAbilityState(phantomLocalPlayer.abilities, abilityId, now, true),
+            },
+          });
+        } else if (!phantomAbilities.executePersonalShield(
+          abilityCtx,
+          playerSounds,
+          abilitySystem.setAbilityActive,
+          abilitySystem.startClientCooldown,
+          updateLocalPlayer
+        )) {
+          return;
+        }
+        useGameStore.getState().recordSkillCast(now);
+        playLocalShieldCast();
+        lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+      };
+
       if (
         heroId === 'blaze' &&
         localAbilityInput.ability1 &&
@@ -3837,7 +3930,15 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         executeBlazeSlottedAbility(runtimeAbilityBindings.ability1);
       }
 
-      if (heroId !== 'blaze') {
+      if (
+        heroId === 'phantom' &&
+        localAbilityInput.ability1 &&
+        !abilitySystem.abilityPressedRef.current.ability1
+      ) {
+        executePhantomSlottedAbility(runtimeAbilityBindings.ability1);
+      }
+
+      if (heroId !== 'blaze' && heroId !== 'phantom') {
         const ability1Id = heroDef.ability1.abilityId;
         const chronosQueuePressed = heroId === 'chronos' &&
           rawFrameInput.ability1 &&
@@ -3928,35 +4029,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
           }
         } else if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
           if (abilitySystem.canUseAbility(ability1Id, false)) {
-            if (heroId === 'phantom') {
-              if (isPracticeMode) {
-                const startPosition = { x: position.x, y: position.y, z: position.z };
-                if (consumePracticeAbilityCharge(ability1Id)) {
-                  useGameStore.getState().recordSkillCast(now);
-                  const nextState = predictLocalPhantomBlink(localPlayer, abilityCtx.yaw, abilityCtx.pitch);
-                  applyPracticePredictedState(nextState);
-                  triggerBlinkEffect(startPosition, nextState.position);
-                  triggerTeleportEffect('blink');
-                  useGameStore.getState().addVoidZone({
-                    id: `practice_void_${localPlayer.id}_${now}`,
-                    position: {
-                      x: nextState.position.x,
-                      y: nextState.position.y - 0.9,
-                      z: nextState.position.z,
-                    },
-                    radius: PHANTOM_VOID_ZONE_RADIUS,
-                    duration: PHANTOM_VOID_ZONE_DURATION_SECONDS,
-                    startTime: now,
-                    ownerId: localPlayer.id,
-                    ownerTeam: localPlayer.team || 'red',
-                  });
-                  lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
-                }
-              } else if (phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge)) {
-                useGameStore.getState().recordSkillCast(now);
-                lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
-              }
-            } else if (heroId === 'hookshot') {
+            if (heroId === 'hookshot') {
               if (hookshotAbilities.executeGrapple(abilityCtx)) {
                 useGameStore.getState().recordSkillCast(now);
                 lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
@@ -3976,44 +4049,12 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
       // Ability 2 (Q)
       if (localAbilityInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
-        const ability2Id = heroId === 'blaze'
+        const ability2Id = heroId === 'blaze' || heroId === 'phantom'
           ? runtimeAbilityBindings.ability2
           : heroDef.ability2.abilityId;
         if (abilitySystem.canUseAbility(ability2Id, false)) {
           if (heroId === 'phantom') {
-            const abilityId = heroDef.ability2.abilityId;
-            const playLocalShieldCast = () => {
-              markPredictedLocalAbilitySound(abilityId, now, 1600);
-              triggerPhantomShieldCastEffect({
-                playerId: abilityCtx.localPlayer.id,
-                isLocalPlayer: true,
-                position: { x: position.x, y: position.y, z: position.z },
-                yaw: abilityCtx.yaw,
-              });
-            };
-
-            if (isPracticeMode) {
-              abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
-              updateLocalPlayer({
-                abilities: {
-                  ...localPlayer.abilities,
-                  [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
-                },
-              });
-              useGameStore.getState().recordSkillCast(now);
-              playLocalShieldCast();
-              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
-            } else if (phantomAbilities.executePersonalShield(
-              abilityCtx,
-              playerSounds,
-              abilitySystem.setAbilityActive,
-              abilitySystem.startClientCooldown,
-              updateLocalPlayer
-            )) {
-              useGameStore.getState().recordSkillCast(now);
-              playLocalShieldCast();
-              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
-            }
+            executePhantomSlottedAbility(ability2Id);
           } else if (heroId === 'blaze') {
             executeBlazeSlottedAbility(ability2Id);
           } else if (heroId === 'hookshot') {

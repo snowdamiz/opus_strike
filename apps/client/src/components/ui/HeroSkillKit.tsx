@@ -259,6 +259,13 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   ],
 };
 
+export const PHANTOM_UMBRAL_DECOY_SKILL: HeroSkillItem = fromAbility(
+  'E',
+  'phantom_umbral_decoy',
+  undefined,
+  { iconType: 'umbraldecoy', rarity: 'epic' },
+);
+
 // The skill list is static per hero, so cache it once per heroId. This keeps the
 // returned array (and its item objects) referentially stable across renders, which
 // lets memoized HUD leaf components (e.g. HUDSkillSlot) skip re-renders.
@@ -303,6 +310,8 @@ export function getHeroSkillItems(
   );
   if (heroId === 'blaze') {
     stockAbilityById.set('blaze_afterburner', BLAZE_AFTERBURNER_SKILL);
+  } else if (heroId === 'phantom') {
+    stockAbilityById.set('phantom_umbral_decoy', PHANTOM_UMBRAL_DECOY_SKILL);
   }
   const slottedAbilitySkills: HeroSkillItem[] = [
     {

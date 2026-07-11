@@ -362,6 +362,10 @@ import {
   PHANTOM_RIFT_BOLT_SPEED,
   PHANTOM_SOULREND_MAGAZINE_SIZE,
   PHANTOM_SOULREND_RICOCHET_RADIUS,
+  PHANTOM_UMBRAL_DECOY_DURATION_SECONDS,
+  getPhantomUmbralDecoyPosition,
+  getPhantomUmbralDecoySeed,
+  isPhantomUmbralDecoyCloaked,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_CROUCH_HEIGHT,
@@ -420,6 +424,8 @@ import {
   isBlazePrimarySkill,
   isPhantomPrimarySkill,
   isPhantomSecondarySkill,
+  isPhantomAbilityBindings,
+  hasPhantomUmbralDecoy,
   isBlazeSecondarySkill,
   isBlazeUltimateSkill,
   getBlazeUltimateAbilityId,
@@ -447,6 +453,7 @@ import type {
   BlazeAbilityBindings,
   PhantomPrimarySkill,
   PhantomSecondarySkill,
+  PhantomAbilityBindings,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -1213,6 +1220,14 @@ export class GameRoom extends Room<GameState> {
   });
   private readonly phantomPrimarySkills = new Map<string, PhantomPrimarySkill>();
   private readonly phantomSecondarySkills = new Map<string, PhantomSecondarySkill>();
+  private readonly phantomAbilityBindings = new Map<string, PhantomAbilityBindings>();
+  private readonly phantomUmbralDecoys = new Map<string, {
+    startPosition: PlainVec3;
+    direction: PlainVec3;
+    startedAt: number;
+    expiresAt: number;
+    seed: number;
+  }>();
   private readonly blazePrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
@@ -1986,6 +2001,11 @@ export class GameRoom extends Room<GameState> {
       this.handleSetPhantomSecondarySkill(client, data.skill);
     });
 
+    this.onRateLimitedMessage('setPhantomAbilityBindings', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isPhantomAbilityBindings(data)) return;
+      this.handleSetPhantomAbilityBindings(client, data);
+    });
+
     this.onRateLimitedMessage('setBlazePrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       if (!isRecord(data) || !isBlazePrimarySkill(data.skill)) return;
       this.handleSetBlazePrimarySkill(client, data.skill);
@@ -2100,6 +2120,17 @@ export class GameRoom extends Room<GameState> {
     this.phantomSecondarySkills.set(player.id, skill);
     this.phantomVoidRayCharges.clear(player.id);
     this.phantomRiftBolts.clear(player.id);
+  }
+
+  private handleSetPhantomAbilityBindings(client: Client, bindings: PhantomAbilityBindings): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.phantomAbilityBindings.has(player.id)) return;
+    if (!hasPhantomUmbralDecoy(bindings)) return;
+
+    this.phantomAbilityBindings.set(player.id, { ...bindings });
+    if (player.heroId === 'phantom') {
+      reconcilePlayerAbilities(player, 'phantom', bindings);
+    }
   }
 
   private handleSetBlazeSecondarySkill(client: Client, skill: BlazeSecondarySkill): void {
@@ -2509,6 +2540,8 @@ export class GameRoom extends Room<GameState> {
     this.phantomSoulrendPrimaryMagazines.clear(playerId);
     this.phantomPrimarySkills.delete(playerId);
     this.phantomSecondarySkills.delete(playerId);
+    this.phantomAbilityBindings.delete(playerId);
+    this.phantomUmbralDecoys.delete(playerId);
     this.blazePrimaryMagazines.clear(playerId);
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
@@ -8424,6 +8457,10 @@ export class GameRoom extends Room<GameState> {
     return this.blazeAbilityBindings.get(playerId) ?? null;
   }
 
+  private getPhantomRuntimeAbilityBindings(playerId: string): PhantomAbilityBindings | null {
+    return this.phantomAbilityBindings.get(playerId) ?? null;
+  }
+
   private getBlazeAbilitySelection(playerId: string): HeroAbilitySelection {
     const bindings = this.getBlazeRuntimeAbilityBindings(playerId) ?? {
       ability1: HERO_DEFINITIONS.blaze.ability1.abilityId,
@@ -8439,6 +8476,10 @@ export class GameRoom extends Room<GameState> {
     player: Player,
     slot: 'ability1' | 'ability2' | 'ultimate'
   ): string | undefined {
+    if (player.heroId === 'phantom') {
+      const selection = this.getPhantomRuntimeAbilityBindings(player.id);
+      if (selection && slot !== 'ultimate') return selection[slot];
+    }
     if (player.heroId === 'blaze') {
       const selection = this.getBlazeAbilitySelection(player.id);
       return selection[slot];
@@ -8629,6 +8670,8 @@ export class GameRoom extends Room<GameState> {
       id: player.id,
       team: player.team as Team,
       heroId: player.heroId,
+      skinId: isHeroSkinId(player.skinId) ? player.skinId : undefined,
+      isBot: player.isBot,
       position: vec3SchemaToPlain(player.position),
       velocity: vec3SchemaToPlain(player.velocity),
       lookYaw: player.lookYaw,
@@ -8755,11 +8798,12 @@ export class GameRoom extends Room<GameState> {
       : ability.abilityId === 'chronos_timebreak'
         ? this.getAbilitySocketCastOrigin(player, 'chronos_timebreak')
         : startedAt;
+    const castId = this.abilityIds.nextSharedCastId(player.id, ability.abilityId);
     const standardPlan = buildStandardAbilityCastPlan({
       caster: this.getAbilityCasterSnapshot(player),
       abilityId: ability.abilityId,
       abilityDef: ability.abilityDef,
-      castId: this.abilityIds.nextSharedCastId(player.id, ability.abilityId),
+      castId,
       startedAt,
       abilityStartPosition,
       abilityActivatedAt: ability.abilityState.activatedAt,
@@ -8781,6 +8825,10 @@ export class GameRoom extends Room<GameState> {
         standardPlan.blazeGearstorm.usedAt,
         standardPlan.blazeGearstorm.duration
       );
+    }
+
+    if (ability.abilityId === 'phantom_umbral_decoy') {
+      this.startPhantomUmbralDecoy(player, usedAt, castId);
     }
 
     this.broadcastExactPlayerEvent('abilityUsed', player, standardPlan.payload);
@@ -10954,14 +11002,36 @@ export class GameRoom extends Room<GameState> {
     losCandidatePlayers.length = 0;
     losCandidateScores.length = 0;
     let budgetedLosCandidateCount = 0;
+    const perceptionNow = this.state.serverTime || Date.now();
     const candidates = this.getBotPerceptionCandidates(bot, frameContext);
     for (const enemy of candidates) {
       this.tickProfiler.recordCounter('bot_perception_candidates');
-      const distance = distance3D(bot.position, enemy.position);
+      const decoyPosition = this.getActivePhantomUmbralDecoyPosition(enemy.id, perceptionNow);
+      const distance = distance3D(bot.position, decoyPosition ?? enemy.position);
       if (distance > awarenessRange && !enemy.hasFlag) continue;
 
-      const veil = enemy.abilities.get('phantom_veil');
-      if (veil?.isActive && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) continue;
+      if (
+        this.isPhantomStealthed(enemy, perceptionNow) &&
+        !decoyPosition &&
+        !enemy.hasFlag &&
+        distance > BOT_CLOSE_REVEAL_RANGE
+      ) {
+        continue;
+      }
+
+      if (decoyPosition) {
+        if (distance <= BOT_PROXIMITY_VISIBLE_RANGE) {
+          visibleEnemyIds.add(enemy.id);
+          lineOfSightUnknownEnemyIds.add(enemy.id);
+        } else if (this.consumeBotLineOfSightFrameBudget(frameContext)) {
+          this.tickProfiler.recordCounter('bot_los_checks');
+          if (this.hasLineOfSight(this.getPlayerEyePosition(bot), decoyPosition)) {
+            visibleEnemyIds.add(enemy.id);
+            enemyLineOfSightIds.add(enemy.id);
+          }
+        }
+        continue;
+      }
 
       if (this.canBotPerceiveEnemyWithoutLineOfSight(enemy, distance)) {
         this.tickProfiler.recordCounter('bot_visible_enemies');
@@ -11402,6 +11472,33 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private startPhantomUmbralDecoy(player: Player, startedAt: number, castId: string): void {
+    const direction = calculateLookDirection(player.lookYaw, 0);
+    this.phantomUmbralDecoys.set(player.id, {
+      startPosition: vec3SchemaToPlain(player.position),
+      direction: { x: direction.x, y: 0, z: direction.z },
+      startedAt,
+      expiresAt: startedAt + PHANTOM_UMBRAL_DECOY_DURATION_SECONDS * 1000,
+      seed: getPhantomUmbralDecoySeed(castId),
+    });
+  }
+
+  private getActivePhantomUmbralDecoyPosition(ownerId: string, now: number): PlainVec3 | null {
+    const decoy = this.phantomUmbralDecoys.get(ownerId);
+    if (!decoy) return null;
+    if (decoy.expiresAt <= now) {
+      this.phantomUmbralDecoys.delete(ownerId);
+      return null;
+    }
+
+    return getPhantomUmbralDecoyPosition(
+      decoy.startPosition,
+      decoy.direction,
+      now - decoy.startedAt,
+      decoy.seed,
+    );
+  }
+
   private createBotInput(
     bot: Player,
     brain: BotBrain,
@@ -11457,9 +11554,16 @@ export class GameRoom extends Room<GameState> {
       : null;
     brain.targetId = combatTarget?.id || '';
 
-    const enemyDistance = combatTarget ? distance3D(bot.position, combatTarget.position) : Infinity;
+    const decoyPosition = combatTarget
+      ? this.getActivePhantomUmbralDecoyPosition(combatTarget.id, now)
+      : null;
+    const enemyDistance = decoyPosition
+      ? distance3D(bot.position, decoyPosition)
+      : combatTarget
+        ? distance3D(bot.position, combatTarget.position)
+        : Infinity;
     const aimPoint = combatTarget
-      ? getBotPredictedAimPoint({
+      ? decoyPosition ?? getBotPredictedAimPoint({
         sourcePosition: vec3SchemaToPlain(bot.position),
         targetPosition: this.getPlayerBodyAimPosition(combatTarget),
         targetVelocity: vec3SchemaToPlain(combatTarget.velocity),
@@ -11481,21 +11585,26 @@ export class GameRoom extends Room<GameState> {
     const attackRange = this.getBotAttackRange(bot);
     const primaryAimReady = Boolean(
       combatTarget
-      && this.isBotAimReady(
-        bot,
-        combatTarget,
-        getRoomAttackConfig({ heroId: bot.heroId as HeroId, mode: 'primary', chronosAscendantActive: false }),
-        skill,
-        aim.yaw,
-        aim.pitch
-      )
+      && (decoyPosition
+        ? Math.abs(Math.atan2(Math.sin(aim.yaw - desiredAim.yaw), Math.cos(aim.yaw - desiredAim.yaw))) < 0.12 &&
+          Math.abs(aim.pitch - desiredAim.pitch) < 0.1
+        : this.isBotAimReady(
+          bot,
+          combatTarget,
+          getRoomAttackConfig({ heroId: bot.heroId as HeroId, mode: 'primary', chronosAscendantActive: false }),
+          skill,
+          aim.yaw,
+          aim.pitch
+        ))
     );
     const { shouldFight, aimReady } = getBotCombatEngagementState({
       hasCombatTarget: Boolean(combatTarget),
       enemyDistance,
       attackRange,
       hasClearShot: combatTarget
-        ? this.hasCurrentBotTargetLineOfSight(bot, combatTarget, refreshedPerception, frameContext)
+        ? decoyPosition
+          ? this.hasLineOfSight(this.getPlayerEyePosition(bot), decoyPosition)
+          : this.hasCurrentBotTargetLineOfSight(bot, combatTarget, refreshedPerception, frameContext)
         : false,
       targetProtected: combatTarget ? this.isProtectedSpawnTarget(combatTarget, now) : false,
       primaryAimReady,
@@ -11655,13 +11764,18 @@ export class GameRoom extends Room<GameState> {
   private canBotPerceiveEnemy(enemy: Player, distance: number, hasLineOfSight: boolean): boolean {
     if (distance > resolveBotAwarenessRange(this.gameplayMode) && !enemy.hasFlag) return false;
 
-    const veil = enemy.abilities.get('phantom_veil');
-    if (veil?.isActive && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) {
+    if (this.isPhantomStealthed(enemy, Date.now()) && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) {
       return false;
     }
 
     if (this.canBotPerceiveEnemyWithoutLineOfSight(enemy, distance)) return true;
     return hasLineOfSight;
+  }
+
+  private isPhantomStealthed(player: Player, now: number): boolean {
+    if (player.abilities.get('phantom_veil')?.isActive) return true;
+    const decoy = player.abilities.get('phantom_umbral_decoy');
+    return isPhantomUmbralDecoyCloaked(decoy, now);
   }
 
   private canBotPerceiveEnemyWithoutLineOfSight(enemy: Player, distance: number): boolean {
@@ -11993,7 +12107,11 @@ export class GameRoom extends Room<GameState> {
     initializePlayerAbilities(
       player,
       heroId,
-      heroId === 'blaze' ? this.getBlazeAbilitySelection(player.id) : undefined
+      heroId === 'blaze'
+        ? this.getBlazeAbilitySelection(player.id)
+        : heroId === 'phantom'
+          ? this.getPhantomRuntimeAbilityBindings(player.id) ?? undefined
+          : undefined
     );
     this.syncMatchParticipant(player);
     this.syncReconnectParticipantFromPlayer(player);

@@ -18,6 +18,37 @@ export function isPhantomSecondarySkill(value: unknown): value is PhantomSeconda
   return typeof value === 'string' && PHANTOM_SECONDARY_SKILLS.includes(value as PhantomSecondarySkill);
 }
 
+export const PHANTOM_ABILITY_SKILLS = [
+  'phantom_blink',
+  'phantom_personal_shield',
+  'phantom_umbral_decoy',
+] as const;
+
+export type PhantomAbilitySkill = (typeof PHANTOM_ABILITY_SKILLS)[number];
+
+export interface PhantomAbilityBindings {
+  ability1: PhantomAbilitySkill;
+  ability2: PhantomAbilitySkill;
+}
+
+export function isPhantomAbilitySkill(value: unknown): value is PhantomAbilitySkill {
+  return typeof value === 'string' && PHANTOM_ABILITY_SKILLS.includes(value as PhantomAbilitySkill);
+}
+
+export function isPhantomAbilityBindings(value: unknown): value is PhantomAbilityBindings {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PhantomAbilityBindings>;
+  return (
+    isPhantomAbilitySkill(candidate.ability1) &&
+    isPhantomAbilitySkill(candidate.ability2) &&
+    candidate.ability1 !== candidate.ability2
+  );
+}
+
+export function hasPhantomUmbralDecoy(bindings: PhantomAbilityBindings): boolean {
+  return bindings.ability1 === 'phantom_umbral_decoy' || bindings.ability2 === 'phantom_umbral_decoy';
+}
+
 export const BLAZE_PRIMARY_SKILLS = ['fireball_rockets', 'scrapshot'] as const;
 
 export type BlazePrimarySkill = (typeof BLAZE_PRIMARY_SKILLS)[number];

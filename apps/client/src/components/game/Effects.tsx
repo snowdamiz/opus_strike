@@ -1,6 +1,13 @@
 import { useRef, useEffect, useLayoutEffect, useMemo, useState, type MutableRefObject } from 'react';
 import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  getPhantomUmbralDecoyCastSchedule,
+  getPhantomUmbralDecoyMotion,
+  getPhantomUmbralDecoySeed,
+  type HeroSkinId,
+  type Team,
+} from '@voxel-strike/shared';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 import {
   chronosOrbForwardFromYaw,
@@ -18,6 +25,9 @@ import {
 } from '../../movement/networkDiagnostics';
 import { useDeferredFrameCommit } from './systems/useDeferredFrameCommit';
 import { SHARED_GEOMETRIES } from './effectResources';
+import { HeroVoxelBody } from './HeroVoxelBody';
+import { getPlayerFeetY } from './playerWorldAnchors';
+import { playSharedSound } from '../../hooks/useAudio';
 
 export type ScrapshotImpactKind = 'miss' | 'terrain' | 'player' | 'aegis';
 export type ScrapshotEffectMode = 'prediction' | 'full' | 'impacts';
@@ -34,7 +44,7 @@ interface ScrapshotEffectImpact {
 
 interface Effect {
   id: string;
-  type: 'grapple' | 'scrapshot' | 'blink' | 'explosion' | 'hit' | 'lifeline' | 'heal' | 'chronosSelfHealPulse' | 'chronosAegisBreak';
+  type: 'grapple' | 'scrapshot' | 'blink' | 'explosion' | 'hit' | 'lifeline' | 'heal' | 'chronosSelfHealPulse' | 'chronosAegisBreak' | 'umbralDecoy';
   position: THREE.Vector3;
   direction?: THREE.Vector3;
   endPosition?: THREE.Vector3;
@@ -44,6 +54,11 @@ interface Effect {
   sourcePlayerId?: string;
   startTime: number;
   duration: number;
+  ownerTeam?: Team;
+  ownerSkinId?: HeroSkinId | string | null;
+  ownerIsBot?: boolean;
+  decoySeed?: number;
+  decoyAgeOffsetMs?: number;
 }
 
 // Global effect manager
@@ -522,6 +537,29 @@ export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
   });
 }
 
+export function addUmbralDecoyEffect(input: {
+  position: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+  durationMs: number;
+  ownerTeam: Team;
+  ownerSkinId?: HeroSkinId | string | null;
+  ownerIsBot?: boolean;
+  castId: string;
+  ageOffsetMs?: number;
+}): void {
+  addEffect({
+    type: 'umbralDecoy',
+    position: new THREE.Vector3(input.position.x, input.position.y, input.position.z),
+    direction: new THREE.Vector3(input.direction.x, 0, input.direction.z),
+    duration: input.durationMs,
+    ownerTeam: input.ownerTeam,
+    ownerSkinId: input.ownerSkinId,
+    ownerIsBot: input.ownerIsBot,
+    decoySeed: getPhantomUmbralDecoySeed(input.castId),
+    decoyAgeOffsetMs: input.ageOffsetMs,
+  });
+}
+
 export function addEffects(newEffects: readonly Omit<Effect, 'id' | 'startTime'>[]): void {
   if (newEffects.length === 0) return;
 
@@ -650,6 +688,8 @@ export function Effects() {
             return <ChronosSelfHealPulseEffect key={effect.id} effect={effect} />;
           case 'chronosAegisBreak':
             return <ChronosAegisBreakEffect key={effect.id} effect={effect} />;
+          case 'umbralDecoy':
+            return <UmbralDecoyEffect key={effect.id} effect={effect} />;
           default:
             return null;
         }
@@ -660,6 +700,206 @@ export function Effects() {
 
 interface EffectProps {
   effect: Effect;
+}
+
+function UmbralDecoyEffect({ effect }: EffectProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const bodyOpacityRef = useRef(1);
+  const isAttackingRef = useRef(false);
+  const attackStartedAtMsRef = useRef<number | null>(null);
+  const attackSideRef = useRef<-1 | 1>(1);
+  const shieldRef = useRef<THREE.Mesh>(null);
+  const blinkStartRef = useRef<THREE.Mesh>(null);
+  const blinkEndRef = useRef<THREE.Mesh>(null);
+  const projectileRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const playedCastSoundsRef = useRef([false, false, false, false]);
+  const direction = useMemo(() => {
+    const horizontal = (effect.direction ?? new THREE.Vector3(0, 0, -1)).clone();
+    horizontal.y = 0;
+    return horizontal.lengthSq() > 0.0001 ? horizontal.normalize() : new THREE.Vector3(0, 0, -1);
+  }, [effect.direction]);
+  const seed = effect.decoySeed ?? 0;
+  const schedule = useMemo(() => getPhantomUmbralDecoyCastSchedule(seed), [seed]);
+  const shieldMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: 0x8b5cf6,
+    transparent: true,
+    opacity: 0,
+    wireframe: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }), []);
+  const blinkMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: 0xa78bfa,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }), []);
+  const projectileMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: 0x9f7aea,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }), []);
+
+  useEffect(() => () => {
+    shieldMaterial.dispose();
+    blinkMaterial.dispose();
+    projectileMaterial.dispose();
+  }, [blinkMaterial, projectileMaterial, shieldMaterial]);
+
+  useGlobalEffectUpdater(effect.id, () => {
+    const group = groupRef.current;
+    if (!group) return;
+    const elapsedMs = Math.max(
+      0,
+      getFrameClock().epochNowMs - effect.startTime + (effect.decoyAgeOffsetMs ?? 0),
+    );
+    const motion = getPhantomUmbralDecoyMotion(
+      effect.position,
+      direction,
+      Math.min(effect.duration, elapsedMs),
+      seed,
+    );
+    group.position.set(motion.position.x, getPlayerFeetY(motion.position.y), motion.position.z);
+    group.rotation.y = motion.yaw;
+    const fadeStartMs = Math.max(0, effect.duration - 450);
+    bodyOpacityRef.current = elapsedMs <= fadeStartMs
+      ? 1
+      : Math.max(0, 1 - (elapsedMs - fadeStartMs) / Math.max(1, effect.duration - fadeStartMs));
+
+    const activePrimaryIndex = schedule.primaryCastTimesMs.findIndex((castTime) => (
+      elapsedMs >= castTime && elapsedMs < castTime + 260
+    ));
+    isAttackingRef.current = activePrimaryIndex >= 0;
+    attackStartedAtMsRef.current = activePrimaryIndex >= 0
+      ? effect.startTime + schedule.primaryCastTimesMs[activePrimaryIndex]
+      : null;
+    attackSideRef.current = activePrimaryIndex === 1 ? -1 : 1;
+
+    const shieldAge = elapsedMs - schedule.shieldCastTimeMs;
+    if (shieldRef.current) {
+      shieldRef.current.visible = shieldAge >= 0 && shieldAge < 620;
+      shieldRef.current.scale.setScalar(0.65 + THREE.MathUtils.smoothstep(shieldAge, 0, 300) * 0.55);
+      shieldMaterial.opacity = shieldRef.current.visible
+        ? 0.3 * (1 - THREE.MathUtils.smoothstep(shieldAge, 360, 620))
+        : 0;
+    }
+
+    const blinkAge = elapsedMs - schedule.blinkCastTimeMs;
+    const blinkVisible = blinkAge >= -90 && blinkAge < 420;
+    const blinkBefore = getPhantomUmbralDecoyMotion(effect.position, direction, Math.max(0, schedule.blinkCastTimeMs - 1), seed);
+    const blinkAfter = getPhantomUmbralDecoyMotion(effect.position, direction, schedule.blinkCastTimeMs + 1, seed);
+    for (const [mesh, blinkMotion] of [
+      [blinkStartRef.current, blinkBefore],
+      [blinkEndRef.current, blinkAfter],
+    ] as const) {
+      if (!mesh) continue;
+      mesh.visible = blinkVisible;
+      mesh.position.set(blinkMotion.position.x, getPlayerFeetY(blinkMotion.position.y) + 0.06, blinkMotion.position.z);
+      mesh.scale.setScalar(1 + Math.max(0, blinkAge) / 260);
+    }
+    blinkMaterial.opacity = blinkVisible
+      ? 0.78 * (1 - THREE.MathUtils.smoothstep(blinkAge, 100, 420))
+      : 0;
+
+    schedule.primaryCastTimesMs.forEach((castTime, index) => {
+      const projectile = projectileRefs.current[index];
+      if (!projectile) return;
+      const projectileAge = elapsedMs - castTime;
+      projectile.visible = projectileAge >= 0 && projectileAge < 720;
+      if (!projectile.visible) return;
+      const castMotion = getPhantomUmbralDecoyMotion(effect.position, direction, castTime, seed);
+      const castForwardX = -Math.sin(castMotion.yaw);
+      const castForwardZ = -Math.cos(castMotion.yaw);
+      const travel = projectileAge / 1000 * 20;
+      projectile.position.set(
+        castMotion.position.x + castForwardX * travel,
+        castMotion.position.y + 0.95,
+        castMotion.position.z + castForwardZ * travel,
+      );
+      const projectileFade = 1 - THREE.MathUtils.smoothstep(projectileAge, 540, 720);
+      projectile.scale.setScalar((0.18 + Math.sin(projectileAge * 0.025) * 0.025) * projectileFade);
+    });
+
+    const soundSchedule = [
+      schedule.primaryCastTimesMs[0],
+      schedule.shieldCastTimeMs,
+      schedule.blinkCastTimeMs,
+      schedule.primaryCastTimesMs[1],
+    ];
+    soundSchedule.forEach((castTime, index) => {
+      if (playedCastSoundsRef.current[index] || elapsedMs < castTime) return;
+      playedCastSoundsRef.current[index] = true;
+      const soundMotion = getPhantomUmbralDecoyMotion(effect.position, direction, castTime, seed);
+      const position = soundMotion.position;
+      const soundId = index === 1 ? 'phantomShieldCast' : index === 2 ? 'phantomBlink' : 'phantomBasic';
+      void playSharedSound(soundId, { position, volume: index === 1 ? 0.72 : 0.62 });
+    });
+  });
+
+  return (
+    <>
+      <group
+        ref={groupRef}
+        position={[effect.position.x, getPlayerFeetY(effect.position.y), effect.position.z]}
+      >
+        <HeroVoxelBody
+          heroId="phantom"
+          skinId={effect.ownerSkinId}
+          team={effect.ownerTeam ?? 'red'}
+          height={1.8}
+          isBot={effect.ownerIsBot}
+          isMoving
+          isAttackingRef={isAttackingRef}
+          attackStartedAtMsRef={attackStartedAtMsRef}
+          attackSideRef={attackSideRef}
+          movementPose="run"
+          bodyOpacity={1}
+          bodyOpacityRef={bodyOpacityRef}
+          castShadow
+          showTeamAccents
+        />
+        <mesh
+          ref={shieldRef}
+          geometry={SHARED_GEOMETRIES.sphere16}
+          material={shieldMaterial}
+          position={[0, 0.9, 0]}
+          visible={false}
+        />
+      </group>
+      <mesh
+        ref={blinkStartRef}
+        geometry={SHARED_GEOMETRIES.ring24}
+        material={blinkMaterial}
+        rotation={[-Math.PI / 2, 0, 0]}
+        visible={false}
+      />
+      <mesh
+        ref={blinkEndRef}
+        geometry={SHARED_GEOMETRIES.ring24}
+        material={blinkMaterial}
+        rotation={[-Math.PI / 2, 0, 0]}
+        visible={false}
+      />
+      {schedule.primaryCastTimesMs.map((castTime, index) => (
+        <mesh
+          key={castTime}
+          ref={(node) => {
+            projectileRefs.current[index] = node;
+          }}
+          geometry={SHARED_GEOMETRIES.sphere12}
+          material={projectileMaterial}
+          visible={false}
+        />
+      ))}
+    </>
+  );
 }
 
 function GrappleLine({ effect }: EffectProps) {

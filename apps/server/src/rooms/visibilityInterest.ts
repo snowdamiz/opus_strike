@@ -1,5 +1,10 @@
 import { performance } from 'node:perf_hooks';
-import { canReceiveLiveTransform, type PlayerVisibilityState, type Vec3 } from '@voxel-strike/shared';
+import {
+  canReceiveLiveTransform,
+  isPhantomUmbralDecoyCloaked,
+  type PlayerVisibilityState,
+  type Vec3,
+} from '@voxel-strike/shared';
 
 export type InterestPrecision = 'full' | 'coarse' | 'none';
 
@@ -26,7 +31,7 @@ export interface VisibilityInterestPlayer {
   abilities?: AbilityCollection;
 }
 
-type AbilityInterestState = { abilityId?: string; isActive?: boolean };
+type AbilityInterestState = { abilityId?: string; isActive?: boolean; activatedAt?: number };
 type AbilityCollection = Iterable<AbilityInterestState> | { values(): Iterable<AbilityInterestState> };
 
 export interface RecipientInterestDecision {
@@ -132,21 +137,23 @@ function distanceSq2D(a: Vec3, b: Vec3): number {
   return dx * dx + dz * dz;
 }
 
-function isActiveStealthAbility(ability: { abilityId?: string; isActive?: boolean }): boolean {
-  return ability.isActive === true && ability.abilityId === 'phantom_veil';
+function isActiveStealthAbility(ability: AbilityInterestState, now: number): boolean {
+  if (ability.isActive !== true) return false;
+  if (ability.abilityId === 'phantom_veil') return true;
+  return ability.abilityId === 'phantom_umbral_decoy' && isPhantomUmbralDecoyCloaked(ability, now);
 }
 
 function hasAbilityValues(collection: AbilityCollection): collection is { values(): Iterable<AbilityInterestState> } {
   return typeof (collection as { values?: unknown }).values === 'function';
 }
 
-function hasStealthActive(player: VisibilityInterestPlayer): boolean {
+function hasStealthActive(player: VisibilityInterestPlayer, now: number): boolean {
   if (!player.abilities) return false;
   const abilities = hasAbilityValues(player.abilities)
     ? player.abilities.values()
     : player.abilities;
   for (const ability of abilities) {
-    if (isActiveStealthAbility(ability)) return true;
+    if (isActiveStealthAbility(ability, now)) return true;
   }
   return false;
 }
@@ -300,7 +307,7 @@ export class VisibilityInterestManager {
       return this.visibleDecision(recipient.id, target.id, context.now, 'proximity', target.position, previous);
     }
 
-    const stealthActive = hasStealthActive(target);
+    const stealthActive = hasStealthActive(target, context.now);
     if (stealthActive) {
       return this.hiddenOrLastKnownDecision(recipient.id, target.id, context.now, 'stealth', previous);
     }
