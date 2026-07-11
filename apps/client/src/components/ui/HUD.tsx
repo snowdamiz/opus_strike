@@ -1702,6 +1702,7 @@ function ChronosLifelineHelper() {
 
 export function HUD() {
   const phantomPrimarySkill = useLoadoutStore((state) => state.phantomPrimarySkill);
+  const phantomSecondarySkill = useLoadoutStore((state) => state.phantomSecondarySkill);
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
   const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
   const blazeUltimateSkill = useLoadoutStore((state) => state.blazeUltimateSkill);
@@ -1928,6 +1929,7 @@ export function HUD() {
       blazeSecondarySkill,
       blazeUltimateSkill,
       phantomPrimarySkill,
+      phantomSecondarySkill,
     )
     : [];
   const skillAccent = localHeroId ? HUD_HERO_COLORS[localHeroId].primary : HUD_HERO_COLORS.blaze.primary;

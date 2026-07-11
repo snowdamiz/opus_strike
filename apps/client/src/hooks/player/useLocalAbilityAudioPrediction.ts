@@ -14,6 +14,7 @@ import {
   getBlazeUltimateAbilityId,
   getPhantomPrimaryAbilityId,
   type PhantomPrimarySkill,
+  type PhantomSecondarySkill,
 } from '@voxel-strike/shared';
 import { playSharedBlazeAirstrikeSound, playSharedSound } from '../useAudio';
 import { resolveRuntimeHeroAbilityBindings, useLoadoutStore } from '../../store/loadoutStore';
@@ -67,6 +68,7 @@ export interface LocalAbilityAudioPredictionFrame {
   phantomPrimaryAmmo: number;
   phantomPrimaryReloading: boolean;
   phantomPrimarySkill: PhantomPrimarySkill;
+  phantomSecondarySkill: PhantomSecondarySkill;
   blazePrimaryAmmo: number;
   blazePrimaryReloading: boolean;
   blazePrimarySkill: BlazePrimarySkill;
@@ -269,6 +271,7 @@ export function useLocalAbilityAudioPrediction() {
       phantomPrimaryAmmo,
       phantomPrimaryReloading,
       phantomPrimarySkill,
+      phantomSecondarySkill,
       blazePrimaryAmmo,
       blazePrimaryReloading,
       blazePrimarySkill,
@@ -400,6 +403,7 @@ export function useLocalAbilityAudioPrediction() {
     if (inputState.secondaryFire && !previousInput.secondaryFire) {
       if (
         heroId === 'phantom' &&
+        phantomSecondarySkill === 'void_ray' &&
         !phantomReloadBlocksNonBlinkCasts &&
         now - lastPhantomVoidRayAtRef.current >= PHANTOM_VOID_RAY_COOLDOWN_MS / tempoMultiplier
       ) {
@@ -414,7 +418,12 @@ export function useLocalAbilityAudioPrediction() {
       }
     }
 
-    if (!inputState.secondaryFire && previousInput.secondaryFire && heroId === 'phantom') {
+    if (
+      !inputState.secondaryFire &&
+      previousInput.secondaryFire &&
+      heroId === 'phantom' &&
+      phantomSecondarySkill === 'void_ray'
+    ) {
       const chargeStartedAt = phantomVoidRayChargeStartedAtRef.current;
       const charged = chargeStartedAt > 0 && now - chargeStartedAt >= VOID_RAY_CHARGE_TIME / tempoMultiplier;
       stopPredictedPhantomVoidRayCharge();

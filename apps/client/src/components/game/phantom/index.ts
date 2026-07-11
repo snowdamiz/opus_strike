@@ -6,6 +6,7 @@ export { BLINK_EFFECT_DURATION } from './materials';
 
 // Phantom abilities
 export { VoidRay, VoidRays, VoidRaysManager } from './voidRay';
+export { RiftBoltsManager } from './riftBolt';
 export { VoidZone, VoidZones, VoidZonesManager } from './voidZone';
 export { DireBallsManager, prewarmDireBallResources } from './direBall';
 export { PhantomPersonalShieldsManager, triggerPhantomShieldBreakEffect, triggerPhantomShieldCastEffect } from './personalShield';

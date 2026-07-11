@@ -8,6 +8,16 @@ export function isPhantomPrimarySkill(value: unknown): value is PhantomPrimarySk
   return typeof value === 'string' && PHANTOM_PRIMARY_SKILLS.includes(value as PhantomPrimarySkill);
 }
 
+export const PHANTOM_SECONDARY_SKILLS = ['void_ray', 'rift_bolt'] as const;
+
+export type PhantomSecondarySkill = (typeof PHANTOM_SECONDARY_SKILLS)[number];
+
+export const DEFAULT_PHANTOM_SECONDARY_SKILL: PhantomSecondarySkill = 'void_ray';
+
+export function isPhantomSecondarySkill(value: unknown): value is PhantomSecondarySkill {
+  return typeof value === 'string' && PHANTOM_SECONDARY_SKILLS.includes(value as PhantomSecondarySkill);
+}
+
 export const BLAZE_PRIMARY_SKILLS = ['fireball_rockets', 'scrapshot'] as const;
 
 export type BlazePrimarySkill = (typeof BLAZE_PRIMARY_SKILLS)[number];

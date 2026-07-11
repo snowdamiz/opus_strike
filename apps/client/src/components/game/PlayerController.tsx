@@ -190,6 +190,7 @@ import {
   setLocalBlazePhoenixDiving,
   setLocalBlazePhoenixHovering,
   predictLocalPhantomBlink,
+  predictLocalRiftBoltTeleport,
   stepLocalMovementPrediction,
   suppressDownedMovementInput,
 } from '../../movement/localPrediction';
@@ -1959,6 +1960,13 @@ export function runInputPhase(
   const requestedCommandScheduleReasons: CommandScheduleReason[] = [];
   const movementBarrierInputPressed = (
     (heroId === 'phantom' && frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
+    (
+      heroId === 'phantom' &&
+      useLoadoutStore.getState().phantomSecondarySkill === 'rift_bolt' &&
+      frameInput.secondaryFire &&
+      !previousHoldInput.secondaryFire &&
+      useGameStore.getState().riftBolts.some((bolt) => bolt.ownerId === localPlayer.id)
+    ) ||
     (heroId === 'blaze' && (
       (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
       (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2)
@@ -2740,6 +2748,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const pingKeybinding = useSettingsStore(state => state.settings.keybindings.ping);
   const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
   const phantomPrimarySkill = useLoadoutStore(state => state.phantomPrimarySkill);
+  const phantomSecondarySkill = useLoadoutStore(state => state.phantomSecondarySkill);
   const blazeSecondarySkill = useLoadoutStore(state => state.blazeSecondarySkill);
   const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
 
@@ -2758,7 +2767,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
   const abilitySystem = useAbilitySystem();
 
   // Hero ability hooks
-  const phantomAbilities = usePhantomAbilities(phantomPrimarySkill);
+  const phantomAbilities = usePhantomAbilities(phantomPrimarySkill, phantomSecondarySkill);
   const blazeAbilities = useBlazeAbilities(blazePrimarySkill, blazeSecondarySkill);
   const hookshotAbilities = useHookshotAbilities();
   const chronosAbilities = useChronosAbilities();
@@ -3783,6 +3792,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       soundFrameArg.blazePrimaryReloading = blazePrimaryReloading;
       soundFrameArg.blazePrimarySkill = blazePrimarySkill;
       soundFrameArg.phantomPrimarySkill = phantomPrimarySkill;
+      soundFrameArg.phantomSecondarySkill = phantomSecondarySkill;
       soundFrameArg.chronosPrimaryAmmo = chronosAbilities.chronosPrimaryAmmoRef.current;
       soundFrameArg.chronosPrimaryReloading = chronosAbilities.chronosPrimaryReloadingRef.current;
       soundFrameArg.canUseAbility = abilitySystem.canUseAbility;
@@ -4179,7 +4189,14 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
 
       // Hero-specific primary/secondary fire and hold abilities
       if (heroId === 'phantom') {
-        phantomAbilities.handleVoidRay(abilityCtx, playerSounds);
+        const riftBoltTeleportTarget = phantomAbilities.handleSecondaryFire(abilityCtx, playerSounds);
+        if (riftBoltTeleportTarget && isPracticeMode) {
+          const startPosition = { x: position.x, y: position.y, z: position.z };
+          const nextState = predictLocalRiftBoltTeleport(localPlayer, riftBoltTeleportTarget);
+          applyPracticePredictedState(nextState);
+          triggerBlinkEffect(startPosition, nextState.position);
+          triggerTeleportEffect('blink');
+        }
       }
 
       if (heroId === 'blaze') {

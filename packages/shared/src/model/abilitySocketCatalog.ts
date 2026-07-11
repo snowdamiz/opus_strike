@@ -86,6 +86,14 @@ export const ABILITY_SOCKET_CATALOG = {
     socketNames: [PHANTOM_VOID_RAY_ORB_SOCKET_NAME],
     fallbackOffset: PHANTOM_VOID_RAY_SOCKET,
   },
+  phantom_rift_bolt: {
+    abilityId: 'phantom_rift_bolt',
+    heroId: 'phantom',
+    socketRole: 'voidRayOrb',
+    sideMode: 'center',
+    socketNames: [PHANTOM_VOID_RAY_ORB_SOCKET_NAME],
+    fallbackOffset: PHANTOM_VOID_RAY_SOCKET,
+  },
   phantom_personal_shield: {
     abilityId: 'phantom_personal_shield',
     heroId: 'phantom',

@@ -103,6 +103,7 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
     },
     secondaryFire: {
       key: 'riftbolt',
+      abilityId: 'phantom_rift_bolt',
       iconType: 'riftbolt',
       input: 'RMB',
       cooldown: 6,
@@ -333,7 +334,10 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     isPlaceholder: false,
     tagline: def.tagline,
     rarity: 'epic',
-    ownership: (heroId === 'phantom' && slot.key === 'primaryFire' && def.key === 'soulrend') ||
+    ownership: (heroId === 'phantom' && (
+      (slot.key === 'primaryFire' && def.key === 'soulrend') ||
+      (slot.key === 'secondaryFire' && def.key === 'riftbolt')
+    )) ||
       (heroId === 'blaze' && (
       (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
       (slot.key === 'secondaryFire' && def.key === 'phosphorflare') ||
@@ -380,6 +384,7 @@ export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
 
 export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
 export const PHANTOM_SOULREND_OPTION_ID = 'phantom-primaryFire-soulrend';
+export const PHANTOM_RIFT_BOLT_OPTION_ID = 'phantom-secondaryFire-riftbolt';
 export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
 export const BLAZE_AFTERBURNER_OPTION_ID = 'blaze-ability1-afterburner';
 export const BLAZE_PHOENIX_DIVE_OPTION_ID = 'blaze-ultimate-phoenixdive';

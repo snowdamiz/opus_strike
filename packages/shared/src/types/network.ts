@@ -4,7 +4,7 @@ import type { HeroSkinId } from './skins.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
-import type { BlazeAbilityBindings, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, PhantomPrimarySkill } from './loadout.js';
+import type { BlazeAbilityBindings, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, PhantomPrimarySkill, PhantomSecondarySkill } from './loadout.js';
 import type { MovementCommandPacket, SelfMovementAck, SelfMovementAuthority } from './movementPrediction.js';
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
@@ -21,6 +21,7 @@ export type ClientMessage =
   | { type: 'mapPing'; payload: MapPingRequestMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'setPhantomPrimarySkill'; payload: { skill: PhantomPrimarySkill } }
+  | { type: 'setPhantomSecondarySkill'; payload: { skill: PhantomSecondarySkill } }
   | { type: 'setBlazePrimarySkill'; payload: { skill: BlazePrimarySkill } }
   | { type: 'setBlazeSecondarySkill'; payload: { skill: BlazeSecondarySkill } }
   | { type: 'setBlazeUltimateSkill'; payload: { skill: BlazeUltimateSkill } }
@@ -149,6 +150,7 @@ export interface AbilityUsedMessage {
   trailStartPosition?: Vec3;
   dashDurationMs?: number;
   phase?: 'launch' | 'hover' | 'dive' | 'impact';
+  expiresAt?: number;
 }
 
 export interface MapPingRequestMessage {

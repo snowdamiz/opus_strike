@@ -22,7 +22,7 @@ import { TutorialTargetRange } from './TutorialTargetRange';
 import { DevTestingMapRuntime } from './DevTestingMapRuntime';
 import { Effects } from './Effects';
 import { HeroViewmodel } from './HeroViewmodel';
-import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShieldsManager } from './phantom';
+import { VoidZonesManager, DireBallsManager, VoidRaysManager, RiftBoltsManager, PhantomPersonalShieldsManager } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { ObservedAbilityCastEffectsManager } from './ObservedAbilityCastEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
@@ -1548,6 +1548,7 @@ export function GameCanvas({
             <DireBallsManager />
             <PhantomPersonalShieldsManager />
             <VoidRaysManager />
+            <RiftBoltsManager />
             <PhantomEffectsManager />
             <ObservedAbilityCastEffectsManager
               maxVisibleEffects={effectiveEffectsConfig.maxVisibleRemoteAbilityEffects}

@@ -423,6 +423,7 @@ export function MobileControls({
   const layoutEditing = useSettingsStore(state => state.settings.mobileHudLayoutEditing);
   const blazePrimarySkill = useLoadoutStore(state => state.blazePrimarySkill);
   const phantomPrimarySkill = useLoadoutStore(state => state.phantomPrimarySkill);
+  const phantomSecondarySkill = useLoadoutStore(state => state.phantomSecondarySkill);
   const blazeSecondarySkill = useLoadoutStore(state => state.blazeSecondarySkill);
   const blazeUltimateSkill = useLoadoutStore(state => state.blazeUltimateSkill);
   const heroAbilityBindings = useLoadoutStore(state => state.heroAbilityBindings);
@@ -440,9 +441,10 @@ export function MobileControls({
         blazeSecondarySkill,
         blazeUltimateSkill,
         phantomPrimarySkill,
+        phantomSecondarySkill,
       )
       : []),
-    [blazePrimarySkill, blazeSecondarySkill, blazeUltimateSkill, heroAbilityBindings, heroId, phantomPrimarySkill]
+    [blazePrimarySkill, blazeSecondarySkill, blazeUltimateSkill, heroAbilityBindings, heroId, phantomPrimarySkill, phantomSecondarySkill]
   );
   const primarySkill = getSkillByInput(skillItems, 'LMB');
   const secondarySkill = getSkillByInput(skillItems, 'RMB');

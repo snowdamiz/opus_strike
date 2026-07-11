@@ -457,6 +457,7 @@ export function setupGameRoomListeners<TRoom extends GameMessageBus>(
   room.onMessage('playerLeft', measureNetworkMessage('playerLeft', (data: { playerId: string }) => {
     loggers.network.debug('player left', data.playerId);
     stopRemotePhantomCharge(data.playerId);
+    useGameStore.getState().removeRiftBoltsByOwner(data.playerId);
     forgetPlayerNetId(data.playerId);
     removePlayer(data.playerId);
   }));

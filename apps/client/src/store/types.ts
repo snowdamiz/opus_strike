@@ -198,6 +198,18 @@ export interface VoidRayData {
   ownerTeam: Team;
 }
 
+export interface RiftBoltData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
+  startTime: number;
+  expiresAt: number;
+  ownerId: string;
+  ownerTeam: Team;
+}
+
 // ============================================================================
 // BLAZE PROJECTILE TYPES
 // ============================================================================

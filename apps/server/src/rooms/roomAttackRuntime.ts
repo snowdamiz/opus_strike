@@ -34,6 +34,10 @@ import {
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_DAMAGE,
+  PHANTOM_RIFT_BOLT_MAX_DISTANCE,
   PHANTOM_SOULREND_COLLISION_RADIUS,
   PHANTOM_SOULREND_DAMAGE,
   PHANTOM_SOULREND_RICOCHET_RADIUS,
@@ -44,6 +48,7 @@ import {
   type BlazeSecondarySkill,
   type HeroId,
   type PhantomPrimarySkill,
+  type PhantomSecondarySkill,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
 
@@ -71,6 +76,7 @@ export type AttackCastKind =
   | 'phantom_dire_ball'
   | 'phantom_soulrend_daggers'
   | 'phantom_void_ray'
+  | 'phantom_rift_bolt'
   | 'hookshot_basic_attack'
   | 'hookshot_heavy_attack'
   | 'chronos_verdant_pulse';
@@ -140,6 +146,15 @@ export const PHANTOM_SOULREND_ATTACK: AttackConfig = {
   damageType: 'soulrend_daggers',
 };
 
+export const PHANTOM_RIFT_BOLT_ATTACK: AttackConfig = {
+  damage: PHANTOM_RIFT_BOLT_DAMAGE,
+  range: PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+  cooldownMs: PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  coneDot: 1,
+  collisionRadius: PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  damageType: 'rift_bolt',
+};
+
 export const BLAZE_PHOSPHOR_FLARE_ATTACK: AttackConfig = {
   damage: BLAZE_PHOSPHOR_FLARE_DAMAGE,
   range: BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
@@ -196,11 +211,15 @@ export function getRoomAttackConfig(input: {
   mode: AttackMode;
   chronosAscendantActive: boolean;
   phantomPrimarySkill?: PhantomPrimarySkill;
+  phantomSecondarySkill?: PhantomSecondarySkill;
   blazePrimarySkill?: BlazePrimarySkill;
   blazeSecondarySkill?: BlazeSecondarySkill;
 }): AttackConfig | null {
   if (input.heroId === 'phantom' && input.mode === 'primary' && input.phantomPrimarySkill === 'soulrend_daggers') {
     return PHANTOM_SOULREND_ATTACK;
+  }
+  if (input.heroId === 'phantom' && input.mode === 'secondary' && input.phantomSecondarySkill === 'rift_bolt') {
+    return PHANTOM_RIFT_BOLT_ATTACK;
   }
   if (input.heroId === 'blaze' && input.mode === 'primary' && input.blazePrimarySkill === 'scrapshot') {
     return BLAZE_SCRAPSHOT_ATTACK;
@@ -276,6 +295,8 @@ export function getChronosAegisCollisionRadiusForAttack(attack: Pick<AttackConfi
       return PHANTOM_DIRE_BALL_COLLISION_RADIUS;
     case 'soulrend_daggers':
       return PHANTOM_SOULREND_COLLISION_RADIUS;
+    case 'rift_bolt':
+      return PHANTOM_RIFT_BOLT_COLLISION_RADIUS;
     case 'rocket':
       return BLAZE_ROCKET_COLLISION_RADIUS;
     case 'scrapshot':
@@ -309,12 +330,17 @@ export function getAttackCastKind(input: {
   heroId: HeroId;
   mode: AttackMode;
   phantomPrimarySkill?: PhantomPrimarySkill;
+  phantomSecondarySkill?: PhantomSecondarySkill;
 }): AttackCastKind | null {
   if (input.heroId === 'phantom') {
     if (input.mode === 'primary' && input.phantomPrimarySkill === 'soulrend_daggers') {
       return 'phantom_soulrend_daggers';
     }
-    return input.mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray';
+    return input.mode === 'primary'
+      ? 'phantom_dire_ball'
+      : input.phantomSecondarySkill === 'rift_bolt'
+        ? 'phantom_rift_bolt'
+        : 'phantom_void_ray';
   }
   if (input.heroId === 'hookshot') {
     return input.mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack';

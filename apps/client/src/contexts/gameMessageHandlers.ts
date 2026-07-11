@@ -22,6 +22,8 @@ import {
   isMatchPerspective,
   normalizeVoxelMapSizeId,
   PHANTOM_SOULREND_SPEED,
+  PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_LIFETIME_MS,
   type PublicRankSnapshot,
 } from '@voxel-strike/shared';
 import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
@@ -62,6 +64,7 @@ import {
 } from '../movement/networkDiagnostics';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect, addScrapshotEffects } from '../components/game/Effects';
+import { triggerTerrainImpact } from '../components/game/TerrainImpactEffects';
 import {
   triggerAfterburnerTrail,
   triggerAirStrike,
@@ -1893,13 +1896,14 @@ export function stopRemotePhantomCharge(playerId: string): void {
 function playPhantomWorldSound(
   sound: SoundName,
   position: { x: number; y: number; z: number } | undefined,
-  options: { durationMs?: number; signal?: AbortSignal; volume?: number } = {}
+  options: { durationMs?: number; signal?: AbortSignal; volume?: number; pitch?: number } = {}
 ): void {
   void playSharedSound(sound, {
     position,
     durationMs: options.durationMs,
     signal: options.signal,
     volume: options.volume,
+    pitch: options.pitch,
   });
 }
 
@@ -2206,6 +2210,31 @@ function applyLocalPhantomBlinkConfirmation(
   }, localPlayer.lookYaw);
 }
 
+function applyLocalRiftBoltTeleportConfirmation(
+  data: AbilityUsedMessage,
+  destination: { x: number; y: number; z: number },
+): void {
+  const store = useGameStore.getState();
+  const localPlayer = store.localPlayer;
+  if (!localPlayer || data.playerId !== (localPlayer.id ?? store.playerId)) return;
+  const velocity = { x: 0, y: 0, z: 0 };
+  const movement = {
+    ...localPlayer.movement,
+    isGrounded: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+    isWallRunning: false,
+    wallRunSide: null,
+  };
+
+  store.updateLocalPlayer({ position: destination, velocity, movement });
+  confirmLocalMovementTransform(localPlayer, {
+    position: destination,
+    velocity,
+    movement,
+  }, localPlayer.lookYaw);
+}
+
 function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: string | null): boolean {
   const store = useGameStore.getState();
   const isLocalPlayer = data.playerId === localPlayerId;
@@ -2356,6 +2385,81 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_void_ray')) {
         playPhantomWorldSound('phantomVoidRay', startPosition);
+      }
+      return true;
+    }
+
+    case 'phantom_rift_bolt': {
+      const startPosition = resolveObservedStartPosition(data, localPlayerId, fallbackStartPosition);
+      if (!startPosition) return true;
+      const direction = normalizeAimDirection(data);
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('phantom_rift_bolt', data.playerId)
+        : null;
+      const now = Date.now();
+      if (isLocalPlayer) {
+        store.setClientCooldown('phantom_rift_bolt', now + PHANTOM_RIFT_BOLT_COOLDOWN_MS);
+      }
+      triggerObservedRemoteAttack(data, localPlayerId);
+      if (predictedVisualId) {
+        store.updateRiftBolt(predictedVisualId, {
+          startPosition,
+          direction,
+          startTime: now,
+          expiresAt: now + Math.max(0, (data.expiresAt ?? (data.serverTime ?? now) + PHANTOM_RIFT_BOLT_LIFETIME_MS) - (data.serverTime ?? now)),
+        });
+      } else {
+        store.addRiftBolt({
+          id: castId,
+          startPosition,
+          direction,
+          startTime: now,
+          expiresAt: now + Math.max(0, (data.expiresAt ?? (data.serverTime ?? now) + PHANTOM_RIFT_BOLT_LIFETIME_MS) - (data.serverTime ?? now)),
+          ownerId: data.playerId,
+          ownerTeam,
+        });
+      }
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_rift_bolt')) {
+        playPhantomWorldSound('phantomVoidRay', startPosition, { pitch: 1.28, volume: 0.72 });
+      }
+      return true;
+    }
+
+    case 'phantom_rift_bolt_impact': {
+      const bolt = store.riftBolts.find((candidate) => (
+        candidate.id === data.castId || candidate.ownerId === data.playerId
+      ));
+      if (bolt && data.impactPosition) {
+        store.updateRiftBolt(bolt.id, {
+          impactPosition: data.impactPosition,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
+        });
+        triggerTerrainImpact('phantom_dire_ball', data.impactPosition, { scale: 1.2 });
+      }
+      return true;
+    }
+
+    case 'phantom_rift_bolt_expire':
+      store.removeRiftBoltsByOwner(data.playerId);
+      return true;
+
+    case 'phantom_rift_bolt_teleport': {
+      store.removeRiftBoltsByOwner(data.playerId);
+      if (data.position && data.startPosition) {
+        if (isLocalPlayer) {
+          applyLocalRiftBoltTeleportConfirmation(data, data.position);
+          triggerTeleportEffect('blink');
+        }
+        if (!isRemotePhantomVeiled(data.playerId, localPlayerId)) {
+          triggerBlinkEffect(data.startPosition, data.position);
+        }
+      }
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_rift_bolt_teleport')) {
+        playPhantomWorldSound('phantomBlink', isLocalPlayer ? undefined : data.startPosition, {
+          durationMs: 900,
+          volume: 1.05,
+          pitch: 1.18,
+        });
       }
       return true;
     }

@@ -47,6 +47,13 @@ export const PHANTOM_VOID_RAY_COOLDOWN_MS = PHANTOM_VOID_RAY_COOLDOWN_SECONDS * 
 export const PHANTOM_VOID_RAY_DAMAGE = 51;
 export const PHANTOM_VOID_RAY_COLLISION_RADIUS = 0.45;
 export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
+export const PHANTOM_RIFT_BOLT_DAMAGE = 22;
+export const PHANTOM_RIFT_BOLT_SPEED = 12;
+export const PHANTOM_RIFT_BOLT_MAX_DISTANCE = 30;
+export const PHANTOM_RIFT_BOLT_COLLISION_RADIUS = 0.38;
+export const PHANTOM_RIFT_BOLT_COOLDOWN_SECONDS = 6;
+export const PHANTOM_RIFT_BOLT_COOLDOWN_MS = PHANTOM_RIFT_BOLT_COOLDOWN_SECONDS * 1000;
+export const PHANTOM_RIFT_BOLT_LIFETIME_MS = PHANTOM_RIFT_BOLT_COOLDOWN_MS;
 export const PHANTOM_BLINK_DISTANCE = 8;
 export const PHANTOM_VOID_ZONE_RADIUS = 3;
 export const PHANTOM_VOID_ZONE_DAMAGE = 12;
@@ -199,6 +206,11 @@ export const ABILITY_CARD_STATS = {
   phantom_void_ray: [
     { value: PHANTOM_VOID_RAY_DAMAGE, label: 'dmg' },
     { value: VOID_RAY_CHARGE_TIME / 1000, label: 'charge', format: 'seconds' },
+  ],
+  phantom_rift_bolt: [
+    { value: PHANTOM_RIFT_BOLT_DAMAGE, label: 'dmg' },
+    { value: PHANTOM_RIFT_BOLT_SPEED, label: 'speed' },
+    { value: PHANTOM_RIFT_BOLT_MAX_DISTANCE, label: 'range' },
   ],
   phantom_blink: [
     { value: PHANTOM_VOID_ZONE_DAMAGE, label: 'dmg/tick' },
@@ -377,6 +389,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     targeting: 'direction',
     cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
     description: 'Hold to charge for 1 second, then release a piercing long-range beam.',
+  },
+  phantom_rift_bolt: {
+    id: 'phantom_rift_bolt',
+    name: 'Rift Bolt',
+    type: 'movement',
+    targeting: 'direction',
+    cooldown: PHANTOM_RIFT_BOLT_COOLDOWN_SECONDS,
+    duration: PHANTOM_RIFT_BOLT_LIFETIME_MS / 1000,
+    description: 'Fire a slow void orb that deals damage on impact. Re-press secondary fire to teleport to it.',
   },
   phantom_personal_shield: {
     id: 'phantom_personal_shield',

@@ -1153,6 +1153,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       gameRoomRef.current.send('setPhantomPrimarySkill', {
         skill: useLoadoutStore.getState().phantomPrimarySkill,
       });
+      gameRoomRef.current.send('setPhantomSecondarySkill', {
+        skill: useLoadoutStore.getState().phantomSecondarySkill,
+      });
       gameRoomRef.current.send('setBlazePrimarySkill', {
         skill: useLoadoutStore.getState().blazePrimarySkill,
       });

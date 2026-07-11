@@ -529,6 +529,42 @@ export function predictLocalPhantomBlink(player: Player, lookYaw: number, lookPi
   }, lookYaw);
 }
 
+export function predictLocalRiftBoltTeleport(player: Player, target: Vec3): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  const offset = {
+    x: target.x - current.position.x,
+    y: target.y - current.position.y,
+    z: target.z - current.position.z,
+  };
+  const distance = Math.hypot(offset.x, offset.y, offset.z);
+  const lookup = getClientProceduralTerrainLookup();
+  const position = resolveCapsuleTeleportDestination(
+    getClientCollisionWorld(),
+    current.position,
+    offset,
+    distance,
+    {
+      minDistance: 0,
+      distanceStep: 0.25,
+      clampPosition: lookup ? (candidate) => lookup.clampToPlayableMap(candidate) : undefined,
+    },
+  );
+
+  return applyLocalPredictedState(player.id, {
+    position,
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: {
+      ...current.movement,
+      isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+    },
+  }, player.lookYaw);
+}
+
 export function addLocalMovementImpulse(impulse: Vec3, mode: 'add' | 'set' = 'add'): MovementSimulationState | null {
   const current = localMovementPrediction.getState();
   if (!current) return null;

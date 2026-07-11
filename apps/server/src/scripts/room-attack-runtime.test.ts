@@ -18,6 +18,10 @@ import {
   HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS,
   HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
+  PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_DAMAGE,
+  PHANTOM_RIFT_BOLT_MAX_DISTANCE,
   PHANTOM_SOULREND_COLLISION_RADIUS,
   PHANTOM_SOULREND_DAMAGE,
 } from '@voxel-strike/shared';
@@ -45,6 +49,21 @@ import {
   assert.equal(attack?.damage, BLAZE_SCRAPSHOT_PELLET_DAMAGE);
   assert.equal(attack?.range, BLAZE_SCRAPSHOT_RANGE);
   assert.equal(attack?.collisionRadius, BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS);
+}
+
+{
+  const attack = getRoomAttackConfig({
+    heroId: 'phantom',
+    mode: 'secondary',
+    chronosAscendantActive: false,
+    phantomSecondarySkill: 'rift_bolt',
+  });
+
+  assert.equal(attack?.damageType, 'rift_bolt');
+  assert.equal(attack?.damage, PHANTOM_RIFT_BOLT_DAMAGE);
+  assert.equal(attack?.range, PHANTOM_RIFT_BOLT_MAX_DISTANCE);
+  assert.equal(attack?.cooldownMs, PHANTOM_RIFT_BOLT_COOLDOWN_MS);
+  assert.equal(attack?.collisionRadius, PHANTOM_RIFT_BOLT_COLLISION_RADIUS);
 }
 
 {
@@ -254,6 +273,11 @@ import {
     mode: 'primary',
     phantomPrimarySkill: 'soulrend_daggers',
   }), 'phantom_soulrend_daggers');
+  assert.equal(getAttackCastKind({
+    heroId: 'phantom',
+    mode: 'secondary',
+    phantomSecondarySkill: 'rift_bolt',
+  }), 'phantom_rift_bolt');
   assert.equal(getAttackCastKind({ heroId: 'hookshot', mode: 'secondary' }), 'hookshot_heavy_attack');
   assert.equal(getAttackCastKind({ heroId: 'chronos', mode: 'primary' }), 'chronos_verdant_pulse');
   assert.equal(getAttackCastKind({ heroId: 'chronos', mode: 'secondary' }), null);

@@ -265,6 +265,19 @@ export function buildAbilityCastOriginHints(
     }
 
     if (input.secondaryFire) {
+      const secondarySkill = useLoadoutStore.getState().phantomSecondarySkill;
+      if (secondarySkill === 'rift_bolt') {
+        pushHint(
+          hints,
+          seen,
+          hintFromOrigin(
+            ctx,
+            'phantom_rift_bolt',
+            resolvePhantomVoidRayOrigin(ctx, 'phantom_rift_bolt', now)
+          )
+        );
+        return hints.length > 0 ? hints : undefined;
+      }
       pushHint(
         hints,
         seen,

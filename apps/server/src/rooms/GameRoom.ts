@@ -46,6 +46,7 @@ import {
   type PrimaryMagazineState,
 } from './primaryMagazine';
 import { PhantomVoidRayChargeTracker } from './phantomVoidRayCharge';
+import { PhantomRiftBoltTracker } from './phantomRiftBolt';
 import {
   PlayerPressStateTracker,
   type PlayerPressState,
@@ -353,6 +354,10 @@ import {
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  PHANTOM_RIFT_BOLT_DAMAGE,
+  PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+  PHANTOM_RIFT_BOLT_SPEED,
   PHANTOM_SOULREND_MAGAZINE_SIZE,
   PHANTOM_SOULREND_RICOCHET_RADIUS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
@@ -412,6 +417,7 @@ import {
   getBlazeScrapshotPelletDirections,
   isBlazePrimarySkill,
   isPhantomPrimarySkill,
+  isPhantomSecondarySkill,
   isBlazeSecondarySkill,
   isBlazeUltimateSkill,
   getBlazeUltimateAbilityId,
@@ -438,6 +444,7 @@ import type {
   BlazeUltimateSkill,
   BlazeAbilityBindings,
   PhantomPrimarySkill,
+  PhantomSecondarySkill,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -860,6 +867,7 @@ interface PhantomCastPayload {
   duration?: number;
   impactTime?: number;
   rootUntil?: number;
+  expiresAt?: number;
 }
 
 interface HookshotGroundHooksTarget {
@@ -1202,6 +1210,7 @@ export class GameRoom extends Room<GameState> {
     reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
   });
   private readonly phantomPrimarySkills = new Map<string, PhantomPrimarySkill>();
+  private readonly phantomSecondarySkills = new Map<string, PhantomSecondarySkill>();
   private readonly blazePrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
@@ -1221,6 +1230,7 @@ export class GameRoom extends Room<GameState> {
   private readonly phantomPrimaryHolds = new PlayerHoldTracker();
   private readonly chronosPrimaryHolds = new PlayerHoldTracker();
   private readonly phantomVoidRayCharges = new PhantomVoidRayChargeTracker();
+  private readonly phantomRiftBolts = new PhantomRiftBoltTracker();
   private readonly abilityIds = new RoomAbilityIdGenerator();
   private readonly phantomPrimaryLaunchSide = new AlternatingLaunchSideTracker();
   private readonly hookshotPrimaryLaunchSide = new AlternatingLaunchSideTracker();
@@ -1966,6 +1976,11 @@ export class GameRoom extends Room<GameState> {
       this.handleSetPhantomPrimarySkill(client, data.skill);
     });
 
+    this.onRateLimitedMessage('setPhantomSecondarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isPhantomSecondarySkill(data.skill)) return;
+      this.handleSetPhantomSecondarySkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('setBlazePrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       if (!isRecord(data) || !isBlazePrimarySkill(data.skill)) return;
       this.handleSetBlazePrimarySkill(client, data.skill);
@@ -2071,6 +2086,15 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId === 'phantom') {
       this.resetPrimaryMagazineForHero(player.id, player.heroId);
     }
+  }
+
+  private handleSetPhantomSecondarySkill(client: Client, skill: PhantomSecondarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.phantomSecondarySkills.has(player.id)) return;
+
+    this.phantomSecondarySkills.set(player.id, skill);
+    this.phantomVoidRayCharges.clear(player.id);
+    this.phantomRiftBolts.clear(player.id);
   }
 
   private handleSetBlazeSecondarySkill(client: Client, skill: BlazeSecondarySkill): void {
@@ -2479,6 +2503,7 @@ export class GameRoom extends Room<GameState> {
     this.phantomPrimaryMagazines.clear(playerId);
     this.phantomSoulrendPrimaryMagazines.clear(playerId);
     this.phantomPrimarySkills.delete(playerId);
+    this.phantomSecondarySkills.delete(playerId);
     this.blazePrimaryMagazines.clear(playerId);
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
@@ -2490,6 +2515,7 @@ export class GameRoom extends Room<GameState> {
     this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
+    this.phantomRiftBolts.clear(playerId);
     this.phantomPrimaryLaunchSide.clear(playerId);
     this.hookshotPrimaryLaunchSide.clear(playerId);
     this.hookshotRuntime.clearPlayer(playerId);
@@ -2906,6 +2932,7 @@ export class GameRoom extends Room<GameState> {
 
   private updateActiveGameplayEffects(now: number, dt: number): void {
     this.updateVoidZones(now);
+    this.updatePhantomRiftBolts(now);
 
     this.updatePendingAreaDamage(now);
     this.updateBlazeLingeringAreas(now);
@@ -7908,7 +7935,7 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastPhantomAttackCast(
     player: Player,
-    abilityId: 'phantom_dire_ball' | 'phantom_soulrend_daggers' | 'phantom_void_ray',
+    abilityId: 'phantom_dire_ball' | 'phantom_soulrend_daggers' | 'phantom_void_ray' | 'phantom_rift_bolt',
     now: number,
     range: number,
     impactHint: SkillImpactHint = {}
@@ -8082,6 +8109,228 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private firePhantomRiftBolt(player: Player, attack: AttackConfig, now: number): void {
+    const abilityId = 'phantom_rift_bolt';
+    const castId = this.abilityIds.nextSharedCastId(player.id, abilityId);
+    const aimOrigin = this.getPlayerEyePosition(player);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
+    const forward = this.resolveValidatedCastAimDirection(
+      player,
+      abilityId,
+      aimOrigin,
+      lookDirection,
+      attack.range,
+    );
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId);
+    const aimPoint = this.addScaled3D(aimOrigin, forward, attack.range);
+    const direction = this.normalize3D({
+      x: aimPoint.x - startPosition.x,
+      y: aimPoint.y - startPosition.y,
+      z: aimPoint.z - startPosition.z,
+    }) ?? forward;
+    const bolt = this.phantomRiftBolts.launch({
+      castId,
+      ownerId: player.id,
+      ownerTeam: player.team as Team,
+      startPosition,
+      direction,
+      launchedAt: now,
+    });
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId,
+      castId,
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      aimDirection: direction,
+      velocity: {
+        x: direction.x * PHANTOM_RIFT_BOLT_SPEED,
+        y: direction.y * PHANTOM_RIFT_BOLT_SPEED,
+        z: direction.z * PHANTOM_RIFT_BOLT_SPEED,
+      },
+      maxDistance: PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      expiresAt: bolt.expiresAt,
+    });
+  }
+
+  private cancelPhantomRiftBolt(player: Player, now = Date.now()): void {
+    const bolt = this.phantomRiftBolts.consume(player.id);
+    if (!bolt) return;
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId: 'phantom_rift_bolt_expire',
+      castId: bolt.castId,
+      position: vec3SchemaToPlain(player.position),
+      targetPosition: bolt.position,
+      ownerTeam: bolt.ownerTeam,
+      serverTime: now,
+    });
+  }
+
+  private updatePhantomRiftBolts(now: number): void {
+    const { advances, expired } = this.phantomRiftBolts.advance(now);
+
+    for (const bolt of expired) {
+      const owner = this.state.players.get(bolt.ownerId);
+      if (!owner) continue;
+      this.broadcastPhantomCast({
+        playerId: bolt.ownerId,
+        abilityId: 'phantom_rift_bolt_expire',
+        castId: bolt.castId,
+        position: vec3SchemaToPlain(owner.position),
+        targetPosition: bolt.position,
+        ownerTeam: bolt.ownerTeam,
+        serverTime: now,
+      });
+    }
+
+    for (const advance of advances) {
+      const owner = this.state.players.get(advance.state.ownerId);
+      if (!owner || owner.state !== 'alive') {
+        this.phantomRiftBolts.clear(advance.state.ownerId);
+        continue;
+      }
+
+      const direction = this.normalize3D({
+        x: advance.endPosition.x - advance.startPosition.x,
+        y: advance.endPosition.y - advance.startPosition.y,
+        z: advance.endPosition.z - advance.startPosition.z,
+      });
+      if (!direction) continue;
+
+      const terrainPoint = this.raycastTerrain(
+        advance.startPosition,
+        direction,
+        advance.distance,
+        0.15,
+      );
+      const terrainDistance = terrainPoint
+        ? distance3D(advance.startPosition, terrainPoint)
+        : Number.POSITIVE_INFINITY;
+      const aegisHit = this.getChronosAegisSkillHit(
+        owner,
+        advance.startPosition,
+        direction,
+        advance.distance,
+        { projectileRadius: PHANTOM_RIFT_BOLT_COLLISION_RADIUS },
+      );
+
+      let targetHit: AimTargetHit | null = null;
+      const candidates = this.queryPlayersConeCandidates(
+        advance.startPosition,
+        advance.distance + PHANTOM_RIFT_BOLT_COLLISION_RADIUS + PLAYER_RADIUS,
+        {
+          excludeTeam: owner.team as Team,
+          excludeId: owner.id,
+          includeDowned: true,
+        },
+      );
+      for (const target of candidates) {
+        const hit = this.getAimHitAgainstPlayer(
+          advance.startPosition,
+          direction,
+          advance.distance,
+          target,
+          PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+        );
+        if (!hit || (targetHit && hit.distance >= targetHit.hit.distance)) continue;
+        targetHit = { target, hit };
+      }
+
+      const targetDistance = targetHit?.hit.distance ?? Number.POSITIVE_INFINITY;
+      const aegisDistance = aegisHit?.distance ?? Number.POSITIVE_INFINITY;
+      let impactPosition: PlainVec3 | null = null;
+      let interceptedByChronosAegis = false;
+
+      if (aegisHit && aegisDistance <= targetDistance && aegisDistance <= terrainDistance) {
+        impactPosition = aegisHit.point;
+        interceptedByChronosAegis = true;
+        this.absorbDamageWithChronosAegis(aegisHit.blocker, PHANTOM_RIFT_BOLT_DAMAGE, now, {
+          source: owner,
+          damageType: 'rift_bolt',
+          position: aegisHit.point,
+          direction: aegisHit.normal,
+        });
+      } else if (targetHit && targetDistance <= terrainDistance) {
+        impactPosition = targetHit.hit.targetPoint;
+        this.recordCombatVisibilityAtHit(owner, targetHit.target, 'secondary', 'rift_bolt', now);
+        this.applyDamage(targetHit.target, PHANTOM_RIFT_BOLT_DAMAGE, owner.id, 'rift_bolt', {
+          abilityId: 'phantom_rift_bolt',
+          sourcePosition: advance.startPosition,
+          sourceDirection: direction,
+        });
+      } else if (terrainPoint) {
+        impactPosition = terrainPoint;
+      }
+
+      if (!impactPosition) continue;
+      this.phantomRiftBolts.stop(owner.id, impactPosition);
+      this.broadcastPhantomCast({
+        playerId: owner.id,
+        abilityId: 'phantom_rift_bolt_impact',
+        castId: advance.state.castId,
+        position: vec3SchemaToPlain(owner.position),
+        impactPosition,
+        interceptedByChronosAegis,
+        ownerTeam: owner.team as Team,
+        serverTime: now,
+        expiresAt: advance.state.expiresAt,
+      });
+    }
+  }
+
+  private teleportPhantomToRiftBolt(player: Player, now: number): void {
+    const bolt = this.phantomRiftBolts.consume(player.id);
+    if (!bolt) return;
+
+    const startedAt = vec3SchemaToPlain(player.position);
+    const offset = {
+      x: bolt.position.x - startedAt.x,
+      y: bolt.position.y - startedAt.y,
+      z: bolt.position.z - startedAt.z,
+    };
+    const distance = Math.hypot(offset.x, offset.y, offset.z);
+    const destination = resolveCapsuleTeleportDestination(
+      this.getMovementCollisionWorld(),
+      startedAt,
+      offset,
+      distance,
+      {
+        minDistance: 0,
+        distanceStep: 0.25,
+        clampPosition: (candidate) => this.clampToPlayableMap(candidate),
+      },
+    );
+
+    player.position.x = destination.x;
+    player.position.y = destination.y;
+    player.position.z = destination.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId: 'phantom_rift_bolt_teleport',
+      castId: this.abilityIds.nextSharedCastId(player.id, 'phantom_rift_bolt_teleport'),
+      position: destination,
+      startPosition: startedAt,
+      targetPosition: bolt.position,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+    });
+  }
+
   private broadcastPhantomVoidRayCharge(player: Player, now: number): void {
     const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
     this.broadcastPhantomCast({
@@ -8199,6 +8448,27 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
+    if (this.getPhantomSecondarySkill(player.id) === 'rift_bolt') {
+      this.phantomVoidRayCharges.clear(player.id);
+      if (!input.secondaryFire || previousSecondaryFire) return;
+
+      if (this.phantomRiftBolts.get(player.id)) {
+        if (this.playerRoots.isRooted(player.id, now)) {
+          this.rejectAbilityOrCombat(player, 'rooted_movement_ability_blocked', true);
+          return;
+        }
+        this.teleportPhantomToRiftBolt(player, now);
+        return;
+      }
+
+      if (this.isPhantomPrimaryReloading(player, now)) {
+        this.rejectAbilityOrCombat(player, 'phantom_reload_blocks:phantom_rift_bolt', false);
+        return;
+      }
+      this.tryResolveAttack(player, 'secondary', now);
+      return;
+    }
+
     const wasCharging = this.phantomVoidRayCharges.isCharging(player.id);
 
     if (this.isPhantomPrimaryReloading(player, now)) {
@@ -8573,6 +8843,10 @@ export class GameRoom extends Room<GameState> {
 
   private getPhantomPrimarySkill(playerId: string): PhantomPrimarySkill {
     return this.phantomPrimarySkills.get(playerId) ?? 'dire_ball';
+  }
+
+  private getPhantomSecondarySkill(playerId: string): PhantomSecondarySkill {
+    return this.phantomSecondarySkills.get(playerId) ?? 'void_ray';
   }
 
   private getBlazeSecondarySkill(playerId: string): BlazeSecondarySkill {
@@ -8962,6 +9236,7 @@ export class GameRoom extends Room<GameState> {
         mode,
         chronosAscendantActive: heroId === 'chronos' && mode === 'primary' && this.isChronosAscendantActive(player),
         phantomPrimarySkill: heroId === 'phantom' ? this.getPhantomPrimarySkill(player.id) : undefined,
+        phantomSecondarySkill: heroId === 'phantom' ? this.getPhantomSecondarySkill(player.id) : undefined,
         blazePrimarySkill: heroId === 'blaze' ? this.getBlazePrimarySkill(player.id) : undefined,
         blazeSecondarySkill: heroId === 'blaze' ? this.getBlazeSecondarySkill(player.id) : undefined,
       })
@@ -9029,6 +9304,15 @@ export class GameRoom extends Room<GameState> {
 
     if (
       heroId === 'phantom' &&
+      mode === 'secondary' &&
+      this.getPhantomSecondarySkill(player.id) === 'rift_bolt'
+    ) {
+      this.firePhantomRiftBolt(player, attack, now);
+      return;
+    }
+
+    if (
+      heroId === 'phantom' &&
       mode === 'primary' &&
       this.getPhantomPrimarySkill(player.id) === 'soulrend_daggers'
     ) {
@@ -9042,6 +9326,7 @@ export class GameRoom extends Room<GameState> {
       heroId,
       mode,
       phantomPrimarySkill: heroId === 'phantom' ? this.getPhantomPrimarySkill(player.id) : undefined,
+      phantomSecondarySkill: heroId === 'phantom' ? this.getPhantomSecondarySkill(player.id) : undefined,
     });
     const forward = this.resolveValidatedCastAimDirection(
       player,
@@ -9069,7 +9354,8 @@ export class GameRoom extends Room<GameState> {
     if (
       castKind === 'phantom_dire_ball' ||
       castKind === 'phantom_soulrend_daggers' ||
-      castKind === 'phantom_void_ray'
+      castKind === 'phantom_void_ray' ||
+      castKind === 'phantom_rift_bolt'
     ) {
       this.broadcastPhantomAttackCast(player, castKind, now, attack.range, impactHint);
     } else if (castKind === 'hookshot_basic_attack' || castKind === 'hookshot_heavy_attack') {
@@ -12050,6 +12336,7 @@ export class GameRoom extends Room<GameState> {
     this.attackCooldowns.clearPlayer(player.id);
     this.clearPrimaryHoldStates(player.id);
     this.phantomVoidRayCharges.clear(player.id);
+    this.cancelPhantomRiftBolt(player);
 
     if ((player.heroId === 'phantom' || player.heroId === 'blaze') && slot === 'primary') {
       this.resetPrimaryMagazineForHero(player.id, player.heroId);
@@ -12346,6 +12633,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastBlazeFlamethrowerState(player, false, Date.now());
     this.clearPrimaryHoldStates(player.id);
     this.phantomVoidRayCharges.clear(player.id);
+    this.cancelPhantomRiftBolt(player);
     this.clearHookshotGrapple(player.id);
     this.clearHookshotDragPull(player.id);
     player.movement.isGrappling = false;
@@ -12825,6 +13113,7 @@ export class GameRoom extends Room<GameState> {
       this.blazeAfterburnerTrails.clear();
       this.blazePhoenixDives.clear();
       this.blazeAfterburnerDashes.clear();
+      this.phantomRiftBolts.clearAll();
     }
 
     this.state.players.forEach(player => {

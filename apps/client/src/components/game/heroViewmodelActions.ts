@@ -60,7 +60,8 @@ export function isViewmodelActionActive(
 ): boolean {
   switch (heroId) {
     case 'phantom':
-      return hasOwnedProjectile(state.voidRays, localPlayerId);
+      return hasOwnedProjectile(state.voidRays, localPlayerId) ||
+        hasOwnedProjectile(state.riftBolts, localPlayerId);
     case 'hookshot':
       return hasOwnedProjectile(state.dragHooks, localPlayerId) ||
         hasOwnedGrappleLine(state, localPlayerId);
