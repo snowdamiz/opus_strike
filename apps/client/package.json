@@ -12,6 +12,7 @@
     "lint:tokens": "node scripts/lint-design-tokens.mjs",
     "test:voice": "tsx src/store/voiceStore.test.ts && tsx src/components/ui/VoiceHud.test.ts && tsx src/contexts/VoiceContext.test.ts",
     "test:combat-feedback": "tsx src/store/combatFeedbackStore.test.ts",
+    "test:offline-combat": "tsx src/utils/tutorialOfflineCombatRuntime.test.ts",
     "test:lobby-listeners": "tsx src/contexts/lobbyListeners.test.ts",
     "test:game-room-listeners": "tsx src/contexts/gameRoomListeners.test.ts",
     "test:settings": "tsx src/store/settingsStore.test.ts && tsx src/store/loadoutStore.test.ts",

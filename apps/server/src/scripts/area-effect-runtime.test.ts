@@ -93,7 +93,10 @@ function createTarget(
   const targets = [
     createTarget('middle', { x: 4, y: 2.5, z: 0 }),
     createTarget('endpoint', { x: 8.5, y: 2, z: 0 }),
+    createTarget('wide-edge', { x: 4, y: 2.9, z: 1.25 }),
+    createTarget('beyond-wide-edge', { x: 4, y: 2.9, z: 1.55 }),
     createTarget('outside', { x: 4, y: 4, z: 0 }),
+    createTarget('dead', { x: 4, y: 2, z: 0 }, 'dead'),
   ];
   const hits: string[] = [];
   let observedBounds: { center: { x: number; y: number; z: number }; halfLength: number } | null = null;
@@ -110,15 +113,15 @@ function createTarget(
   });
 
   update(1_000);
-  assert.deepEqual(hits, ['middle', 'endpoint']);
+  assert.deepEqual(hits, ['middle', 'endpoint', 'wide-edge']);
   assert.deepEqual(observedBounds, {
     center: { x: 4, y: 2, z: 0 },
     halfLength: 4,
   });
   update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS - 1);
-  assert.equal(hits.length, 2);
+  assert.equal(hits.length, 3);
   update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS);
-  assert.equal(hits.length, 4);
+  assert.equal(hits.length, 6);
   update(3_400);
   assert.equal(tracker.size, 0);
 }

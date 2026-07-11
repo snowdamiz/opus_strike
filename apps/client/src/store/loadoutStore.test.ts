@@ -179,6 +179,15 @@ const {
   PHANTOM_SOULREND_OPTION_ID,
   HERO_LOADOUT_POOL,
 } = await import('../components/ui/loadoutPool');
+const blazeLoadoutOptions = Object.values(HERO_LOADOUT_POOL.blaze).flat();
+const blazePreviewVideos = blazeLoadoutOptions.flatMap((option) => (
+  option.previewVideo ? [option.previewVideo] : []
+));
+assert.equal(blazeLoadoutOptions.length, 9);
+assert.equal(blazePreviewVideos.length, 9);
+assert.equal(new Set(blazePreviewVideos.map((preview) => preview.videoSrc)).size, 9);
+assert.ok(blazePreviewVideos.every((preview) => preview.videoSrc.startsWith('/videos/blaze/')));
+assert.ok(blazePreviewVideos.every((preview) => preview.posterSrc.startsWith('/videos/blaze/posters/')));
 const scrapshotOption = HERO_LOADOUT_POOL.blaze.primaryFire.find((option) => (
   option.id === BLAZE_SCRAPSHOT_OPTION_ID
 ));

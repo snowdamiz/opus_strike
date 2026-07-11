@@ -18,7 +18,6 @@ import {
   LOADOUT_GROUPS,
   LOADOUT_SLOTS,
   defaultOptionId,
-  findOption,
   getAbilityPool,
   type LoadoutOwnership,
   type LoadoutSkillOption,
@@ -53,6 +52,7 @@ interface LoadoutTabProps {
 
 export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
   const [filter, setFilter] = useState<LoadoutFilter>('all');
+  const [previewedSkill, setPreviewedSkill] = useState<LoadoutSkillOption | null>(null);
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
   const phantomPrimarySkill = useLoadoutStore((state) => state.phantomPrimarySkill);
   const phantomSecondarySkill = useLoadoutStore((state) => state.phantomSecondarySkill);
@@ -68,6 +68,9 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
 
   const heroDef = HERO_DEFINITIONS[featuredHero];
   const pool = HERO_LOADOUT_POOL[featuredHero];
+  const activeSkillPreview = previewedSkill?.id.startsWith(`${featuredHero}-`) && previewedSkill.previewVideo
+    ? previewedSkill
+    : null;
   const equippedAbilities = resolveHeroAbilityBindings(featuredHero, heroAbilityBindings);
   const equippedId = (slot: LoadoutSlotKey) => {
     if (featuredHero === 'phantom' && slot === 'primaryFire') {
@@ -195,6 +198,8 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
                 option={option}
                 equippedSlot={equippedSlot}
                 onAssign={(slot) => handleAssignAbility(slot, option)}
+                previewActive={activeSkillPreview?.id === option.id}
+                onPreview={option.previewVideo ? () => setPreviewedSkill(option) : undefined}
               />
             );
           })}
@@ -209,6 +214,8 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
           option={option}
           equipped={equippedId(slot.key) === option.id}
           onEquip={() => handleEquip(slot.key, option.id)}
+          previewActive={activeSkillPreview?.id === option.id}
+          onPreview={option.previewVideo ? () => setPreviewedSkill(option) : undefined}
         />
       )),
     );
@@ -235,7 +242,10 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
                 <button
                   type="button"
                   key={heroId}
-                  onClick={() => onSelectHero(heroId)}
+                  onClick={() => {
+                    setPreviewedSkill(null);
+                    onSelectHero(heroId);
+                  }}
                   className={`loadout-hero-tab${active ? ' is-active' : ''}`}
                   aria-pressed={active}
                   title={def.name}
@@ -253,7 +263,12 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
           </div>
         </aside>
 
-        <section className="loadout-stage" aria-label={`${heroDef.name} loadout preview`}>
+        <section
+          className={`loadout-stage${activeSkillPreview ? ' is-skill-preview' : ''}`}
+          aria-label={activeSkillPreview
+            ? `${activeSkillPreview.name} gameplay preview`
+            : `${heroDef.name} loadout preview`}
+        >
           <div className="loadout-stage-copy">
             <div>
               <p className="loadout-kicker">Loadout Bench</p>
@@ -266,33 +281,33 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
             </div>
           </div>
 
-          <div className="loadout-stage-preview">
-            <Suspense fallback={<FeaturedHeroPreviewFallback className="loadout-featured-preview" />}>
-              <FeaturedHeroPreview
-                heroId={featuredHero}
-                initialYaw={Math.PI - 0.18}
-                animationMode={HERO_IDLE_ANIMATION_MODE}
-                className="loadout-featured-preview"
-              />
-            </Suspense>
-          </div>
+          {activeSkillPreview ? (
+            <button
+              type="button"
+              className="loadout-preview-close"
+              onClick={() => setPreviewedSkill(null)}
+            >
+              <span aria-hidden="true">←</span>
+              Hero view
+            </button>
+          ) : null}
 
-          <div className="loadout-equipped-strip" aria-label="Equipped loadout">
-            {LOADOUT_SLOTS.map((slot) => {
-              const option = findOption(featuredHero, slot.key, equippedId(slot.key));
-              const tint = SKILL_RARITY_COLORS[option.rarity].hex;
-              return (
-                <span className="loadout-equipped-chip" key={slot.key} title={`${slot.category}: ${option.name}`}>
-                  <span
-                    className="loadout-equipped-key"
-                    style={{ background: `${tint}26`, border: `1px solid ${tint}70` }}
-                  >
-                    {formatKeybind(slot.code)}
-                  </span>
-                  <span className="loadout-equipped-name">{option.name}</span>
-                </span>
-              );
-            })}
+          <div className="loadout-stage-preview">
+            {activeSkillPreview ? (
+              <LoadoutSkillVideo
+                key={activeSkillPreview.id}
+                option={activeSkillPreview}
+              />
+            ) : (
+              <Suspense fallback={<FeaturedHeroPreviewFallback className="loadout-featured-preview" />}>
+                <FeaturedHeroPreview
+                  heroId={featuredHero}
+                  initialYaw={Math.PI - 0.18}
+                  animationMode={HERO_IDLE_ANIMATION_MODE}
+                  className="loadout-featured-preview"
+                />
+              </Suspense>
+            )}
           </div>
         </section>
 
@@ -329,19 +344,32 @@ function PoolRow({
   option,
   equipped,
   onEquip,
+  previewActive,
+  onPreview,
 }: {
   slot: LoadoutSlotDef;
   option: LoadoutSkillOption;
   equipped: boolean;
   onEquip: () => void;
+  previewActive: boolean;
+  onPreview?: () => void;
 }) {
   const rarityColor = SKILL_RARITY_COLORS[option.rarity].hex;
 
   return (
     <article
-      className={`skins-row loadout-row is-${option.rarity}${equipped ? ' is-equipped' : ''}${option.ownership === 'locked' ? ' is-locked' : ''}`}
+      className={`skins-row loadout-row is-${option.rarity}${equipped ? ' is-equipped' : ''}${option.ownership === 'locked' ? ' is-locked' : ''}${onPreview ? ' is-previewable' : ''}${previewActive ? ' is-previewing' : ''}`}
     >
       <SkinRarityChrome />
+      {onPreview ? (
+        <button
+          type="button"
+          className="loadout-preview-hitbox"
+          onClick={onPreview}
+          aria-label={`Preview ${option.name}`}
+          aria-pressed={previewActive}
+        />
+      ) : null}
 
       <div className="loadout-row-icon">
         <AbilityIcon type={option.iconType} size={28} color={rarityColor} />
@@ -358,6 +386,12 @@ function PoolRow({
           </span>
           <h2>{option.name}</h2>
           <span className={`loadout-rarity-chip is-${option.rarity}`}>{option.rarity}</span>
+          {onPreview ? (
+            <span className={`loadout-preview-chip${previewActive ? ' is-playing' : ''}`}>
+              <span aria-hidden="true">▶</span>
+              {previewActive ? 'Playing' : 'Preview'}
+            </span>
+          ) : null}
           {option.isPlaceholder && <span className="loadout-demo-chip">demo</span>}
         </div>
         <p>{option.tagline}</p>
@@ -416,10 +450,14 @@ function AbilityPoolRow({
   option,
   equippedSlot,
   onAssign,
+  previewActive,
+  onPreview,
 }: {
   option: LoadoutSkillOption;
   equippedSlot: AbilitySlot | null;
   onAssign: (slot: AbilitySlot) => void;
+  previewActive: boolean;
+  onPreview?: () => void;
 }) {
   const rarityColor = SKILL_RARITY_COLORS[option.rarity].hex;
   const equipped = equippedSlot !== null;
@@ -427,9 +465,18 @@ function AbilityPoolRow({
 
   return (
     <article
-      className={`skins-row loadout-row is-${option.rarity}${equipped ? ' is-equipped' : ''}${option.ownership === 'locked' ? ' is-locked' : ''}`}
+      className={`skins-row loadout-row is-${option.rarity}${equipped ? ' is-equipped' : ''}${option.ownership === 'locked' ? ' is-locked' : ''}${onPreview ? ' is-previewable' : ''}${previewActive ? ' is-previewing' : ''}`}
     >
       <SkinRarityChrome />
+      {onPreview ? (
+        <button
+          type="button"
+          className="loadout-preview-hitbox"
+          onClick={onPreview}
+          aria-label={`Preview ${option.name}`}
+          aria-pressed={previewActive}
+        />
+      ) : null}
 
       <div className="loadout-row-icon">
         <AbilityIcon type={option.iconType} size={28} color={rarityColor} />
@@ -446,6 +493,12 @@ function AbilityPoolRow({
           </span>
           <h2>{option.name}</h2>
           <span className={`loadout-rarity-chip is-${option.rarity}`}>{option.rarity}</span>
+          {onPreview ? (
+            <span className={`loadout-preview-chip${previewActive ? ' is-playing' : ''}`}>
+              <span aria-hidden="true">▶</span>
+              {previewActive ? 'Playing' : 'Preview'}
+            </span>
+          ) : null}
           {option.isPlaceholder && <span className="loadout-demo-chip">demo</span>}
         </div>
         <p>{option.tagline}</p>
@@ -491,6 +544,35 @@ function AbilityPoolRow({
         </div>
       )}
     </article>
+  );
+}
+
+function LoadoutSkillVideo({
+  option,
+}: {
+  option: LoadoutSkillOption;
+}) {
+  const previewVideo = option.previewVideo;
+  if (!previewVideo) return null;
+
+  return (
+    <div className="loadout-skill-preview">
+      <video
+        className="loadout-skill-video"
+        src={previewVideo.videoSrc}
+        poster={previewVideo.posterSrc}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label={`${option.name} gameplay demonstration`}
+      />
+      <div className="loadout-skill-preview-heading">
+        <span className="loadout-skill-preview-kicker">Now previewing</span>
+        <strong>{option.name}</strong>
+      </div>
+    </div>
   );
 }
 

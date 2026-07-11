@@ -17,9 +17,9 @@ const rightDashVelocity = calculateBlazeAfterburnerVelocity(
 assert.ok(Math.abs(rightDashVelocity.x - BLAZE_AFTERBURNER_DASH_SPEED) < 1e-9);
 assert.equal(rightDashVelocity.y, -2);
 assert.ok(Math.abs(rightDashVelocity.z) < 1e-9);
-assert.ok(BLAZE_AFTERBURNER_DASH_SPEED * BLAZE_AFTERBURNER_DASH_DURATION_MS / 1000 >= 8.5);
-assert.equal(BLAZE_AFTERBURNER_TRAIL_RADIUS, 1.35);
-assert.ok(BLAZE_AFTERBURNER_MAX_TRAIL_POINTS >= 21);
+assert.ok(BLAZE_AFTERBURNER_DASH_SPEED * BLAZE_AFTERBURNER_DASH_DURATION_MS / 1000 >= 10);
+assert.equal(BLAZE_AFTERBURNER_TRAIL_RADIUS, 1.75);
+assert.ok(BLAZE_AFTERBURNER_MAX_TRAIL_POINTS >= 27);
 
 const trailStart = { x: 0, y: 2, z: 0 };
 const trailEnd = { x: 8, y: 2, z: 0 };

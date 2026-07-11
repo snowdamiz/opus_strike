@@ -1,10 +1,18 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
+  BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING,
+} from '@voxel-strike/shared';
 import { checkGroundWithNormal } from '../../../hooks/usePhysics';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { getFrameClock } from '../../../utils/frameClock';
+import { applyTutorialOfflineTrainingTrailDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 import { BLAZE_COLORS, SHARED_GEOMETRIES } from '../effectResources';
 
 interface AfterburnerTrailPoint {
@@ -21,6 +29,7 @@ interface AfterburnerTrailData {
   expiresAt: number;
   lastSourcePosition: { x: number; y: number; z: number };
   points: AfterburnerTrailPoint[];
+  lastDamageTick: Map<string, number>;
   samplingComplete: boolean;
 }
 
@@ -33,9 +42,9 @@ export interface AfterburnerTrailTrigger {
 }
 
 const MAX_AFTERBURNER_TRAILS = 10;
-const MAX_POINTS_PER_TRAIL = 24;
-const POINT_SAMPLE_SPACING = 0.38;
-const SIDE_FLAMES_PER_POINT = 2;
+const MAX_POINTS_PER_TRAIL = BLAZE_AFTERBURNER_MAX_TRAIL_POINTS;
+const POINT_SAMPLE_SPACING = BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING;
+const SIDE_FLAMES_PER_POINT = 3;
 const EMBERS_PER_POINT = 3;
 const MAX_POINT_INSTANCES = MAX_AFTERBURNER_TRAILS * MAX_POINTS_PER_TRAIL;
 const afterburnerTrails: AfterburnerTrailData[] = [];
@@ -135,6 +144,7 @@ export function triggerAfterburnerTrail(input: AfterburnerTrailTrigger): void {
     expiresAt: now + Math.max(1, input.trailDurationMs),
     lastSourcePosition: { ...input.startPosition },
     points: [],
+    lastDamageTick: new Map(),
     samplingComplete: false,
   };
   appendTerrainPoint(trail, input.startPosition, now);
@@ -281,6 +291,7 @@ export function AfterburnerTrails() {
     let pointInstance = 0;
     let sideFlameInstance = 0;
     let emberInstance = 0;
+    const shouldApplyPracticeDamage = useGameStore.getState().isPracticeMode;
 
     for (let trailIndex = afterburnerTrails.length - 1; trailIndex >= 0; trailIndex--) {
       const trail = afterburnerTrails[trailIndex];
@@ -296,6 +307,19 @@ export function AfterburnerTrails() {
           sampleTrailToPosition(trail, livePosition, now, true);
           trail.samplingComplete = true;
         }
+      }
+
+      if (shouldApplyPracticeDamage) {
+        applyTutorialOfflineTrainingTrailDamage({
+          points: trail.points,
+          radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+          damage: BLAZE_AFTERBURNER_TRAIL_DAMAGE,
+          damageType: 'afterburner',
+          damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+          lastDamageTick: trail.lastDamageTick,
+          sourceId: trail.playerId,
+          abilityId: 'blaze_afterburner',
+        });
       }
 
       for (let pointIndex = 0; pointIndex < trail.points.length; pointIndex++) {
@@ -316,6 +340,8 @@ export function AfterburnerTrails() {
         const tangentX = nextPoint.x - previousPoint.x;
         const tangentZ = nextPoint.z - previousPoint.z;
         const tangentLength = Math.hypot(tangentX, tangentZ);
+        const forwardX = tangentLength > 0.001 ? tangentX / tangentLength : 1;
+        const forwardZ = tangentLength > 0.001 ? tangentZ / tangentLength : 0;
         const sideX = tangentLength > 0.001 ? -tangentZ / tangentLength : 0;
         const sideZ = tangentLength > 0.001 ? tangentX / tangentLength : 1;
 
@@ -330,16 +356,35 @@ export function AfterburnerTrails() {
         setInstance(outerFlameMesh, pointInstance, dummy);
 
         for (let sideIndex = 0; sideIndex < SIDE_FLAMES_PER_POINT; sideIndex++) {
-          const side = sideIndex === 0 ? -1 : 1;
-          const sidePhase = phase + side * 1.17;
-          const sideHeight = 0.5 * (0.88 + Math.sin(sidePhase * 1.43) * 0.12) * flameFade;
+          const side = sideIndex === 0
+            ? -1
+            : sideIndex === 1
+              ? 1
+              : Math.sin(point.seed * 3.71) < 0 ? -1 : 1;
+          const sidePhase = phase + side * 1.17 + sideIndex * 1.93;
+          const laneDistance = sideIndex < 2
+            ? 0.62 + Math.sin(point.seed * 2.43 + sideIndex * 2.17) * 0.12
+            : 0.92 + Math.sin(point.seed * 1.83) * 0.1;
+          const alongDistance = Math.sin(point.seed * 4.13 + sideIndex * 1.47) * 0.2;
+          const sideHeight = (
+            0.46
+            + sideIndex * 0.055
+            + Math.sin(sidePhase * 1.43) * 0.09
+          ) * flameFade;
+          const sideWidth = (0.28 + Math.sin(point.seed * 2.79 + sideIndex) * 0.055) * flameFade;
           dummy.position.set(
-            point.position.x + sideX * side * 0.48 + Math.sin(sidePhase) * 0.045,
+            point.position.x
+              + sideX * side * laneDistance
+              + forwardX * alongDistance
+              + Math.sin(sidePhase) * 0.045,
             point.position.y + sideHeight * 0.5,
-            point.position.z + sideZ * side * 0.48 + Math.cos(sidePhase) * 0.045,
+            point.position.z
+              + sideZ * side * laneDistance
+              + forwardZ * alongDistance
+              + Math.cos(sidePhase) * 0.045,
           );
           dummy.rotation.set(sideZ * side * 0.13, point.seed + side * 0.24, -sideX * side * 0.13);
-          dummy.scale.set(0.29 * flameFade, sideHeight, 0.29 * flameFade);
+          dummy.scale.set(sideWidth, sideHeight, sideWidth);
           setInstance(sideFlameMesh, sideFlameInstance++, dummy);
         }
 
@@ -352,12 +397,20 @@ export function AfterburnerTrails() {
         const groundFade = 1 - THREE.MathUtils.smoothstep(life, 0.78, 1);
         dummy.position.set(point.position.x, point.position.y + 0.007, point.position.z);
         dummy.rotation.set(-Math.PI / 2, 0, point.seed);
-        dummy.scale.set(0.9 * groundFade, 0.7 * groundFade, 1);
+        dummy.scale.set(
+          (1.2 + Math.sin(point.seed * 2.11) * 0.18) * groundFade,
+          (0.82 + Math.cos(point.seed * 1.73) * 0.14) * groundFade,
+          1,
+        );
         setInstance(scorchMesh, pointInstance, dummy);
 
         dummy.position.set(point.position.x, point.position.y + 0.014, point.position.z);
         const glowPulse = 0.94 + Math.sin(phase * 0.73) * 0.06;
-        dummy.scale.set(1.05 * glowPulse * flameFade, 0.82 * glowPulse * flameFade, 1);
+        dummy.scale.set(
+          (1.38 + Math.sin(point.seed * 2.11) * 0.2) * glowPulse * flameFade,
+          (0.96 + Math.cos(point.seed * 1.73) * 0.16) * glowPulse * flameFade,
+          1,
+        );
         setInstance(glowMesh, pointInstance, dummy);
 
         const smokeCycle = (life * 3.2 + point.seed * 0.17) % 1;

@@ -5,7 +5,7 @@ import {
 import { BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING } from '../constants/heroes.js';
 import type { Vec3 } from '../types/vector.js';
 
-// The dash normally emits 21 points. The small allowance covers the initial
+// The dash normally emits about 24 points. The small allowance covers the initial
 // point and tick-boundary interpolation without permitting an unbounded trail.
 export const BLAZE_AFTERBURNER_MAX_TRAIL_POINTS = Math.ceil(
   BLAZE_AFTERBURNER_DASH_SPEED

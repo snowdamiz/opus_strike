@@ -10,6 +10,7 @@ import {
   calculateBlazeScrapshotPelletDamage,
   getAimConeHitAgainstPlayerCombatHitbox,
   getBlazeScrapshotPelletDirections,
+  getSquaredDistanceToBlazeAfterburnerTrail,
   getSegmentHitAgainstPlayerCombatHitbox,
   shouldApplyDamageTick,
   type DamageEngineAdapter,
@@ -59,6 +60,18 @@ interface TutorialOfflineTrainingAreaDamageInput {
   falloffScale?: number;
   damageIntervalMs?: number;
   lastDamageTick?: Map<string, number>;
+}
+
+interface TutorialOfflineTrainingTrailDamageInput {
+  points: readonly { position: Vec3 }[];
+  radius: number;
+  damage: number;
+  damageType: string;
+  damageIntervalMs: number;
+  lastDamageTick: Map<string, number>;
+  sourceId?: string | null;
+  sourceTeam?: Team | null;
+  abilityId?: string;
 }
 
 interface TutorialOfflineTrainingConeDamageInput {
@@ -470,6 +483,61 @@ export function applyTutorialOfflineTrainingAreaDamage(input: TutorialOfflineTra
       damage: calculateFalloffDamage(input.damage, Math.sqrt(distSq), input.radius, falloffScale),
       damageType: input.damageType,
       hitPosition: input.center,
+      sourceId,
+      sourceTeam,
+      abilityId: input.abilityId,
+    });
+    if (result.applied) appliedCount++;
+  }
+
+  return appliedCount;
+}
+
+export function applyTutorialOfflineTrainingTrailDamage(input: TutorialOfflineTrainingTrailDamageInput): number {
+  const store = useGameStore.getState();
+  if (
+    !store.isPracticeMode ||
+    store.gamePhase !== 'playing' ||
+    input.points.length === 0 ||
+    input.radius <= 0 ||
+    input.damage <= 0
+  ) {
+    return 0;
+  }
+
+  const now = Date.now();
+  const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
+  const radiusSq = input.radius * input.radius;
+  let appliedCount = 0;
+
+  for (const target of store.players.values()) {
+    if (!isTutorialOfflineTrainingHero(target) || target.state !== 'alive') continue;
+    if (sourceTeam && target.team === sourceTeam) continue;
+
+    let isWithinTrail = input.points.length === 1
+      ? getSquaredDistanceToBlazeAfterburnerTrail(
+        target.position,
+        input.points[0].position,
+        input.points[0].position,
+      ) <= radiusSq
+      : false;
+    for (let pointIndex = 1; !isWithinTrail && pointIndex < input.points.length; pointIndex++) {
+      isWithinTrail = getSquaredDistanceToBlazeAfterburnerTrail(
+        target.position,
+        input.points[pointIndex - 1].position,
+        input.points[pointIndex].position,
+      ) <= radiusSq;
+    }
+    if (!isWithinTrail) continue;
+
+    const tickKey = `${sourceId ?? 'offline'}:${target.id}:${input.damageType}`;
+    if (!shouldApplyDamageTick(input.lastDamageTick, tickKey, input.damageIntervalMs, now)) continue;
+
+    const result = applyTutorialOfflineTrainingDamage({
+      target,
+      damage: input.damage,
+      damageType: input.damageType,
+      hitPosition: target.position,
       sourceId,
       sourceTeam,
       abilityId: input.abilityId,
