@@ -25,6 +25,11 @@ export type LoadoutRarity = HeroSkillRarity;
 // Placeholder ownership state, mirroring the skins armory filters.
 export type LoadoutOwnership = 'owned' | 'available' | 'locked';
 
+export interface LoadoutSkillPreviewVideo {
+  videoSrc: string;
+  posterSrc: string;
+}
+
 export interface LoadoutSlotDef {
   key: LoadoutSlotKey;
   /** keybind code, fed to formatKeybind() for the LMB / RMB / E / Q / F badge */
@@ -58,6 +63,7 @@ export interface LoadoutSkillOption extends HeroSkillItem {
   tagline: string;
   rarity: LoadoutRarity;
   ownership: LoadoutOwnership;
+  previewVideo?: LoadoutSkillPreviewVideo;
 }
 
 export type HeroLoadoutPool = Record<HeroId, Record<LoadoutSlotKey, LoadoutSkillOption[]>>;
@@ -88,6 +94,49 @@ type HeroEpicSet = {
   ability: NewEpicSkill; // slots into E or Q
   ultimate: NewEpicSkill; // F
 };
+
+const BLAZE_SKILL_PREVIEWS: Record<string, LoadoutSkillPreviewVideo> = {
+  'blaze-primaryFire-stock': {
+    videoSrc: '/videos/blaze/fireball-rockets.mp4',
+    posterSrc: '/videos/blaze/posters/fireball-rockets.jpg',
+  },
+  'blaze-primaryFire-scrapshot': {
+    videoSrc: '/videos/blaze/scrapshot.mp4',
+    posterSrc: '/videos/blaze/posters/scrapshot.jpg',
+  },
+  'blaze-secondaryFire-stock': {
+    videoSrc: '/videos/blaze/meteor-strike.mp4',
+    posterSrc: '/videos/blaze/posters/meteor-strike.jpg',
+  },
+  'blaze-secondaryFire-phosphorflare': {
+    videoSrc: '/videos/blaze/phosphor-flare.mp4',
+    posterSrc: '/videos/blaze/posters/phosphor-flare.jpg',
+  },
+  'blaze-ability1-stock': {
+    videoSrc: '/videos/blaze/flamethrower.mp4',
+    posterSrc: '/videos/blaze/posters/flamethrower.jpg',
+  },
+  'blaze-ability1-afterburner': {
+    videoSrc: '/videos/blaze/afterburner-dash.mp4',
+    posterSrc: '/videos/blaze/posters/afterburner-dash.jpg',
+  },
+  'blaze-ability2-stock': {
+    videoSrc: '/videos/blaze/rocket-jump.mp4',
+    posterSrc: '/videos/blaze/posters/rocket-jump.jpg',
+  },
+  'blaze-ultimate-stock': {
+    videoSrc: '/videos/blaze/infernal-gearstorm.mp4',
+    posterSrc: '/videos/blaze/posters/infernal-gearstorm.jpg',
+  },
+  'blaze-ultimate-phoenixdive': {
+    videoSrc: '/videos/blaze/phoenix-dive.mp4',
+    posterSrc: '/videos/blaze/posters/phoenix-dive.jpg',
+  },
+};
+
+function getSkillPreviewVideo(optionId: string): LoadoutSkillPreviewVideo | undefined {
+  return BLAZE_SKILL_PREVIEWS[optionId];
+}
 
 const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
   phantom: {
@@ -303,19 +352,22 @@ function buildDisplayMeta(item: HeroSkillItem): string[] {
 
 // The real shipped skill for the slot: common rarity, owned, equipped by default.
 function buildStockOption(heroId: HeroId, slot: LoadoutSlotDef, base: HeroSkillItem): LoadoutSkillOption {
+  const id = `${heroId}-${slot.key}-stock`;
   return {
     ...base,
-    id: `${heroId}-${slot.key}-stock`,
+    id,
     isPlaceholder: false,
     tagline: isWeaponSlot(slot) ? 'Standard issue.' : 'Default kit ability.',
     rarity: base.rarity ?? 'common',
     ownership: 'owned',
     meta: buildDisplayMeta(base),
+    previewVideo: getSkillPreviewVideo(id),
   };
 }
 
 // A hand-authored epic alternative with ownership derived from implementation status.
 function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill): LoadoutSkillOption {
+  const id = `${heroId}-${slot.key}-${def.key}`;
   const item: HeroSkillItem = {
     input: def.input,
     abilityId: def.abilityId,
@@ -330,7 +382,7 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
   };
   return {
     ...item,
-    id: `${heroId}-${slot.key}-${def.key}`,
+    id,
     isPlaceholder: false,
     tagline: def.tagline,
     rarity: 'epic',
@@ -347,6 +399,7 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
       ? 'owned'
       : 'locked',
     meta: buildDisplayMeta(item),
+    previewVideo: getSkillPreviewVideo(id),
   };
 }
 

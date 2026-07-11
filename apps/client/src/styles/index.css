@@ -3868,7 +3868,7 @@ a {
   --loadout-tier-2: var(--loadout-neutral-2);
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(14rem, 1fr) auto;
+  grid-template-rows: minmax(14rem, 1fr);
   min-width: 0;
   min-height: 0;
   isolation: isolate;
@@ -3897,19 +3897,26 @@ a {
 }
 
 .loadout-stage-copy {
-  position: relative;
-  z-index: 3;
+  position: absolute;
+  z-index: 4;
+  inset: 0 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding: clamp(0.9rem, 1.4vw, 1.25rem) clamp(0.95rem, 1.6vw, 1.35rem) 0;
+  padding: clamp(0.9rem, 1.4vw, 1.25rem) clamp(0.95rem, 1.6vw, 1.35rem) clamp(2.8rem, 7vh, 4.8rem);
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(2 4 6 / 0.88), rgb(2 4 6 / 0.48) 52%, transparent);
 }
 
 .loadout-stage-copy > div {
   position: relative;
   isolation: isolate;
   max-width: min(100%, 38rem);
+}
+
+.loadout-stage.is-skill-preview .loadout-stage-copy {
+  padding-right: clamp(7.2rem, 9vw, 8.4rem);
 }
 
 .loadout-kicker {
@@ -3969,13 +3976,13 @@ a {
 }
 
 .loadout-stage-preview {
-  position: relative;
+  position: absolute;
   z-index: 2;
+  inset: 0;
   display: flex;
   min-height: 0;
   align-items: center;
   justify-content: center;
-  padding-inline: 0.6rem;
 }
 
 .loadout-stage-preview::after {
@@ -4002,52 +4009,108 @@ a {
   transform-origin: center bottom;
 }
 
-/* equipped summary strip ------------------------------------------------ */
-.loadout-equipped-strip {
+.loadout-skill-preview {
   position: relative;
-  z-index: 3;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0 clamp(0.95rem, 1.6vw, 1.35rem) clamp(0.9rem, 1.4vw, 1.2rem);
-}
-
-.loadout-equipped-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  max-width: 100%;
-  border: 1px solid rgb(255 255 255 / 0.1);
-  border-radius: 0.32rem;
-  background: rgb(0 0 0 / 0.28);
-  padding: 0.3rem 0.46rem;
-}
-
-.loadout-equipped-key {
-  flex: 0 0 auto;
-  border-radius: 0.22rem;
-  padding: 0.18rem 0.34rem;
-  color: white;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  line-height: 1;
-  text-transform: uppercase;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-}
-
-.loadout-equipped-name {
+  z-index: 2;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  place-items: stretch;
+  isolation: isolate;
   overflow: hidden;
-  max-width: 8rem;
-  color: rgb(255 255 255 / 0.82);
-  font-family: 'Exo 2', 'Rajdhani', sans-serif;
-  font-size: 0.7rem;
-  font-weight: 800;
+  background:
+    radial-gradient(circle at 50% 38%, rgb(249 115 22 / 0.12), transparent 52%),
+    rgb(2 4 6 / 0.82);
+}
+
+.loadout-skill-preview::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgb(0 0 0 / 0.22), transparent 18% 76%, rgb(0 0 0 / 0.48)),
+    linear-gradient(90deg, rgb(103 232 249 / 0.08), transparent 1px);
+  background-size: auto, 5rem 100%;
+}
+
+.loadout-skill-video {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: rgb(1 3 5);
+}
+
+.loadout-skill-preview-heading {
+  position: absolute;
+  z-index: 3;
+  left: 0.72rem;
+  bottom: 0.72rem;
+  display: grid;
+  max-width: calc(100% - 1.44rem);
+  gap: 0.12rem;
+  border-left: 0.16rem solid var(--loadout-orange);
+  background: linear-gradient(90deg, rgb(2 4 6 / 0.9), rgb(2 4 6 / 0.58) 74%, transparent);
+  padding: 0.5rem 1.4rem 0.5rem 0.58rem;
+  text-shadow: 0 0.15rem 0.4rem rgb(0 0 0 / 0.92);
+}
+
+.loadout-skill-preview-heading strong {
+  overflow: hidden;
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1.22rem;
+  font-weight: 400;
   line-height: 1;
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.loadout-skill-preview-kicker {
+  color: rgb(103 232 249 / 0.9);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.loadout-preview-close {
+  position: absolute;
+  z-index: 5;
+  top: clamp(0.9rem, 1.4vw, 1.25rem);
+  right: clamp(0.95rem, 1.6vw, 1.35rem);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 0.28rem;
+  background: rgb(2 4 6 / 0.8);
+  padding: 0.38rem 0.52rem;
+  color: rgb(255 255 255 / 0.82);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  backdrop-filter: blur(0.45rem);
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+.loadout-preview-close:hover,
+.loadout-preview-close:focus-visible {
+  border-color: rgb(103 232 249 / 0.5);
+  background: rgb(8 18 22 / 0.9);
+  color: white;
+  outline: none;
 }
 
 /* catalog bay ----------------------------------------------------------- */
@@ -4184,6 +4247,37 @@ a {
 .loadout-row.is-legendary {
   grid-template-columns: 4.6rem minmax(0, 1fr) minmax(7.6rem, auto);
   min-height: 6.4rem;
+}
+
+.loadout-preview-hitbox {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.loadout-preview-hitbox:focus-visible {
+  border-radius: inherit;
+  outline: 2px solid rgb(103 232 249 / 0.78);
+  outline-offset: -3px;
+}
+
+.loadout-row.is-previewable .loadout-row-icon,
+.loadout-row.is-previewable .loadout-copy {
+  pointer-events: none;
+}
+
+.loadout-row.is-previewing {
+  box-shadow:
+    inset 0 0 0 1px rgb(103 232 249 / 0.54),
+    inset 0 0 1.8rem rgb(103 232 249 / 0.05),
+    0 0 1rem rgb(103 232 249 / 0.1);
+}
+
+.loadout-row.is-previewable:hover:not(.is-previewing) {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
 }
 
 /* Equipped/selected isn't shown with a heavy orange border — the row keeps only
@@ -4340,6 +4434,36 @@ a {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.16),
     0 0 0.75rem rgb(250 204 21 / 0.16);
+}
+
+.loadout-preview-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.28rem;
+  border: 1px solid rgb(103 232 249 / 0.22);
+  border-radius: 0.28rem;
+  background: rgb(103 232 249 / 0.06);
+  padding: 0.22rem 0.4rem;
+  color: rgb(165 243 252 / 0.72);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.loadout-preview-chip > span {
+  color: rgb(249 115 22 / 0.9);
+  font-size: 0.48rem;
+}
+
+.loadout-preview-chip.is-playing {
+  border-color: rgb(103 232 249 / 0.48);
+  background: rgb(103 232 249 / 0.13);
+  color: rgb(207 250 254);
+  box-shadow: 0 0 0.65rem rgb(103 232 249 / 0.12);
 }
 
 .loadout-copy p {

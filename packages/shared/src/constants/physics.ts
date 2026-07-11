@@ -126,7 +126,7 @@ export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
 
 // Afterburner Dash
 export const BLAZE_AFTERBURNER_DASH_SPEED = 24;
-export const BLAZE_AFTERBURNER_DASH_DURATION_MS = 360;
+export const BLAZE_AFTERBURNER_DASH_DURATION_MS = 420;
 
 // Phoenix Dive uses a staged server-authoritative movement sequence: a strong
 // vertical launch, then a short locked downward plunge over the selected point.
