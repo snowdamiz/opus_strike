@@ -97,6 +97,14 @@ interface TutorialOfflineScrapshotInput {
   sourceTeam?: Team | null;
 }
 
+export interface TutorialOfflineScrapshotResult {
+  appliedPellets: number;
+  playerImpacts: Array<{
+    pelletIndex: number;
+    position: Vec3;
+  }>;
+}
+
 interface TutorialOfflineBurn {
   targetId: string;
   sourceId: string | null;
@@ -539,14 +547,21 @@ export function applyTutorialOfflineTrainingConeDamage(input: TutorialOfflineTra
   return appliedCount;
 }
 
-export function applyTutorialOfflineTrainingScrapshot(input: TutorialOfflineScrapshotInput): number {
+export function applyTutorialOfflineTrainingScrapshot(
+  input: TutorialOfflineScrapshotInput,
+): TutorialOfflineScrapshotResult {
   const store = useGameStore.getState();
-  if (!store.isPracticeMode || store.gamePhase !== 'playing') return 0;
+  if (!store.isPracticeMode || store.gamePhase !== 'playing') {
+    return { appliedPellets: 0, playerImpacts: [] };
+  }
 
   const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
   let appliedPellets = 0;
+  const playerImpacts: TutorialOfflineScrapshotResult['playerImpacts'] = [];
 
-  for (const direction of getBlazeScrapshotPelletDirections(input.direction)) {
+  const pelletDirections = getBlazeScrapshotPelletDirections(input.direction);
+  for (let pelletIndex = 0; pelletIndex < pelletDirections.length; pelletIndex++) {
+    const direction = pelletDirections[pelletIndex];
     let closestTarget: Player | null = null;
     let closestHit: ReturnType<typeof getSegmentHitAgainstPlayerCombatHitbox> = null;
 
@@ -575,10 +590,16 @@ export function applyTutorialOfflineTrainingScrapshot(input: TutorialOfflineScra
       sourceTeam,
       abilityId: 'blaze_scrapshot',
     });
-    if (result.applied) appliedPellets++;
+    if (result.applied) {
+      appliedPellets++;
+      playerImpacts.push({
+        pelletIndex,
+        position: { ...closestHit.targetPoint },
+      });
+    }
   }
 
-  return appliedPellets;
+  return { appliedPellets, playerImpacts };
 }
 
 export function applyTutorialOfflineTrainingTimebreakKnockback(input: TutorialOfflineTimebreakKnockbackInput): number {

@@ -26,6 +26,7 @@ export interface SharedMovementSimulationInput {
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
   chronosAscendantActive?: boolean;
+  forcedHorizontalVelocity?: { x: number; z: number };
 }
 
 export interface SharedMovementSimulationResult {
@@ -56,14 +57,34 @@ function getSharedMovementCollisionWorld(input: SharedMovementSimulationInput): 
 }
 
 export function simulateSharedMovement(input: SharedMovementSimulationInput): SharedMovementSimulationResult {
+  const forcedHorizontalVelocity = input.forcedHorizontalVelocity;
+  const velocity = forcedHorizontalVelocity
+    ? {
+      ...input.velocity,
+      x: forcedHorizontalVelocity.x,
+      z: forcedHorizontalVelocity.z,
+    }
+    : input.velocity;
+  const movementInput = forcedHorizontalVelocity
+    ? {
+      ...input.input,
+      moveForward: false,
+      moveBackward: false,
+      moveLeft: false,
+      moveRight: false,
+      crouch: false,
+      crouchPressed: false,
+      sprint: false,
+    }
+    : input.input;
   const result = simulateCapsuleMotor({
     state: {
       position: input.position,
-      velocity: input.velocity,
+      velocity,
       movement: input.movement,
     },
     command: {
-      input: input.input,
+      input: movementInput,
       lookYaw: input.lookYaw,
     },
     terrain: getSharedMovementCollisionWorld(input),

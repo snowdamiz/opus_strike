@@ -14,6 +14,7 @@ import {
 const expectedAbilityIds = [
   'blaze_bomb',
   'blaze_flamethrower',
+  'blaze_phosphor_flare',
   'blaze_rocket',
   'blaze_rocketjump',
   'blaze_scrapshot',
@@ -26,6 +27,8 @@ const expectedAbilityIds = [
   'hookshot_heavy_attack',
   'phantom_dire_ball',
   'phantom_personal_shield',
+  'phantom_rift_bolt',
+  'phantom_soulrend_daggers',
   'phantom_void_ray',
   'phantom_void_ray_charge',
 ];
@@ -45,6 +48,19 @@ assert.ok(phantomDefault);
 assert.equal(phantomDefault.side, 1);
 assert.deepEqual(phantomDefault.socketNames, [PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1]]);
 assert.equal(phantomDefault.fallbackOffset.sideOffset, PHANTOM_DIRE_BALL_SOCKET.sideOffset);
+
+const soulrendLeft = resolveAbilitySocket({ abilityId: 'phantom_soulrend_daggers', side: -1 });
+assert.ok(soulrendLeft);
+assert.equal(soulrendLeft.heroId, 'phantom');
+assert.equal(soulrendLeft.socketRole, 'primaryPalm');
+assert.equal(soulrendLeft.side, -1);
+assert.deepEqual(soulrendLeft.socketNames, [PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1]]);
+
+const riftBolt = resolveAbilitySocket({ abilityId: 'phantom_rift_bolt' });
+assert.ok(riftBolt);
+assert.equal(riftBolt.heroId, 'phantom');
+assert.equal(riftBolt.socketRole, 'voidRayOrb');
+assert.equal(riftBolt.side, null);
 
 const phantomShieldBoth = resolveAbilitySocket({ abilityId: 'phantom_personal_shield' });
 assert.ok(phantomShieldBoth);

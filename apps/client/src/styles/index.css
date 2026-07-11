@@ -1865,6 +1865,20 @@ a {
   white-space: nowrap;
 }
 
+.main-lobby-ca-address-compact {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .main-lobby-ca-address-full {
+    display: none;
+  }
+
+  .main-lobby-ca-address-compact {
+    display: inline;
+  }
+}
+
 .main-lobby-controls {
   justify-self: end;
 }
@@ -4943,11 +4957,9 @@ a {
 
 .global-chat-message-text {
   min-width: 0;
-  overflow: hidden;
   overflow-wrap: anywhere;
   color: rgb(255 255 255 / 0.72);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .global-chat-empty {

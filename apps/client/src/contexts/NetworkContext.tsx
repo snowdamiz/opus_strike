@@ -77,7 +77,7 @@ import { createPracticeAbilityStates } from '../utils/practiceAbilityStates';
 import { usePartyStore } from '../store/partyStore';
 import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 import { useStreamerStore } from '../store/streamerStore';
-import { useLoadoutStore } from '../store/loadoutStore';
+import { resolveHeroAbilityBindings, useLoadoutStore } from '../store/loadoutStore';
 import {
   getStreamerMapTransitionKey,
   preloadStreamerMapTransitionTarget,
@@ -430,7 +430,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           )
           : practiceHeroStats.maxHealth;
         player.ultimateCharge = 100;
-        player.abilities = createPracticeAbilityStates(practiceHeroId);
+        player.abilities = createPracticeAbilityStates(
+          practiceHeroId,
+          useLoadoutStore.getState().blazeUltimateSkill,
+        );
         player.hasFlag = false;
 
         useGameStore.setState({
@@ -1147,9 +1150,25 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         });
 
       setupGameListeners(gameRoomRef.current, playerName);
+      gameRoomRef.current.send('setPhantomPrimarySkill', {
+        skill: useLoadoutStore.getState().phantomPrimarySkill,
+      });
+      gameRoomRef.current.send('setPhantomSecondarySkill', {
+        skill: useLoadoutStore.getState().phantomSecondarySkill,
+      });
       gameRoomRef.current.send('setBlazePrimarySkill', {
         skill: useLoadoutStore.getState().blazePrimarySkill,
       });
+      gameRoomRef.current.send('setBlazeSecondarySkill', {
+        skill: useLoadoutStore.getState().blazeSecondarySkill,
+      });
+      gameRoomRef.current.send('setBlazeUltimateSkill', {
+        skill: useLoadoutStore.getState().blazeUltimateSkill,
+      });
+      gameRoomRef.current.send(
+        'setBlazeAbilityBindings',
+        resolveHeroAbilityBindings('blaze', useLoadoutStore.getState().heroAbilityBindings)
+      );
 
       setRoomId(gameRoomRef.current.id);
       setPlayerId(gameRoomRef.current.sessionId);

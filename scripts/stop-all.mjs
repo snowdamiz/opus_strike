@@ -29,7 +29,7 @@ const processPatterns = [
   },
   {
     label: 'dev log followers',
-    pattern: 'docker[[:space:]]+compose([^[:space:]]*[[:space:]]+)*logs[[:space:]]+-f[[:space:]]+(postgres|redis|server-us-1|server-us-2|server-us-3|server-eu-1|server-asia-1)',
+    pattern: 'docker[[:space:]]+compose([^[:space:]]*[[:space:]]+)*logs[[:space:]]+-f[[:space:]]+(postgres|redis|server-us-1|server-eu-1|server-asia-1)',
   },
   {
     label: 'dev:all runner',
@@ -41,7 +41,7 @@ const processPatterns = [
   },
 ];
 
-const devPorts = [3000, 2567, 2568, 2569, 2570, 2571, 3030, 3031];
+const devPorts = [3000, 2567, 2568, 2569, 3030, 3031];
 const servicePorts = [5432, 55433, 56379, 7880, 7881];
 const watchedPorts = [...new Set([...devPorts, ...servicePorts])];
 
@@ -50,8 +50,6 @@ const knownContainers = [
   'voxel-strike-redis',
   'voxel-strike-livekit',
   'voxel-strike-server-us-1',
-  'voxel-strike-server-us-2',
-  'voxel-strike-server-us-3',
   'voxel-strike-server-eu-1',
   'voxel-strike-server-asia-1',
 ];

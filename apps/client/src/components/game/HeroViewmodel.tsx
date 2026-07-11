@@ -4886,6 +4886,20 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
           }
           break;
         }
+
+        for (let index = store.riftBolts.length - 1; index >= 0; index--) {
+          const bolt = store.riftBolts[index];
+          if (bolt.ownerId !== localPlayerId) continue;
+
+          if (processedPhantomVoidRayEventIdRef.current !== bolt.id) {
+            processedPhantomVoidRayEventIdRef.current = bolt.id;
+            phantomVoidRayReleaseRef.current = {
+              eventId: bolt.id,
+              startTimeMs: bolt.startTime - PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS * 1000,
+            };
+          }
+          break;
+        }
       }
     }
 

@@ -62,6 +62,14 @@ export const ABILITY_SOCKET_CATALOG = {
     socketNames: sideSocketNames(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, 'both'),
     fallbackOffset: PHANTOM_DIRE_BALL_SOCKET,
   },
+  phantom_soulrend_daggers: {
+    abilityId: 'phantom_soulrend_daggers',
+    heroId: 'phantom',
+    socketRole: 'primaryPalm',
+    sideMode: 'launchSide',
+    socketNames: sideSocketNames(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, 'both'),
+    fallbackOffset: PHANTOM_DIRE_BALL_SOCKET,
+  },
   phantom_void_ray_charge: {
     abilityId: 'phantom_void_ray_charge',
     heroId: 'phantom',
@@ -72,6 +80,14 @@ export const ABILITY_SOCKET_CATALOG = {
   },
   phantom_void_ray: {
     abilityId: 'phantom_void_ray',
+    heroId: 'phantom',
+    socketRole: 'voidRayOrb',
+    sideMode: 'center',
+    socketNames: [PHANTOM_VOID_RAY_ORB_SOCKET_NAME],
+    fallbackOffset: PHANTOM_VOID_RAY_SOCKET,
+  },
+  phantom_rift_bolt: {
+    abilityId: 'phantom_rift_bolt',
     heroId: 'phantom',
     socketRole: 'voidRayOrb',
     sideMode: 'center',
@@ -128,6 +144,14 @@ export const ABILITY_SOCKET_CATALOG = {
   },
   blaze_bomb: {
     abilityId: 'blaze_bomb',
+    heroId: 'blaze',
+    socketRole: 'staffTip',
+    sideMode: 'right',
+    socketNames: [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME],
+    fallbackOffset: BLAZE_ROCKET_STAFF_SOCKET,
+  },
+  blaze_phosphor_flare: {
+    abilityId: 'blaze_phosphor_flare',
     heroId: 'blaze',
     socketRole: 'staffTip',
     sideMode: 'right',

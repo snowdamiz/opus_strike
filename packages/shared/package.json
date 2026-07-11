@@ -24,6 +24,9 @@
     "test:model-system": "pnpm build && node scripts/hero-skin-catalog.test.mjs",
     "test:model-sockets": "pnpm build && node scripts/ability-socket-catalog.test.mjs",
     "test:scrapshot": "pnpm build && node scripts/blaze-scrapshot.test.mjs",
+    "test:phosphor-flare": "pnpm build && node scripts/blaze-phosphor-flare.test.mjs",
+    "test:rift-bolt": "pnpm build && node scripts/phantom-rift-bolt.test.mjs",
+    "test:afterburner": "pnpm build && node scripts/blaze-afterburner.test.mjs",
     "test:maps": "pnpm build && node scripts/procedural-building-smoke.mjs --known",
     "smoke:buildings": "pnpm build && node scripts/procedural-building-smoke.mjs",
     "clean": "rm -rf dist"

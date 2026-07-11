@@ -34,6 +34,7 @@ export interface MovementPredictionContext {
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
   chronosAscendantActive?: boolean;
+  forcedHorizontalVelocity?: { x: number; z: number };
 }
 
 export interface PredictionCommandRecord {
@@ -517,6 +518,7 @@ export class MovementPredictionController {
       flagCarrier: context.flagCarrier,
       activeSpeedMultiplier: context.activeSpeedMultiplier,
       chronosAscendantActive: context.chronosAscendantActive,
+      forcedHorizontalVelocity: context.forcedHorizontalVelocity,
     });
 
     // simulateSharedMovement always returns a freshly-allocated, fully-independent

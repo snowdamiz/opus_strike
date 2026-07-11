@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import {
   BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
 } from '@voxel-strike/shared';
 import {
-  BlazeGearstormTracker,
+  BlazeAfterburnerTrailTracker,
+  BlazeLingeringAreaTracker,
   PendingAreaDamageQueue,
   VoidZoneTracker,
   type PendingAreaDamageInstance,
@@ -25,12 +30,141 @@ function createPendingAreaDamage(
   };
 }
 
+{
+  const tracker = new BlazeLingeringAreaTracker();
+  const hits: number[] = [];
+  tracker.add({
+    id: 'delayed-phosphor-pool',
+    ownerId: 'owner',
+    ownerTeam: 'red',
+    position: { x: 0, y: 0, z: 0 },
+    radius: 3,
+    damage: 12,
+    damageIntervalMs: BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+    damageType: 'phosphor_flare',
+    abilityId: 'blaze_phosphor_flare',
+    falloffScale: 0,
+    startTime: 2_000,
+    endTime: 6_000,
+  });
+  const update = (now: number) => tracker.update(now, {
+    hasOwner: () => true,
+    getTargets: () => [createTarget('inside', { x: 1, y: 0, z: 0 })],
+    applyDamage: () => hits.push(now),
+  });
+
+  update(1_999);
+  assert.deepEqual(hits, []);
+  update(2_000);
+  assert.deepEqual(hits, [2_000]);
+  update(2_000 + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS - 1);
+  assert.deepEqual(hits, [2_000]);
+  update(2_000 + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS);
+  assert.deepEqual(hits, [2_000, 2_000 + BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS]);
+}
+
 function createTarget(
   id: string,
   position: { x: number; y: number; z: number },
   state = 'alive'
 ) {
   return { id, position, state };
+}
+
+{
+  const tracker = new BlazeAfterburnerTrailTracker();
+  const startPosition = { x: 0, y: 2, z: 0 };
+  const endPosition = { x: 8, y: 2, z: 0 };
+  tracker.add({
+    id: 'afterburner-trail',
+    ownerId: 'owner',
+    ownerTeam: 'red',
+    points: [startPosition],
+    radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+    damage: 6,
+    damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+    startTime: 1_000,
+    endTime: 3_400,
+  });
+  startPosition.x = 99;
+  assert.equal(tracker.appendPoint('afterburner-trail', endPosition), true);
+  endPosition.x = 99;
+
+  const targets = [
+    createTarget('middle', { x: 4, y: 2.5, z: 0 }),
+    createTarget('endpoint', { x: 8.5, y: 2, z: 0 }),
+    createTarget('outside', { x: 4, y: 4, z: 0 }),
+  ];
+  const hits: string[] = [];
+  let observedBounds: { center: { x: number; y: number; z: number }; halfLength: number } | null = null;
+  const update = (now: number) => tracker.update(now, {
+    hasOwner: () => true,
+    getTargets: (trail) => {
+      observedBounds = {
+        center: { ...trail.boundsCenter },
+        halfLength: trail.boundsHalfLength,
+      };
+      return targets;
+    },
+    applyDamage: (_trail, target) => hits.push(target.id),
+  });
+
+  update(1_000);
+  assert.deepEqual(hits, ['middle', 'endpoint']);
+  assert.deepEqual(observedBounds, {
+    center: { x: 4, y: 2, z: 0 },
+    halfLength: 4,
+  });
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS - 1);
+  assert.equal(hits.length, 2);
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS);
+  assert.equal(hits.length, 4);
+  update(3_400);
+  assert.equal(tracker.size, 0);
+}
+
+{
+  const tracker = new BlazeAfterburnerTrailTracker();
+  tracker.add({
+    id: 'capped-trail',
+    ownerId: 'owner',
+    ownerTeam: 'red',
+    points: [{ x: 0, y: 0, z: 0 }],
+    radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+    damage: 6,
+    damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+    startTime: 1_000,
+    endTime: 4_000,
+  });
+  for (let index = 1; index < BLAZE_AFTERBURNER_MAX_TRAIL_POINTS; index++) {
+    assert.equal(tracker.appendPoint('capped-trail', { x: index, y: 0, z: 0 }), true);
+  }
+  assert.equal(tracker.appendPoint('capped-trail', { x: 999, y: 0, z: 0 }), false);
+
+  let positionReads = 0;
+  const target = createTarget('inside', { x: 0.5, y: 0, z: 0 });
+  const trackedPosition = target.position;
+  Object.defineProperty(target, 'position', {
+    get: () => {
+      positionReads += 1;
+      return trackedPosition;
+    },
+  });
+  let hitCount = 0;
+  const update = (now: number) => tracker.update(now, {
+    hasOwner: () => true,
+    getTargets: () => [target],
+    applyDamage: () => { hitCount += 1; },
+  });
+
+  update(1_000);
+  assert.equal(hitCount, 1);
+  const readsAfterDamage = positionReads;
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS - 1);
+  assert.equal(positionReads, readsAfterDamage);
+  update(1_000 + BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS);
+  assert.ok(positionReads > readsAfterDamage);
+  assert.equal(hitCount, 2);
 }
 
 {
@@ -65,7 +199,7 @@ function createTarget(
 }
 
 {
-  const tracker = new BlazeGearstormTracker();
+  const tracker = new BlazeLingeringAreaTracker();
   const position = { x: 0, y: 0, z: 0 };
 
   tracker.add({
@@ -75,6 +209,10 @@ function createTarget(
     position,
     radius: 5,
     damage: 20,
+    damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+    damageType: 'airstrike',
+    abilityId: 'blaze_airstrike',
+    falloffScale: 0.35,
     startTime: 1_000,
     endTime: 5_000,
   });
@@ -128,7 +266,7 @@ function createTarget(
 }
 
 {
-  const tracker = new BlazeGearstormTracker();
+  const tracker = new BlazeLingeringAreaTracker();
   let targetsQueried = false;
 
   tracker.add({
@@ -138,6 +276,10 @@ function createTarget(
     position: { x: 0, y: 0, z: 0 },
     radius: 5,
     damage: 10,
+    damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+    damageType: 'airstrike',
+    abilityId: 'blaze_airstrike',
+    falloffScale: 0.35,
     startTime: 1_000,
     endTime: 2_000,
   });
@@ -165,7 +307,7 @@ function createTarget(
 }
 
 {
-  const tracker = new BlazeGearstormTracker();
+  const tracker = new BlazeLingeringAreaTracker();
 
   tracker.add({
     id: 'storm-clear',
@@ -174,6 +316,10 @@ function createTarget(
     position: { x: 0, y: 0, z: 0 },
     radius: 5,
     damage: 10,
+    damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+    damageType: 'airstrike',
+    abilityId: 'blaze_airstrike',
+    falloffScale: 0.35,
     startTime: 1_000,
     endTime: 2_000,
   });

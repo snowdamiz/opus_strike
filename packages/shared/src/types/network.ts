@@ -4,6 +4,7 @@ import type { HeroSkinId } from './skins.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
+import type { BlazeAbilityBindings, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, PhantomPrimarySkill, PhantomSecondarySkill } from './loadout.js';
 import type { MovementCommandPacket, SelfMovementAck, SelfMovementAuthority } from './movementPrediction.js';
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
@@ -19,6 +20,12 @@ export type ClientMessage =
   | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
   | { type: 'mapPing'; payload: MapPingRequestMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
+  | { type: 'setPhantomPrimarySkill'; payload: { skill: PhantomPrimarySkill } }
+  | { type: 'setPhantomSecondarySkill'; payload: { skill: PhantomSecondarySkill } }
+  | { type: 'setBlazePrimarySkill'; payload: { skill: BlazePrimarySkill } }
+  | { type: 'setBlazeSecondarySkill'; payload: { skill: BlazeSecondarySkill } }
+  | { type: 'setBlazeUltimateSkill'; payload: { skill: BlazeUltimateSkill } }
+  | { type: 'setBlazeAbilityBindings'; payload: BlazeAbilityBindings }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'devDownHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
@@ -103,6 +110,8 @@ export interface AbilityUsedMessage {
   targetPosition?: Vec3;
   interceptPosition?: Vec3;
   impactPosition?: Vec3;
+  ricochetPosition?: Vec3;
+  ricochetTargetId?: string;
   interceptedByChronosAegis?: boolean;
   targetIds?: string[];
   pelletImpacts?: Array<{
@@ -134,9 +143,14 @@ export interface AbilityUsedMessage {
   duration?: number;
   meteorStartTime?: number;
   impactTime?: number;
+  impactProgress?: number;
   active?: boolean;
   fuel?: number;
   supercharged?: boolean;
+  trailStartPosition?: Vec3;
+  dashDurationMs?: number;
+  phase?: 'launch' | 'hover' | 'dive' | 'impact';
+  expiresAt?: number;
 }
 
 export interface MapPingRequestMessage {

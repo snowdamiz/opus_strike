@@ -11,8 +11,10 @@ import type {
   VoidZoneData,
   DireBallData,
   VoidRayData,
+  RiftBoltData,
   RocketData,
   BombData,
+  PhosphorFlareData,
   ChronosPulseData,
   HookProjectileData,
   DragHookData,
@@ -30,6 +32,7 @@ export interface ProjectileState {
   voidZones: VoidZoneData[];
   direBalls: DireBallData[];
   voidRays: VoidRayData[];
+  riftBolts: RiftBoltData[];
   voidRayCharging: boolean;
   voidRayChargeStart: number;
   phantomPrimaryAmmo: number;
@@ -44,8 +47,11 @@ export interface ProjectileState {
   blazePrimaryReloadStart: number;
   blazePrimaryReloadEnd: number;
   bombs: BombData[];
+  phosphorFlares: PhosphorFlareData[];
   bombTargeting: boolean;
   bombTargetValid: boolean;
+  phoenixDiveTargeting: boolean;
+  phoenixDiveTargetValid: boolean;
   flamethrowerActive: boolean;
   flamethrowerFuel: number;
 
@@ -72,18 +78,26 @@ export interface ProjectileActions {
 
   // Dire ball actions
   addDireBall: (ball: DireBallData) => void;
+  updateDireBall: (id: string, updates: Partial<DireBallData>) => void;
   removeDireBall: (id: string) => void;
   removeDireBalls: (ids: readonly string[]) => void;
   clearExpiredDireBalls: () => void;
   setPhantomPrimaryAmmo: (ammo: number) => void;
   setPhantomPrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
-  resetPhantomPrimaryMagazine: () => void;
+  resetPhantomPrimaryMagazine: (magazineSize?: number) => void;
 
   // Void ray actions
   addVoidRay: (ray: VoidRayData) => void;
   removeVoidRay: (id: string) => void;
   clearExpiredVoidRays: () => void;
   setVoidRayCharging: (charging: boolean, startTime?: number) => void;
+
+  // Rift bolt actions
+  addRiftBolt: (bolt: RiftBoltData) => void;
+  updateRiftBolt: (id: string, updates: Partial<RiftBoltData>) => void;
+  removeRiftBolt: (id: string) => void;
+  removeRiftBoltsByOwner: (ownerId: string) => void;
+  clearExpiredRiftBolts: () => void;
 
   // Blaze rocket actions
   addRocket: (rocket: RocketData) => void;
@@ -99,6 +113,12 @@ export interface ProjectileActions {
   removeBomb: (id: string) => void;
   clearExpiredBombs: () => void;
   setBombTargeting: (targeting: boolean, valid?: boolean) => void;
+  setPhoenixDiveTargeting: (targeting: boolean, valid?: boolean) => void;
+
+  // Blaze phosphor flare actions
+  addPhosphorFlare: (flare: PhosphorFlareData) => void;
+  removePhosphorFlare: (id: string) => void;
+  clearExpiredPhosphorFlares: () => void;
 
   // Blaze flamethrower actions
   setFlamethrowerActive: (active: boolean) => void;
@@ -157,6 +177,7 @@ export const projectileInitialState: ProjectileState = {
   voidZones: [],
   direBalls: [],
   voidRays: [],
+  riftBolts: [],
   voidRayCharging: false,
   voidRayChargeStart: 0,
   phantomPrimaryAmmo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
@@ -169,8 +190,11 @@ export const projectileInitialState: ProjectileState = {
   blazePrimaryReloadStart: 0,
   blazePrimaryReloadEnd: 0,
   bombs: [],
+  phosphorFlares: [],
   bombTargeting: false,
   bombTargetValid: false,
+  phoenixDiveTargeting: false,
+  phoenixDiveTargetValid: false,
   flamethrowerActive: false,
   flamethrowerFuel: 100,
   chronosPulses: [],
@@ -193,8 +217,10 @@ const PROJECTILE_LIMITS = {
   voidZones: 24,
   direBalls: 96,
   voidRays: 32,
+  riftBolts: 24,
   rockets: 96,
   bombs: 32,
+  phosphorFlares: 32,
   chronosPulses: 96,
   hookProjectiles: 64,
   dragHooks: 32,
@@ -225,12 +251,20 @@ function getVoidRayExpiresAt(ray: VoidRayData): number {
   return ray.startTime + VOID_RAY_VISUAL_RETENTION_MS;
 }
 
+function getRiftBoltExpiresAt(bolt: RiftBoltData): number {
+  return bolt.expiresAt;
+}
+
 function getRocketExpiresAt(rocket: RocketData): number {
   return rocket.startTime + ROCKET_VISUAL_LIFETIME_MS;
 }
 
 function getBombExpiresAt(bomb: BombData): number {
   return bomb.startTime + BOMB_VISUAL_FALLBACK_LIFETIME_MS;
+}
+
+function getPhosphorFlareExpiresAt(flare: PhosphorFlareData): number {
+  return flare.poolEndsAt + 750;
 }
 
 function getChronosPulseExpiresAt(pulse: ChronosPulseData): number {
@@ -403,6 +437,14 @@ export const createProjectileSlice: StateCreator<
     return direBalls === state.direBalls ? state : { direBalls };
   }),
 
+  updateDireBall: (id, updates) => set((state) => {
+    const index = state.direBalls.findIndex((ball) => ball.id === id);
+    if (index < 0) return state;
+    const direBalls = [...state.direBalls];
+    direBalls[index] = { ...direBalls[index], ...updates };
+    return { direBalls };
+  }),
+
   removeDireBall: (id) => set((state) => {
     const direBalls = removeById(state.direBalls, id);
     return direBalls === state.direBalls ? state : { direBalls };
@@ -439,9 +481,9 @@ export const createProjectileSlice: StateCreator<
     };
   }),
 
-  resetPhantomPrimaryMagazine: () => set((state) => {
+  resetPhantomPrimaryMagazine: (magazineSize = PHANTOM_PRIMARY_MAGAZINE_SIZE) => set((state) => {
     if (
-      state.phantomPrimaryAmmo === PHANTOM_PRIMARY_MAGAZINE_SIZE &&
+      state.phantomPrimaryAmmo === magazineSize &&
       !state.phantomPrimaryReloading &&
       state.phantomPrimaryReloadStart === 0 &&
       state.phantomPrimaryReloadEnd === 0
@@ -450,7 +492,7 @@ export const createProjectileSlice: StateCreator<
     }
 
     return {
-      phantomPrimaryAmmo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+      phantomPrimaryAmmo: magazineSize,
       phantomPrimaryReloading: false,
       phantomPrimaryReloadStart: 0,
       phantomPrimaryReloadEnd: 0,
@@ -479,6 +521,33 @@ export const createProjectileSlice: StateCreator<
       voidRayCharging: charging,
       voidRayChargeStart: startTime,
     };
+  }),
+
+  // ==================== RIFT BOLTS ====================
+  addRiftBolt: (bolt) => set((state) => {
+    const withoutPreviousOwnerBolt = state.riftBolts.filter((candidate) => candidate.ownerId !== bolt.ownerId);
+    const riftBolts = appendUnique(withoutPreviousOwnerBolt, bolt, PROJECTILE_LIMITS.riftBolts);
+    return { riftBolts };
+  }),
+
+  updateRiftBolt: (id, updates) => set((state) => {
+    const riftBolts = updateById(state.riftBolts, id, updates);
+    return riftBolts === state.riftBolts ? state : { riftBolts };
+  }),
+
+  removeRiftBolt: (id) => set((state) => {
+    const riftBolts = removeById(state.riftBolts, id);
+    return riftBolts === state.riftBolts ? state : { riftBolts };
+  }),
+
+  removeRiftBoltsByOwner: (ownerId) => set((state) => {
+    const riftBolts = state.riftBolts.filter((bolt) => bolt.ownerId !== ownerId);
+    return riftBolts.length === state.riftBolts.length ? state : { riftBolts };
+  }),
+
+  clearExpiredRiftBolts: () => set((state) => {
+    const riftBolts = filterExpiredByExpiry(state.riftBolts, getRiftBoltExpiresAt);
+    return riftBolts === state.riftBolts ? state : { riftBolts };
   }),
 
   // ==================== ROCKETS ====================
@@ -564,6 +633,30 @@ export const createProjectileSlice: StateCreator<
       bombTargeting: targeting,
       bombTargetValid: valid,
     };
+  }),
+
+  setPhoenixDiveTargeting: (targeting, valid = false) => set((state) => {
+    if (state.phoenixDiveTargeting === targeting && state.phoenixDiveTargetValid === valid) return state;
+    return {
+      phoenixDiveTargeting: targeting,
+      phoenixDiveTargetValid: valid,
+    };
+  }),
+
+  // ==================== PHOSPHOR FLARES ====================
+  addPhosphorFlare: (flare) => set((state) => {
+    const phosphorFlares = appendUnique(state.phosphorFlares, flare, PROJECTILE_LIMITS.phosphorFlares);
+    return phosphorFlares === state.phosphorFlares ? state : { phosphorFlares };
+  }),
+
+  removePhosphorFlare: (id) => set((state) => {
+    const phosphorFlares = removeById(state.phosphorFlares, id);
+    return phosphorFlares === state.phosphorFlares ? state : { phosphorFlares };
+  }),
+
+  clearExpiredPhosphorFlares: () => set((state) => {
+    const phosphorFlares = filterExpiredByExpiry(state.phosphorFlares, getPhosphorFlareExpiresAt);
+    return phosphorFlares === state.phosphorFlares ? state : { phosphorFlares };
   }),
 
   // ==================== FLAMETHROWER ====================
@@ -762,6 +855,12 @@ export const createProjectileSlice: StateCreator<
       next.voidRays = voidRays;
     }
 
+    const riftBolts = filterExpiredByExpiryAt(state.riftBolts, now, getRiftBoltExpiresAt);
+    if (riftBolts !== state.riftBolts) {
+      next ??= {};
+      next.riftBolts = riftBolts;
+    }
+
     const rockets = filterExpiredByExpiryAt(state.rockets, now, getRocketExpiresAt);
     if (rockets !== state.rockets) {
       next ??= {};
@@ -772,6 +871,12 @@ export const createProjectileSlice: StateCreator<
     if (bombs !== state.bombs) {
       next ??= {};
       next.bombs = bombs;
+    }
+
+    const phosphorFlares = filterExpiredByExpiryAt(state.phosphorFlares, now, getPhosphorFlareExpiresAt);
+    if (phosphorFlares !== state.phosphorFlares) {
+      next ??= {};
+      next.phosphorFlares = phosphorFlares;
     }
 
     const chronosPulses = filterExpiredByExpiryAt(state.chronosPulses, now, getChronosPulseExpiresAt);

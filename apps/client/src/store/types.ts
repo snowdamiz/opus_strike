@@ -183,6 +183,8 @@ export interface DireBallData {
   launchSide?: -1 | 1;
   launchYaw?: number;
   viewmodelEventId?: string;
+  abilityId?: 'phantom_dire_ball' | 'phantom_soulrend_daggers';
+  ricochetPosition?: { x: number; y: number; z: number };
 }
 
 export interface VoidRayData {
@@ -192,6 +194,18 @@ export interface VoidRayData {
   impactPosition?: { x: number; y: number; z: number };
   interceptedByChronosAegis?: boolean;
   startTime: number;
+  ownerId: string;
+  ownerTeam: Team;
+}
+
+export interface RiftBoltData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
+  startTime: number;
+  expiresAt: number;
   ownerId: string;
   ownerTeam: Team;
 }
@@ -225,6 +239,21 @@ export interface BombData {
   ownerId: string;
   ownerTeam: Team;
   hasExploded: boolean;
+}
+
+export interface PhosphorFlareData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  targetPosition: { x: number; y: number; z: number };
+  impactPosition: { x: number; y: number; z: number };
+  interceptedByChronosAegis: boolean;
+  impactProgress: number;
+  startTime: number;
+  impactTime: number;
+  poolEndsAt: number;
+  radius: number;
+  ownerId: string;
+  ownerTeam: Team;
 }
 
 // ============================================================================

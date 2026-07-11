@@ -46,6 +46,7 @@ import {
   type PrimaryMagazineState,
 } from './primaryMagazine';
 import { PhantomVoidRayChargeTracker } from './phantomVoidRayCharge';
+import { PhantomRiftBoltTracker } from './phantomRiftBolt';
 import {
   PlayerPressStateTracker,
   type PlayerPressState,
@@ -62,6 +63,7 @@ import { buildRoomChatPayload, getRoomChatRecipientIds } from './roomChatRuntime
 import { RoomNpcRegistry } from './roomNpcRegistry';
 import { RoomParticipantRegistry } from './roomParticipantRegistry';
 import { RoomMapRuntime } from './roomMapRuntime';
+import { raycastVoxelTerrain } from './voxelTerrainRaycast';
 import {
   createBattleRoyalSafeZoneState,
   isOutsideBattleRoyalSafeZone,
@@ -206,7 +208,8 @@ import {
   shouldStartCountdownAfterSceneReady,
 } from './matchStartReadiness';
 import {
-  BlazeGearstormTracker,
+  BlazeAfterburnerTrailTracker,
+  BlazeLingeringAreaTracker,
   PendingAreaDamageQueue,
   VoidZoneTracker,
   type PendingAreaDamageInstance,
@@ -241,6 +244,8 @@ import {
   getAttackPreflightRejection,
   getChronosAegisCollisionRadiusForAttack,
   getRoomAttackConfig,
+  selectSoulrendRicochetTarget,
+  shouldResolveBlazeSecondaryAttack,
   withHookshotHeavyAttackTargetHint,
   type AttackConfig,
   type AttackMode,
@@ -272,6 +277,7 @@ import {
   BHOP_GROUND_ACCEL,
   BHOP_GROUND_FRICTION,
   BHOP_GROUND_STOP_THRESHOLD,
+  BHOP_MAX_VELOCITY,
   BHOP_NO_INPUT_FRICTION_MULTIPLIER,
   BHOP_STOP_SPEED,
   CROUCH_MULTIPLIER,
@@ -292,6 +298,7 @@ import {
   BLAZE_FLAMETHROWER_BURN_DAMAGE,
   BLAZE_GEARSTORM_RADIUS,
   BLAZE_GEARSTORM_DAMAGE,
+  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_SCRAPSHOT_MAGAZINE_SIZE,
@@ -301,6 +308,25 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_BOMB_MAX_RANGE,
   BLAZE_BOMB_MIN_RANGE,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+  BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+  BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  BLAZE_PHOSPHOR_FLARE_MIN_RANGE,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_DASH_SPEED,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE,
+  BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+  BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
+  BLAZE_AFTERBURNER_TRAIL_RADIUS,
+  BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING,
+  BLAZE_PHOENIX_DIVE_DAMAGE,
+  BLAZE_PHOENIX_DIVE_RADIUS,
+  BLAZE_PHOENIX_DIVE_MAX_RANGE,
+  BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS,
+  BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS,
   BLAZE_FLAMETHROWER_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
@@ -330,6 +356,12 @@ import {
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  PHANTOM_RIFT_BOLT_DAMAGE,
+  PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+  PHANTOM_RIFT_BOLT_SPEED,
+  PHANTOM_SOULREND_MAGAZINE_SIZE,
+  PHANTOM_SOULREND_RICOCHET_RADIUS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_CROUCH_HEIGHT,
@@ -368,6 +400,15 @@ import {
   getChronosAegisForward as getSharedChronosAegisForward,
   getChronosAegisForwardDot as getSharedChronosAegisForwardDot,
   getBlazeMeteorPath,
+  getBlazePhosphorFlareFlightDurationMs,
+  getBlazePhosphorFlarePoint,
+  getBlazeAfterburnerDirection,
+  createBlazePhoenixDiveHoverMotion,
+  getBlazePhoenixDiveHoverVelocity,
+  getBlazePhoenixDiveStartPosition,
+  getBlazePhoenixDiveVelocity,
+  type BlazePhoenixDiveHoverMotion,
+  BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS,
   getDefaultHeroSkinId,
   getHeroSkinDefinition,
   getTeamIdsForGameplayMode,
@@ -377,6 +418,13 @@ import {
   getSegmentHitAgainstPlayerCombatHitbox,
   getBlazeScrapshotPelletDirections,
   isBlazePrimarySkill,
+  isPhantomPrimarySkill,
+  isPhantomSecondarySkill,
+  isBlazeSecondarySkill,
+  isBlazeUltimateSkill,
+  getBlazeUltimateAbilityId,
+  isBlazeAbilityBindings,
+  hasBlazeAfterburner,
   getSegmentHitAgainstChronosAegis,
   calculateFalloffDamage,
   calculateBlazeScrapshotPelletDamage,
@@ -394,6 +442,11 @@ import {
 import type { 
   AbilityCastOriginHint,
   BlazePrimarySkill,
+  BlazeSecondarySkill,
+  BlazeUltimateSkill,
+  BlazeAbilityBindings,
+  PhantomPrimarySkill,
+  PhantomSecondarySkill,
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
@@ -704,12 +757,14 @@ import {
   VOID_ZONE_DAMAGE,
   VOID_ZONE_DURATION,
   initializePlayerAbilities,
+  reconcilePlayerAbilities,
   resetAbilityCooldowns,
   tryUseAbility,
   executeAbility,
   updateAbilityCooldowns,
   updateActiveAbilities,
   type AbilityUseResult,
+  type HeroAbilitySelection,
 } from './abilityHandlers';
 import { RoomDamageRuntime, type RoomDamageContext as DamageContext } from './roomDamageRuntime';
 import { RoomTickProfiler, type RoomTickCounterName, type RoomTickSpanName } from './roomTickProfiler';
@@ -794,6 +849,8 @@ interface PhantomCastPayload {
   startPosition?: PlainVec3;
   targetPosition?: PlainVec3;
   impactPosition?: PlainVec3;
+  ricochetPosition?: PlainVec3;
+  ricochetTargetId?: string;
   interceptedByChronosAegis?: boolean;
   aimDirection?: PlainVec3;
   velocity?: PlainVec3;
@@ -812,6 +869,7 @@ interface PhantomCastPayload {
   duration?: number;
   impactTime?: number;
   rootUntil?: number;
+  expiresAt?: number;
 }
 
 interface HookshotGroundHooksTarget {
@@ -881,6 +939,26 @@ interface MovementPhysicsFrameEntry {
   grantedExtraSubsteps: number;
   skippedExtraSubsteps: number;
   serverOwnedInput?: PlayerInput;
+}
+
+interface BlazeAfterburnerDashRuntime {
+  playerId: string;
+  trailId: string;
+  direction: PlainVec3;
+  expiresAt: number;
+  lastSamplePosition: PlainVec3;
+}
+
+interface BlazePhoenixDiveRuntime {
+  castId: string;
+  targetPosition: PlainVec3 | null;
+  hoverAt: number;
+  hoverEndsAt: number;
+  impactDeadline: number;
+  fallbackImpactGroundY: number;
+  hoverMotion: BlazePhoenixDiveHoverMotion | null;
+  launchYaw: number;
+  phase: 'launch' | 'hover' | 'dive';
 }
 
 interface StateStreamBroadcastOptions {
@@ -1129,6 +1207,12 @@ export class GameRoom extends Room<GameState> {
     magazineSize: PHANTOM_PRIMARY_MAGAZINE_SIZE,
     reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
   });
+  private readonly phantomSoulrendPrimaryMagazines = new PrimaryMagazineTracker({
+    magazineSize: PHANTOM_SOULREND_MAGAZINE_SIZE,
+    reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
+  });
+  private readonly phantomPrimarySkills = new Map<string, PhantomPrimarySkill>();
+  private readonly phantomSecondarySkills = new Map<string, PhantomSecondarySkill>();
   private readonly blazePrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
@@ -1138,6 +1222,9 @@ export class GameRoom extends Room<GameState> {
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
   });
   private readonly blazePrimarySkills = new Map<string, BlazePrimarySkill>();
+  private readonly blazeSecondarySkills = new Map<string, BlazeSecondarySkill>();
+  private readonly blazeUltimateSkills = new Map<string, BlazeUltimateSkill>();
+  private readonly blazeAbilityBindings = new Map<string, BlazeAbilityBindings>();
   private readonly chronosPrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
     reloadMs: CHRONOS_PRIMARY_RELOAD_MS,
@@ -1145,6 +1232,7 @@ export class GameRoom extends Room<GameState> {
   private readonly phantomPrimaryHolds = new PlayerHoldTracker();
   private readonly chronosPrimaryHolds = new PlayerHoldTracker();
   private readonly phantomVoidRayCharges = new PhantomVoidRayChargeTracker();
+  private readonly phantomRiftBolts = new PhantomRiftBoltTracker();
   private readonly abilityIds = new RoomAbilityIdGenerator();
   private readonly phantomPrimaryLaunchSide = new AlternatingLaunchSideTracker();
   private readonly hookshotPrimaryLaunchSide = new AlternatingLaunchSideTracker();
@@ -1154,7 +1242,10 @@ export class GameRoom extends Room<GameState> {
   private readonly powerupBoosts = new PowerupBoostTracker();
   private readonly pendingAreaDamage = new PendingAreaDamageQueue();
   private readonly pendingAreaDamageReady: PendingAreaDamageInstance[] = [];
-  private readonly blazeGearstorms = new BlazeGearstormTracker();
+  private readonly blazeLingeringAreas = new BlazeLingeringAreaTracker();
+  private readonly blazeAfterburnerTrails = new BlazeAfterburnerTrailTracker();
+  private readonly blazeAfterburnerDashes = new Map<string, BlazeAfterburnerDashRuntime>();
+  private readonly blazePhoenixDives = new Map<string, BlazePhoenixDiveRuntime>();
   private readonly blazeFlamethrowers = new BlazeFlamethrowerRuntimeTracker();
   private readonly blazeBurns = new BlazeBurnEffectTracker();
   private readonly npcs = new RoomNpcRegistry();
@@ -1254,6 +1345,9 @@ export class GameRoom extends Room<GameState> {
   private readonly deferredPlayerEventBatchClients: Client[] = [];
   private readonly visibleHealedTargetIdsScratch = new Set<string>();
   private readonly terrainRaycastPointScratch: PlainVec3 = { x: 0, y: 0, z: 0 };
+  private readonly isCollisionTerrainPoint = (point: PlainVec3): boolean => (
+    isCollisionBlock(this.getBlockAtWorld(point))
+  );
   private readonly chronosAegisPoseScratch: ChronosAegisPose = {
     playerId: '',
     position: { x: 0, y: 0, z: 0 },
@@ -1882,9 +1976,34 @@ export class GameRoom extends Room<GameState> {
       this.handleTeamSelect(client, team);
     });
 
+    this.onRateLimitedMessage('setPhantomPrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isPhantomPrimarySkill(data.skill)) return;
+      this.handleSetPhantomPrimarySkill(client, data.skill);
+    });
+
+    this.onRateLimitedMessage('setPhantomSecondarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isPhantomSecondarySkill(data.skill)) return;
+      this.handleSetPhantomSecondarySkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('setBlazePrimarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       if (!isRecord(data) || !isBlazePrimarySkill(data.skill)) return;
       this.handleSetBlazePrimarySkill(client, data.skill);
+    });
+
+    this.onRateLimitedMessage('setBlazeSecondarySkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isBlazeSecondarySkill(data.skill)) return;
+      this.handleSetBlazeSecondarySkill(client, data.skill);
+    });
+
+    this.onRateLimitedMessage('setBlazeUltimateSkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isBlazeUltimateSkill(data.skill)) return;
+      this.handleSetBlazeUltimateSkill(client, data.skill);
+    });
+
+    this.onRateLimitedMessage('setBlazeAbilityBindings', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isBlazeAbilityBindings(data)) return;
+      this.handleSetBlazeAbilityBindings(client, data);
     });
 
     this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
@@ -1962,6 +2081,55 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId !== 'blaze') return;
 
     this.resetPrimaryMagazineForHero(player.id, player.heroId);
+  }
+
+  private handleSetPhantomPrimarySkill(client: Client, skill: PhantomPrimarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.phantomPrimarySkills.has(player.id)) return;
+
+    this.phantomPrimarySkills.set(player.id, skill);
+    if (player.heroId === 'phantom') {
+      this.resetPrimaryMagazineForHero(player.id, player.heroId);
+    }
+  }
+
+  private handleSetPhantomSecondarySkill(client: Client, skill: PhantomSecondarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.phantomSecondarySkills.has(player.id)) return;
+
+    this.phantomSecondarySkills.set(player.id, skill);
+    this.phantomVoidRayCharges.clear(player.id);
+    this.phantomRiftBolts.clear(player.id);
+  }
+
+  private handleSetBlazeSecondarySkill(client: Client, skill: BlazeSecondarySkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazeSecondarySkills.has(player.id)) return;
+
+    this.blazeSecondarySkills.set(player.id, skill);
+  }
+
+  private handleSetBlazeUltimateSkill(client: Client, skill: BlazeUltimateSkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazeUltimateSkills.has(player.id)) return;
+
+    this.blazeUltimateSkills.set(player.id, skill);
+    if (player.heroId === 'blaze') {
+      reconcilePlayerAbilities(player, 'blaze', this.getBlazeAbilitySelection(player.id));
+    }
+  }
+
+  private handleSetBlazeAbilityBindings(client: Client, bindings: BlazeAbilityBindings): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.blazeAbilityBindings.has(player.id)) return;
+
+    const runtimeBindings = hasBlazeAfterburner(bindings) ? bindings : null;
+    if (!runtimeBindings) return;
+
+    this.blazeAbilityBindings.set(player.id, { ...runtimeBindings });
+    if (player.heroId === 'blaze') {
+      reconcilePlayerAbilities(player, 'blaze', this.getBlazeAbilitySelection(player.id));
+    }
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -2338,12 +2506,21 @@ export class GameRoom extends Room<GameState> {
   private clearCombatPlayerRuntimeState(playerId: string): void {
     this.playerPressStates.clear(playerId);
     this.phantomPrimaryMagazines.clear(playerId);
+    this.phantomSoulrendPrimaryMagazines.clear(playerId);
+    this.phantomPrimarySkills.delete(playerId);
+    this.phantomSecondarySkills.delete(playerId);
     this.blazePrimaryMagazines.clear(playerId);
     this.blazeScrapshotPrimaryMagazines.clear(playerId);
     this.blazePrimarySkills.delete(playerId);
+    this.blazeSecondarySkills.delete(playerId);
+    this.blazeUltimateSkills.delete(playerId);
+    this.blazeAbilityBindings.delete(playerId);
+    this.stopBlazeAfterburnerDash(playerId);
+    this.blazePhoenixDives.delete(playerId);
     this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
+    this.phantomRiftBolts.clear(playerId);
     this.phantomPrimaryLaunchSide.clear(playerId);
     this.hookshotPrimaryLaunchSide.clear(playerId);
     this.hookshotRuntime.clearPlayer(playerId);
@@ -2385,6 +2562,10 @@ export class GameRoom extends Room<GameState> {
       }
     });
     this.stopTickLoop();
+    this.blazeLingeringAreas.clear();
+    this.blazeAfterburnerTrails.clear();
+    this.blazePhoenixDives.clear();
+    this.blazeAfterburnerDashes.clear();
     this.blazeFlamethrowers.clearDamageTicks();
   }
 
@@ -2756,9 +2937,11 @@ export class GameRoom extends Room<GameState> {
 
   private updateActiveGameplayEffects(now: number, dt: number): void {
     this.updateVoidZones(now);
+    this.updatePhantomRiftBolts(now);
 
     this.updatePendingAreaDamage(now);
-    this.updateBlazeGearstorms(now);
+    this.updateBlazeLingeringAreas(now);
+    this.updateBlazeAfterburnerTrails(now);
     this.cleanupDamageWindows(now);
 
     this.updateBlazeFlamethrowers(now, dt);
@@ -2767,6 +2950,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updatePostMovementGameplaySystems(now: number): void {
+    this.updateBlazeAfterburnerDashEmitters(now);
+    this.updateBlazePhoenixDives(now);
     this.updatePowerupPickups(now);
 
     if (isCaptureTheFlagMode(this.gameplayMode)) {
@@ -5446,6 +5631,7 @@ export class GameRoom extends Room<GameState> {
 
   private stopRootedMovement(player: Player): void {
     this.clearHookshotGrapple(player.id);
+    this.stopBlazeAfterburnerDash(player.id);
     stopRootedMovementState(player);
   }
 
@@ -5749,14 +5935,20 @@ export class GameRoom extends Room<GameState> {
     player.lookYaw = movementInput.lookYaw;
     player.lookPitch = movementInput.lookPitch;
     const dragPullActive = this.hookshotRuntime.hasDragPull(player.id);
+    const phoenixDive = this.blazePhoenixDives.get(player.id);
+    const phoenixDivePhase = phoenixDive?.phase;
+    const phoenixDiveActive = phoenixDivePhase === 'hover' || phoenixDivePhase === 'dive';
     if (dragPullActive) {
       this.clearHookshotGrapple(player.id);
     } else {
       this.prepareHookshotGrappleForMovement(player, stepNow);
     }
-    const simulationInput = dragPullActive
+    const simulationInput = dragPullActive || phoenixDiveActive
       ? suppressLocomotionInput(movementInput)
       : movementInput;
+    if (phoenixDivePhase === 'hover' && phoenixDive) {
+      this.applyBlazePhoenixDiveHoverVelocity(player, phoenixDive, stepNow);
+    }
     this.simulateAuthoritativeMovementStep(
       player,
       simulationInput,
@@ -5941,9 +6133,12 @@ export class GameRoom extends Room<GameState> {
       input: movementInput,
       terrain: this.mapRuntime.terrain,
       flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
-      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player, movementInput.timestamp) *
         (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
-      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player),
+      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player, movementInput.timestamp),
+      forcedHorizontalVelocity: player.state === 'alive'
+        ? this.getBlazeForcedHorizontalVelocity(player.id, movementInput.timestamp)
+        : undefined,
       proposedPosition: clientState.position,
       proposedVelocity: clientState.velocity,
       proposedMovement: clientState.movement,
@@ -5972,6 +6167,10 @@ export class GameRoom extends Room<GameState> {
       movementClass: getMovementShadowClass({
         hasFlag: player.hasFlag,
         heroId: heroId ?? 'unknown',
+        afterburnerActive: Boolean(
+          this.getActiveBlazeAfterburnerDash(player.id, movementInput.timestamp) ||
+          (player.heroId === 'blaze' && this.isBlazeAbilityInputActive(player, 'blaze_afterburner'))
+        ),
         movement: {
           isGrounded: clientState.movement.isGrounded,
           isGrappling: previousMovement.isGrappling,
@@ -6007,6 +6206,8 @@ export class GameRoom extends Room<GameState> {
     if (
       this.playerRoots.isRooted(player.id, now) ||
       this.hookshotRuntime.hasDragPull(player.id) ||
+      this.blazePhoenixDives.get(player.id)?.phase === 'hover' ||
+      this.blazePhoenixDives.get(player.id)?.phase === 'dive' ||
       player.movement.isGrappling
     ) {
       return false;
@@ -6222,9 +6423,12 @@ export class GameRoom extends Room<GameState> {
       terrain: this.mapRuntime.terrain,
       collisionWorld,
       flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
-      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player, now) *
         (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
-      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player),
+      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player, now),
+      forcedHorizontalVelocity: player.state === 'alive'
+        ? this.getBlazeForcedHorizontalVelocity(player.id, now)
+        : undefined,
     });
 
     this.applyMovementSimulationResult(player, result);
@@ -6614,6 +6818,26 @@ export class GameRoom extends Room<GameState> {
     return null;
   }
 
+  private raycastScrapshotTerrain(
+    start: PlainVec3,
+    direction: PlainVec3,
+    maxDistance: number
+  ): PlainVec3 | null {
+    const { origin, voxelSize } = this.mapRuntime.terrain;
+    if (!origin || !voxelSize) {
+      return this.raycastTerrain(start, direction, maxDistance, 0.18);
+    }
+    return raycastVoxelTerrain(
+      start,
+      direction,
+      maxDistance,
+      origin,
+      voxelSize,
+      this.isCollisionTerrainPoint,
+      this.terrainRaycastPointScratch,
+    );
+  }
+
   private isNearCollisionSurface(point: PlainVec3, radius = HOOKSHOT_GRAPPLE_HINT_SURFACE_PROBE_DISTANCE): boolean {
     const probes = [
       { x: 0, y: 0, z: 0 },
@@ -6754,37 +6978,383 @@ export class GameRoom extends Room<GameState> {
     now: number,
     durationSeconds: number
   ): void {
-    this.blazeGearstorms.add({
+    this.blazeLingeringAreas.add({
       id: this.abilityIds.nextBlazeGearstormId(player.id),
       ownerId: player.id,
       ownerTeam: player.team as Team,
       position,
       radius: BLAZE_GEARSTORM_RADIUS,
       damage: BLAZE_GEARSTORM_DAMAGE,
+      damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+      damageType: 'airstrike',
+      abilityId: 'blaze_airstrike',
+      falloffScale: 0.35,
       startTime: now,
       endTime: now + durationSeconds * 1000,
     });
   }
 
-  private updateBlazeGearstorms(now: number): void {
-    this.blazeGearstorms.update(now, {
+  private updateBlazeLingeringAreas(now: number): void {
+    this.blazeLingeringAreas.update(now, {
       hasOwner: (ownerId) => this.state.players.has(ownerId),
-      getTargets: (storm) => this.queryPlayersRadius(
-        storm.position,
-        storm.radius,
-        { excludeTeam: storm.ownerTeam, includeDowned: true }
+      getTargets: (area) => this.queryPlayersRadius(
+        area.position,
+        area.radius,
+        { excludeTeam: area.ownerTeam, includeDowned: true }
       ),
-      applyDamage: (storm, target, distance) => {
+      applyDamage: (area, target, distance) => {
         this.applyDamage(
           target,
-          calculateFalloffDamage(storm.damage, distance, storm.radius, 0.35),
-          storm.ownerId,
-          'airstrike',
+          calculateFalloffDamage(area.damage, distance, area.radius, area.falloffScale),
+          area.ownerId,
+          area.damageType,
           {
-            abilityId: 'blaze_airstrike',
-            sourcePosition: storm.position,
+            abilityId: area.abilityId,
+            sourcePosition: area.position,
           }
         );
+      },
+    });
+  }
+
+  private getBlazeAfterburnerGroundPoint(position: PlainVec3): PlainVec3 | null {
+    const groundY = this.getProceduralGroundY({
+      x: position.x,
+      y: position.y + 0.25,
+      z: position.z,
+    });
+    return groundY === null ? null : {
+      x: position.x,
+      y: groundY,
+      z: position.z,
+    };
+  }
+
+  private startBlazeAfterburnerDash(player: Player, now: number): void {
+    const startPosition = vec3SchemaToPlain(player.position);
+    const groundedStart = this.getBlazeAfterburnerGroundPoint(startPosition);
+    const trailId = this.abilityIds.nextSharedCastId(player.id, 'blaze_afterburner_trail');
+    this.blazeAfterburnerTrails.add({
+      id: trailId,
+      ownerId: player.id,
+      ownerTeam: player.team as Team,
+      points: groundedStart ? [groundedStart] : [],
+      radius: BLAZE_AFTERBURNER_TRAIL_RADIUS,
+      damage: BLAZE_AFTERBURNER_TRAIL_DAMAGE,
+      damageIntervalMs: BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS,
+      startTime: now,
+      endTime: now + BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+    });
+    this.blazeAfterburnerDashes.set(player.id, {
+      playerId: player.id,
+      trailId,
+      direction: getBlazeAfterburnerDirection(player.lookYaw),
+      expiresAt: now + BLAZE_AFTERBURNER_DASH_DURATION_MS,
+      lastSamplePosition: startPosition,
+    });
+  }
+
+  private stopBlazeAfterburnerDash(playerId: string): void {
+    this.blazeAfterburnerDashes.delete(playerId);
+  }
+
+  private startBlazePhoenixDive(player: Player, launchPosition: PlainVec3, now: number): void {
+    const castId = this.abilityIds.nextSharedCastId(player.id, 'blaze_phoenix_dive');
+    const hoverAt = now + BLAZE_PHOENIX_DIVE_LAUNCH_DURATION_MS;
+    const launchGroundY = this.getProceduralGroundY({
+      x: launchPosition.x,
+      y: launchPosition.y + 80,
+      z: launchPosition.z,
+    });
+    this.blazePhoenixDives.set(player.id, {
+      castId,
+      targetPosition: null,
+      hoverAt,
+      hoverEndsAt: hoverAt + BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS,
+      impactDeadline: 0,
+      fallbackImpactGroundY: launchGroundY ?? launchPosition.y - PLAYER_HEIGHT / 2,
+      hoverMotion: null,
+      launchYaw: player.lookYaw,
+      phase: 'launch',
+    });
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId,
+      phase: 'launch',
+      position: vec3SchemaToPlain(player.position),
+      startPosition: launchPosition,
+      velocity: vec3SchemaToPlain(player.velocity),
+      launchYaw: player.lookYaw,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      releaseAt: hoverAt,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private beginBlazePhoenixDiveHover(
+    player: Player,
+    dive: BlazePhoenixDiveRuntime,
+    now: number
+  ): void {
+    dive.hoverMotion = createBlazePhoenixDiveHoverMotion(
+      vec3SchemaToPlain(player.velocity),
+      dive.launchYaw,
+      now,
+    );
+    const hoverVelocity = getBlazePhoenixDiveHoverVelocity(dive.hoverMotion, now);
+    player.velocity.x = hoverVelocity.x;
+    player.velocity.y = hoverVelocity.y;
+    player.velocity.z = hoverVelocity.z;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    dive.phase = 'hover';
+    dive.hoverEndsAt = now + BLAZE_PHOENIX_DIVE_HOVER_DURATION_MS;
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId: dive.castId,
+      phase: 'hover',
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
+      launchYaw: dive.launchYaw,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      releaseAt: dive.hoverEndsAt,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private applyBlazePhoenixDiveHoverVelocity(
+    player: Player,
+    dive: BlazePhoenixDiveRuntime,
+    now: number,
+  ): void {
+    if (!dive.hoverMotion) return;
+    const velocity = getBlazePhoenixDiveHoverVelocity(dive.hoverMotion, now);
+    player.velocity.x = velocity.x;
+    player.velocity.y = velocity.y;
+    player.velocity.z = velocity.z;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+  }
+
+  private confirmBlazePhoenixDive(player: Player, dive: BlazePhoenixDiveRuntime, now: number): void {
+    if (dive.phase !== 'hover') return;
+    dive.targetPosition = this.resolveBlazeGroundTarget(
+      player,
+      'blaze_phoenix_dive',
+      BLAZE_PHOENIX_DIVE_MAX_RANGE,
+      0
+    );
+    this.beginBlazePhoenixDiveDescent(player, dive, now);
+  }
+
+  private beginBlazePhoenixDiveDescent(
+    player: Player,
+    dive: BlazePhoenixDiveRuntime,
+    now: number
+  ): void {
+    if (!dive.targetPosition) {
+      dive.targetPosition = this.resolveBlazeGroundTarget(
+        player,
+        'blaze_phoenix_dive',
+        BLAZE_PHOENIX_DIVE_MAX_RANGE,
+        0
+      );
+    }
+    const targetPosition = dive.targetPosition;
+    const divePosition = getBlazePhoenixDiveStartPosition(
+      vec3SchemaToPlain(player.position),
+      targetPosition
+    );
+    const diveVelocity = getBlazePhoenixDiveVelocity();
+    player.position.x = divePosition.x;
+    player.position.y = divePosition.y;
+    player.position.z = divePosition.z;
+    player.velocity.x = diveVelocity.x;
+    player.velocity.y = diveVelocity.y;
+    player.velocity.z = diveVelocity.z;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    dive.phase = 'dive';
+    dive.impactDeadline = now + BLAZE_PHOENIX_DIVE_MAX_FALL_DURATION_MS;
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId: dive.castId,
+      phase: 'dive',
+      position: divePosition,
+      targetPosition,
+      velocity: diveVelocity,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      impactTime: dive.impactDeadline,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private finishBlazePhoenixDive(player: Player, dive: BlazePhoenixDiveRuntime, now: number): void {
+    if (!dive.targetPosition) return;
+    const refreshedGroundY = this.getProceduralGroundY({
+      x: dive.targetPosition.x,
+      y: Math.max(dive.targetPosition.y + 80, player.position.y + 80),
+      z: dive.targetPosition.z,
+    });
+    const impactPosition = {
+      x: dive.targetPosition.x,
+      y: refreshedGroundY ?? dive.fallbackImpactGroundY,
+      z: dive.targetPosition.z,
+    };
+    player.position.x = impactPosition.x;
+    player.position.y = impactPosition.y + PLAYER_HEIGHT / 2 + 0.06;
+    player.position.z = impactPosition.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = true;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    this.blazePhoenixDives.delete(player.id);
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+    this.applyAreaDamage(
+      player,
+      impactPosition,
+      BLAZE_PHOENIX_DIVE_RADIUS,
+      BLAZE_PHOENIX_DIVE_DAMAGE,
+      'phoenix_dive'
+    );
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId: 'blaze_phoenix_dive',
+      castId: dive.castId,
+      phase: 'impact',
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
+      targetPosition: dive.targetPosition,
+      impactPosition,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      radius: BLAZE_PHOENIX_DIVE_RADIUS,
+    });
+  }
+
+  private updateBlazePhoenixDives(now: number): void {
+    for (const [playerId, dive] of this.blazePhoenixDives) {
+      const player = this.state.players.get(playerId);
+      if (!player || player.state !== 'alive') {
+        this.blazePhoenixDives.delete(playerId);
+        continue;
+      }
+      if (dive.phase === 'launch') {
+        if (now >= dive.hoverAt) this.beginBlazePhoenixDiveHover(player, dive, now);
+        continue;
+      }
+      if (dive.phase === 'hover') {
+        if (now >= dive.hoverEndsAt) {
+          this.confirmBlazePhoenixDive(player, dive, now);
+        }
+        continue;
+      }
+      if (player.movement.isGrounded || now >= dive.impactDeadline) {
+        this.finishBlazePhoenixDive(player, dive, now);
+      }
+    }
+  }
+
+  private getActiveBlazeAfterburnerDash(playerId: string, now: number): BlazeAfterburnerDashRuntime | null {
+    const dash = this.blazeAfterburnerDashes.get(playerId);
+    return dash && now < dash.expiresAt ? dash : null;
+  }
+
+  private getBlazeForcedHorizontalVelocity(playerId: string, now: number): { x: number; z: number } | undefined {
+    const phoenixDive = this.blazePhoenixDives.get(playerId);
+    if (phoenixDive?.phase === 'dive') {
+      return { x: 0, z: 0 };
+    }
+    if (phoenixDive?.phase === 'hover' && phoenixDive.hoverMotion) {
+      const velocity = getBlazePhoenixDiveHoverVelocity(phoenixDive.hoverMotion, now);
+      return { x: velocity.x, z: velocity.z };
+    }
+    const dash = this.getActiveBlazeAfterburnerDash(playerId, now);
+    return dash
+      ? {
+        x: dash.direction.x * BLAZE_AFTERBURNER_DASH_SPEED,
+        z: dash.direction.z * BLAZE_AFTERBURNER_DASH_SPEED,
+      }
+      : undefined;
+  }
+
+  private appendBlazeAfterburnerTrailSamples(dash: BlazeAfterburnerDashRuntime, position: PlainVec3): void {
+    const dx = position.x - dash.lastSamplePosition.x;
+    const dy = position.y - dash.lastSamplePosition.y;
+    const dz = position.z - dash.lastSamplePosition.z;
+    const horizontalDistance = Math.hypot(dx, dz);
+    if (horizontalDistance <= 0.02) return;
+    const sampleCount = Math.min(
+      BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
+      Math.max(1, Math.ceil(horizontalDistance / BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING)),
+    );
+    for (let sampleIndex = 1; sampleIndex <= sampleCount; sampleIndex++) {
+      const alpha = sampleIndex / sampleCount;
+      const groundedPoint = this.getBlazeAfterburnerGroundPoint({
+        x: dash.lastSamplePosition.x + dx * alpha,
+        y: dash.lastSamplePosition.y + dy * alpha,
+        z: dash.lastSamplePosition.z + dz * alpha,
+      });
+      if (groundedPoint) {
+        if (!this.blazeAfterburnerTrails.appendPoint(dash.trailId, groundedPoint)) break;
+      }
+    }
+    dash.lastSamplePosition = position;
+  }
+
+  private updateBlazeAfterburnerDashEmitters(now: number): void {
+    for (const [playerId, dash] of this.blazeAfterburnerDashes) {
+      const player = this.state.players.get(playerId);
+      if (!player || player.state !== 'alive') {
+        this.blazeAfterburnerDashes.delete(playerId);
+        continue;
+      }
+      this.appendBlazeAfterburnerTrailSamples(dash, vec3SchemaToPlain(player.position));
+      if (now >= dash.expiresAt) {
+        this.blazeAfterburnerDashes.delete(playerId);
+      }
+    }
+  }
+
+  private updateBlazeAfterburnerTrails(now: number): void {
+    this.blazeAfterburnerTrails.update(now, {
+      hasOwner: (ownerId) => this.state.players.has(ownerId),
+      getTargets: (trail) => {
+        if (trail.points.length === 0) return [];
+        return this.queryPlayersRadius(
+          trail.boundsCenter,
+          trail.boundsHalfLength + trail.radius,
+          { excludeTeam: trail.ownerTeam, excludeId: trail.ownerId, includeDowned: true }
+        );
+      },
+      applyDamage: (trail, target) => {
+        this.applyDamage(target, trail.damage, trail.ownerId, 'afterburner', {
+          abilityId: 'blaze_afterburner',
+          sourcePosition: trail.points[0],
+        });
       },
     });
   }
@@ -6975,7 +7545,11 @@ export class GameRoom extends Room<GameState> {
 
     for (const pelletDirection of getBlazeScrapshotPelletDirections(aimDirection)) {
       const fallbackEndpoint = this.addScaled3D(aimOrigin, pelletDirection, BLAZE_SCRAPSHOT_RANGE);
-      const terrainHit = this.raycastTerrain(aimOrigin, pelletDirection, BLAZE_SCRAPSHOT_RANGE, 0.18);
+      const terrainHit = this.raycastScrapshotTerrain(
+        aimOrigin,
+        pelletDirection,
+        BLAZE_SCRAPSHOT_RANGE,
+      );
       const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Number.POSITIVE_INFINITY;
       const aegisHit = this.getChronosAegisSkillHit(
         player,
@@ -7154,26 +7728,31 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private resolveBlazeBombTarget(player: Player): PlainVec3 {
+  private resolveBlazeGroundTarget(
+    player: Player,
+    abilityId: 'blaze_bomb' | 'blaze_phosphor_flare' | 'blaze_phoenix_dive',
+    maxRange: number,
+    minRange: number
+  ): PlainVec3 {
     const aimOrigin = this.getBlazeAimOrigin(player);
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
-    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
+    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, maxRange);
     let targetPosition = this.resolveValidatedCastAimPoint(
       player,
-      'blaze_bomb',
+      abilityId,
       aimOrigin,
       lookDirection,
-      BLAZE_BOMB_MAX_RANGE,
-      terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE)
+      maxRange,
+      terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, maxRange)
     );
 
     const horizontalDistance = distance2D(aimOrigin, targetPosition);
-    if (horizontalDistance < BLAZE_BOMB_MIN_RANGE) {
+    if (horizontalDistance < minRange) {
       const forward = forward2D(player.lookYaw);
       targetPosition = {
-        x: aimOrigin.x + forward.x * BLAZE_BOMB_MIN_RANGE,
+        x: aimOrigin.x + forward.x * minRange,
         y: targetPosition.y,
-        z: aimOrigin.z + forward.z * BLAZE_BOMB_MIN_RANGE,
+        z: aimOrigin.z + forward.z * minRange,
       };
     }
 
@@ -7193,7 +7772,12 @@ export class GameRoom extends Room<GameState> {
 
   private dropBlazeBomb(player: Player, attack: AttackConfig, now: number): void {
     const castId = this.abilityIds.nextBlazeBombCastId(player.id);
-    const targetPosition = this.resolveBlazeBombTarget(player);
+    const targetPosition = this.resolveBlazeGroundTarget(
+      player,
+      'blaze_bomb',
+      BLAZE_BOMB_MAX_RANGE,
+      BLAZE_BOMB_MIN_RANGE
+    );
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_bomb');
     const meteorPath = getBlazeMeteorPath({ id: castId, startPosition, targetPosition });
     const aegisHit = this.getChronosAegisSkillHit(
@@ -7248,6 +7832,112 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private getBlazePhosphorFlareAegisHit(
+    player: Player,
+    startPosition: PlainVec3,
+    targetPosition: PlainVec3,
+    projectileRadius: number
+  ): (ChronosAegisSkillHit & { progress: number }) | null {
+    let segmentStart = startPosition;
+
+    for (let index = 0; index < BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS; index++) {
+      const segmentEndProgress = (index + 1) / BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS;
+      const segmentEnd = getBlazePhosphorFlarePoint(startPosition, targetPosition, segmentEndProgress);
+      const segmentDirection = this.normalize3D({
+        x: segmentEnd.x - segmentStart.x,
+        y: segmentEnd.y - segmentStart.y,
+        z: segmentEnd.z - segmentStart.z,
+      });
+      const segmentDistance = distance3D(segmentStart, segmentEnd);
+      if (segmentDirection && segmentDistance > 0.0001) {
+        const hit = this.getChronosAegisSkillHit(
+          player,
+          segmentStart,
+          segmentDirection,
+          segmentDistance,
+          { projectileRadius }
+        );
+        if (hit) {
+          return {
+            ...hit,
+            progress: clamp(
+              (index + hit.distance / segmentDistance) / BLAZE_PHOSPHOR_FLARE_PATH_SEGMENTS,
+              0,
+              1
+            ),
+          };
+        }
+      }
+      segmentStart = segmentEnd;
+    }
+
+    return null;
+  }
+
+  private dropBlazePhosphorFlare(player: Player, attack: AttackConfig, now: number): void {
+    const abilityId = 'blaze_phosphor_flare';
+    const castId = this.abilityIds.nextSharedCastId(player.id, abilityId);
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId);
+    const targetPosition = this.resolveBlazeGroundTarget(
+      player,
+      abilityId,
+      BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+      BLAZE_PHOSPHOR_FLARE_MIN_RANGE
+    );
+    const flightDurationMs = getBlazePhosphorFlareFlightDurationMs(startPosition, targetPosition);
+    const aegisHit = this.getBlazePhosphorFlareAegisHit(
+      player,
+      startPosition,
+      targetPosition,
+      getChronosAegisCollisionRadiusForAttack(attack)
+    );
+    const impactProgress = aegisHit?.progress ?? 1;
+    const impactTime = now + Math.max(60, Math.round(flightDurationMs * impactProgress));
+
+    if (aegisHit) {
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
+    } else {
+      this.blazeLingeringAreas.add({
+        id: castId,
+        ownerId: player.id,
+        ownerTeam: player.team as Team,
+        position: targetPosition,
+        radius: attack.radius ?? BLAZE_PHOSPHOR_FLARE_RADIUS,
+        damage: attack.damage,
+        damageIntervalMs: BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS,
+        damageType: attack.damageType,
+        abilityId,
+        falloffScale: 0,
+        startTime: impactTime,
+        endTime: impactTime + BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+      });
+    }
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
+      playerId: player.id,
+      abilityId,
+      castId,
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      targetPosition,
+      impactPosition: aegisHit?.point ?? targetPosition,
+      interceptedByChronosAegis: Boolean(aegisHit),
+      impactProgress,
+      impactTime,
+      aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      radius: attack.radius,
+      duration: BLAZE_PHOSPHOR_FLARE_DURATION_MS / 1000,
+    });
+  }
+
   private broadcastPhantomCast(payload: PhantomCastPayload): void {
     const caster = this.state.players.get(payload.playerId);
     if (!caster) return;
@@ -7256,14 +7946,14 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastPhantomAttackCast(
     player: Player,
-    abilityId: 'phantom_dire_ball' | 'phantom_void_ray',
+    abilityId: 'phantom_dire_ball' | 'phantom_soulrend_daggers' | 'phantom_void_ray' | 'phantom_rift_bolt',
     now: number,
     range: number,
     impactHint: SkillImpactHint = {}
   ): void {
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getPlayerEyePosition(player);
-    const launchSide = abilityId === 'phantom_dire_ball'
+    const launchSide = abilityId === 'phantom_dire_ball' || abilityId === 'phantom_soulrend_daggers'
       ? this.getNextPhantomPrimaryLaunchSide(player.id)
       : 1;
     const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
@@ -7280,7 +7970,7 @@ export class GameRoom extends Room<GameState> {
       y: aimPoint.y - startPosition.y,
       z: aimPoint.z - startPosition.z,
     }) ?? lookDirection;
-    const magazine = abilityId === 'phantom_dire_ball'
+    const magazine = abilityId === 'phantom_dire_ball' || abilityId === 'phantom_soulrend_daggers'
       ? this.getOrCreatePrimaryMagazine(player)
       : null;
 
@@ -7300,6 +7990,355 @@ export class GameRoom extends Room<GameState> {
       ammoRemaining: magazine?.ammo,
       reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
       reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
+    });
+  }
+
+  private firePhantomSoulrend(player: Player, attack: AttackConfig, now: number): void {
+    const abilityId = 'phantom_soulrend_daggers';
+    const origin = this.getPlayerEyePosition(player);
+    const rawForward = getForwardVector(player.lookYaw, player.lookPitch);
+    const forward = this.resolveValidatedCastAimDirection(
+      player,
+      abilityId,
+      origin,
+      rawForward,
+      attack.range,
+    );
+    const primaryTargetHit = this.findTargetHitInAimCone(
+      player,
+      attack.range,
+      attack.coneDot,
+      attack.collisionRadius ?? 0,
+      'enemy',
+      { origin, forward },
+    );
+    const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
+      projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
+    });
+    const aegisBlocksPrimary = Boolean(
+      aegisHit && (!primaryTargetHit || aegisHit.distance <= primaryTargetHit.hit.distance)
+    );
+    const launchSide = this.getNextPhantomPrimaryLaunchSide(player.id);
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
+    const magazine = this.getOrCreatePrimaryMagazine(player);
+    let impactPosition: PlainVec3 | undefined;
+    let ricochetPosition: PlainVec3 | undefined;
+    let ricochetTargetId: string | undefined;
+    const targetIds: string[] = [];
+
+    if (aegisBlocksPrimary && aegisHit) {
+      impactPosition = aegisHit.point;
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
+    } else if (primaryTargetHit) {
+      const primaryTarget = primaryTargetHit.target;
+      impactPosition = primaryTargetHit.hit.targetPoint;
+      targetIds.push(primaryTarget.id);
+      this.recordCombatVisibilityAtHit(player, primaryTarget, 'primary', attack.damageType, now);
+      this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType, {
+        abilityId,
+        sourcePosition: origin,
+        sourceDirection: forward,
+      });
+
+      const ricochetTarget = selectSoulrendRicochetTarget(
+        impactPosition,
+        this.queryPlayersRadius(impactPosition, PHANTOM_SOULREND_RICOCHET_RADIUS, {
+          excludeTeam: player.team as Team,
+          excludeId: player.id,
+          includeDowned: true,
+        }),
+        new Set([player.id, primaryTarget.id]),
+      );
+
+      if (ricochetTarget) {
+        const targetPosition = this.getPlayerBodyAimPosition(ricochetTarget);
+        const distance = distance3D(impactPosition, targetPosition);
+        const ricochetDirection = this.normalize3D({
+          x: targetPosition.x - impactPosition.x,
+          y: targetPosition.y - impactPosition.y,
+          z: targetPosition.z - impactPosition.z,
+        });
+        const ricochetAegisHit = ricochetDirection
+          ? this.getChronosAegisSkillHit(player, impactPosition, ricochetDirection, distance, {
+            projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
+            targetPoint: targetPosition,
+          })
+          : null;
+
+        if (ricochetAegisHit && ricochetAegisHit.distance <= distance) {
+          ricochetPosition = ricochetAegisHit.point;
+          this.absorbDamageWithChronosAegis(ricochetAegisHit.blocker, attack.damage, now, {
+            source: player,
+            damageType: attack.damageType,
+            position: ricochetAegisHit.point,
+            direction: ricochetAegisHit.normal,
+          });
+        } else {
+          ricochetPosition = targetPosition;
+          ricochetTargetId = ricochetTarget.id;
+          targetIds.push(ricochetTarget.id);
+          this.applyDamage(ricochetTarget, attack.damage, player.id, attack.damageType, {
+            abilityId,
+            sourcePosition: impactPosition,
+            sourceDirection: ricochetDirection ?? forward,
+          });
+        }
+      }
+    }
+
+    const aimPoint = impactPosition ?? this.addScaled3D(origin, forward, attack.range);
+    const aimDirection = this.normalize3D({
+      x: aimPoint.x - startPosition.x,
+      y: aimPoint.y - startPosition.y,
+      z: aimPoint.z - startPosition.z,
+    }) ?? forward;
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId,
+      castId: this.abilityIds.nextSharedCastId(player.id, abilityId),
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      impactPosition,
+      ricochetPosition,
+      ricochetTargetId,
+      interceptedByChronosAegis: aegisBlocksPrimary,
+      targetIds,
+      aimDirection,
+      ownerTeam: player.team as Team,
+      launchSide,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      ammoRemaining: magazine?.ammo,
+      reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
+      reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
+    });
+  }
+
+  private firePhantomRiftBolt(player: Player, attack: AttackConfig, now: number): void {
+    const abilityId = 'phantom_rift_bolt';
+    const castId = this.abilityIds.nextSharedCastId(player.id, abilityId);
+    const aimOrigin = this.getPlayerEyePosition(player);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
+    const forward = this.resolveValidatedCastAimDirection(
+      player,
+      abilityId,
+      aimOrigin,
+      lookDirection,
+      attack.range,
+    );
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId);
+    const aimPoint = this.addScaled3D(aimOrigin, forward, attack.range);
+    const direction = this.normalize3D({
+      x: aimPoint.x - startPosition.x,
+      y: aimPoint.y - startPosition.y,
+      z: aimPoint.z - startPosition.z,
+    }) ?? forward;
+    const bolt = this.phantomRiftBolts.launch({
+      castId,
+      ownerId: player.id,
+      ownerTeam: player.team as Team,
+      startPosition,
+      direction,
+      launchedAt: now,
+    });
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId,
+      castId,
+      position: vec3SchemaToPlain(player.position),
+      startPosition,
+      aimDirection: direction,
+      velocity: {
+        x: direction.x * PHANTOM_RIFT_BOLT_SPEED,
+        y: direction.y * PHANTOM_RIFT_BOLT_SPEED,
+        z: direction.z * PHANTOM_RIFT_BOLT_SPEED,
+      },
+      maxDistance: PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      expiresAt: bolt.expiresAt,
+    });
+  }
+
+  private cancelPhantomRiftBolt(player: Player, now = Date.now()): void {
+    const bolt = this.phantomRiftBolts.consume(player.id);
+    if (!bolt) return;
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId: 'phantom_rift_bolt_expire',
+      castId: bolt.castId,
+      position: vec3SchemaToPlain(player.position),
+      targetPosition: bolt.position,
+      ownerTeam: bolt.ownerTeam,
+      serverTime: now,
+    });
+  }
+
+  private updatePhantomRiftBolts(now: number): void {
+    const { advances, expired } = this.phantomRiftBolts.advance(now);
+
+    for (const bolt of expired) {
+      const owner = this.state.players.get(bolt.ownerId);
+      if (!owner) continue;
+      this.broadcastPhantomCast({
+        playerId: bolt.ownerId,
+        abilityId: 'phantom_rift_bolt_expire',
+        castId: bolt.castId,
+        position: vec3SchemaToPlain(owner.position),
+        targetPosition: bolt.position,
+        ownerTeam: bolt.ownerTeam,
+        serverTime: now,
+      });
+    }
+
+    for (const advance of advances) {
+      const owner = this.state.players.get(advance.state.ownerId);
+      if (!owner || owner.state !== 'alive') {
+        this.phantomRiftBolts.clear(advance.state.ownerId);
+        continue;
+      }
+
+      const direction = this.normalize3D({
+        x: advance.endPosition.x - advance.startPosition.x,
+        y: advance.endPosition.y - advance.startPosition.y,
+        z: advance.endPosition.z - advance.startPosition.z,
+      });
+      if (!direction) continue;
+
+      const terrainPoint = this.raycastTerrain(
+        advance.startPosition,
+        direction,
+        advance.distance,
+        0.15,
+      );
+      const terrainDistance = terrainPoint
+        ? distance3D(advance.startPosition, terrainPoint)
+        : Number.POSITIVE_INFINITY;
+      const aegisHit = this.getChronosAegisSkillHit(
+        owner,
+        advance.startPosition,
+        direction,
+        advance.distance,
+        { projectileRadius: PHANTOM_RIFT_BOLT_COLLISION_RADIUS },
+      );
+
+      let targetHit: AimTargetHit | null = null;
+      const candidates = this.queryPlayersConeCandidates(
+        advance.startPosition,
+        advance.distance + PHANTOM_RIFT_BOLT_COLLISION_RADIUS + PLAYER_RADIUS,
+        {
+          excludeTeam: owner.team as Team,
+          excludeId: owner.id,
+          includeDowned: true,
+        },
+      );
+      for (const target of candidates) {
+        const hit = this.getAimHitAgainstPlayer(
+          advance.startPosition,
+          direction,
+          advance.distance,
+          target,
+          PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+        );
+        if (!hit || (targetHit && hit.distance >= targetHit.hit.distance)) continue;
+        targetHit = { target, hit };
+      }
+
+      const targetDistance = targetHit?.hit.distance ?? Number.POSITIVE_INFINITY;
+      const aegisDistance = aegisHit?.distance ?? Number.POSITIVE_INFINITY;
+      let impactPosition: PlainVec3 | null = null;
+      let interceptedByChronosAegis = false;
+
+      if (aegisHit && aegisDistance <= targetDistance && aegisDistance <= terrainDistance) {
+        impactPosition = aegisHit.point;
+        interceptedByChronosAegis = true;
+        this.absorbDamageWithChronosAegis(aegisHit.blocker, PHANTOM_RIFT_BOLT_DAMAGE, now, {
+          source: owner,
+          damageType: 'rift_bolt',
+          position: aegisHit.point,
+          direction: aegisHit.normal,
+        });
+      } else if (targetHit && targetDistance <= terrainDistance) {
+        impactPosition = targetHit.hit.targetPoint;
+        this.recordCombatVisibilityAtHit(owner, targetHit.target, 'secondary', 'rift_bolt', now);
+        this.applyDamage(targetHit.target, PHANTOM_RIFT_BOLT_DAMAGE, owner.id, 'rift_bolt', {
+          abilityId: 'phantom_rift_bolt',
+          sourcePosition: advance.startPosition,
+          sourceDirection: direction,
+        });
+      } else if (terrainPoint) {
+        impactPosition = terrainPoint;
+      }
+
+      if (!impactPosition) continue;
+      this.phantomRiftBolts.stop(owner.id, impactPosition);
+      this.broadcastPhantomCast({
+        playerId: owner.id,
+        abilityId: 'phantom_rift_bolt_impact',
+        castId: advance.state.castId,
+        position: vec3SchemaToPlain(owner.position),
+        impactPosition,
+        interceptedByChronosAegis,
+        ownerTeam: owner.team as Team,
+        serverTime: now,
+        expiresAt: advance.state.expiresAt,
+      });
+    }
+  }
+
+  private teleportPhantomToRiftBolt(player: Player, now: number): void {
+    const bolt = this.phantomRiftBolts.consume(player.id);
+    if (!bolt) return;
+
+    const startedAt = vec3SchemaToPlain(player.position);
+    const offset = {
+      x: bolt.position.x - startedAt.x,
+      y: bolt.position.y - startedAt.y,
+      z: bolt.position.z - startedAt.z,
+    };
+    const distance = Math.hypot(offset.x, offset.y, offset.z);
+    const destination = resolveCapsuleTeleportDestination(
+      this.getMovementCollisionWorld(),
+      startedAt,
+      offset,
+      distance,
+      {
+        minDistance: 0,
+        distanceStep: 0.25,
+        clampPosition: (candidate) => this.clampToPlayableMap(candidate),
+      },
+    );
+
+    player.position.x = destination.x;
+    player.position.y = destination.y;
+    player.position.z = destination.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    this.markMovementBarrier(player.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId: 'phantom_rift_bolt_teleport',
+      castId: this.abilityIds.nextSharedCastId(player.id, 'phantom_rift_bolt_teleport'),
+      position: destination,
+      startPosition: startedAt,
+      targetPosition: bolt.position,
+      ownerTeam: player.team as Team,
+      serverTime: now,
     });
   }
 
@@ -7381,7 +8420,66 @@ export class GameRoom extends Room<GameState> {
     );
   }
 
+  private getBlazeRuntimeAbilityBindings(playerId: string): BlazeAbilityBindings | null {
+    return this.blazeAbilityBindings.get(playerId) ?? null;
+  }
+
+  private getBlazeAbilitySelection(playerId: string): HeroAbilitySelection {
+    const bindings = this.getBlazeRuntimeAbilityBindings(playerId) ?? {
+      ability1: HERO_DEFINITIONS.blaze.ability1.abilityId,
+      ability2: HERO_DEFINITIONS.blaze.ability2.abilityId,
+    };
+    return {
+      ...bindings,
+      ultimate: getBlazeUltimateAbilityId(this.getBlazeUltimateSkill(playerId)),
+    };
+  }
+
+  private resolvePlayerAbilityId(
+    player: Player,
+    slot: 'ability1' | 'ability2' | 'ultimate'
+  ): string | undefined {
+    if (player.heroId === 'blaze') {
+      const selection = this.getBlazeAbilitySelection(player.id);
+      return selection[slot];
+    }
+    return isHeroId(player.heroId) ? HERO_DEFINITIONS[player.heroId][slot].abilityId : undefined;
+  }
+
+  private isBlazeAbilityInputActive(player: Player, abilityId: BlazeAbilityBindings[keyof BlazeAbilityBindings]): boolean {
+    const input = player.lastInput;
+    if (!input) return false;
+    const bindings = this.getBlazeRuntimeAbilityBindings(player.id);
+    if (!bindings) {
+      return abilityId === 'blaze_flamethrower' ? Boolean(input.ability1) : Boolean(input.ability2);
+    }
+    if (bindings.ability1 === abilityId) return Boolean(input.ability1);
+    if (bindings.ability2 === abilityId) return Boolean(input.ability2);
+    return false;
+  }
+
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
+    if (this.getPhantomSecondarySkill(player.id) === 'rift_bolt') {
+      this.phantomVoidRayCharges.clear(player.id);
+      if (!input.secondaryFire || previousSecondaryFire) return;
+
+      if (this.phantomRiftBolts.get(player.id)) {
+        if (this.playerRoots.isRooted(player.id, now)) {
+          this.rejectAbilityOrCombat(player, 'rooted_movement_ability_blocked', true);
+          return;
+        }
+        this.teleportPhantomToRiftBolt(player, now);
+        return;
+      }
+
+      if (this.isPhantomPrimaryReloading(player, now)) {
+        this.rejectAbilityOrCombat(player, 'phantom_reload_blocks:phantom_rift_bolt', false);
+        return;
+      }
+      this.tryResolveAttack(player, 'secondary', now);
+      return;
+    }
+
     const wasCharging = this.phantomVoidRayCharges.isCharging(player.id);
 
     if (this.isPhantomPrimaryReloading(player, now)) {
@@ -7441,6 +8539,14 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    if (player.heroId === 'blaze' && slot === 'ultimate') {
+      const activePhoenixDive = this.blazePhoenixDives.get(player.id);
+      if (activePhoenixDive && activePhoenixDive.phase !== 'dive') {
+        this.confirmBlazePhoenixDive(player, activePhoenixDive, usedAt);
+        return;
+      }
+    }
+
     const chronosLifelineMode = player.heroId === 'chronos' && slot === 'ability1'
       ? options.chronosLifelineMode
       : undefined;
@@ -7452,7 +8558,7 @@ export class GameRoom extends Room<GameState> {
     const hookshotGrappleTarget = player.heroId === 'hookshot' && slot === 'ability1'
       ? this.resolveHookshotGrappleTarget(player)
       : null;
-    const abilityId = HERO_DEFINITIONS[player.heroId as HeroId]?.[slot]?.abilityId;
+    const abilityId = this.resolvePlayerAbilityId(player, slot);
     const preflightRejection = getAbilityUsePreflightRejection({
       playerState: player.state,
       heroId: player.heroId,
@@ -7478,7 +8584,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const result = tryUseAbility(player, slot);
+    const result = tryUseAbility(player, slot, abilityId);
     if (!result.success || !result.abilityId || !result.abilityState || !result.abilityDef) {
       this.rejectAbilityOrCombat(player, `ability_unavailable:${slot}`, false);
       return;
@@ -7497,6 +8603,15 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.executeRoomAbilityEffect(player, ability);
+
+    if (ability.abilityId === 'blaze_afterburner') {
+      this.startBlazeAfterburnerDash(player, usedAt);
+    }
+
+    if (ability.abilityId === 'blaze_phoenix_dive') {
+      this.startBlazePhoenixDive(player, startedAt, usedAt);
+      return;
+    }
 
     if (ability.abilityId === 'blaze_flamethrower') {
       return;
@@ -7737,8 +8852,28 @@ export class GameRoom extends Room<GameState> {
     return this.blazePrimarySkills.get(playerId) ?? 'fireball_rockets';
   }
 
+  private getPhantomPrimarySkill(playerId: string): PhantomPrimarySkill {
+    return this.phantomPrimarySkills.get(playerId) ?? 'dire_ball';
+  }
+
+  private getPhantomSecondarySkill(playerId: string): PhantomSecondarySkill {
+    return this.phantomSecondarySkills.get(playerId) ?? 'void_ray';
+  }
+
+  private getBlazeSecondarySkill(playerId: string): BlazeSecondarySkill {
+    return this.blazeSecondarySkills.get(playerId) ?? 'meteor_strike';
+  }
+
+  private getBlazeUltimateSkill(playerId: string): BlazeUltimateSkill {
+    return this.blazeUltimateSkills.get(playerId) ?? 'infernal_gearstorm';
+  }
+
   private getPrimaryMagazineTracker(playerId: string, heroId: string): PrimaryMagazineTracker | null {
-    if (heroId === 'phantom') return this.phantomPrimaryMagazines;
+    if (heroId === 'phantom') {
+      return this.getPhantomPrimarySkill(playerId) === 'soulrend_daggers'
+        ? this.phantomSoulrendPrimaryMagazines
+        : this.phantomPrimaryMagazines;
+    }
     if (heroId === 'blaze') {
       return this.getBlazePrimarySkill(playerId) === 'scrapshot'
         ? this.blazeScrapshotPrimaryMagazines
@@ -7752,7 +8887,9 @@ export class GameRoom extends Room<GameState> {
     this.phantomPrimaryHolds.clear(playerId);
 
     if (heroId === 'phantom') {
-      this.phantomPrimaryMagazines.reset(playerId);
+      this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
+      this.getPrimaryMagazineTracker(playerId, heroId)?.reset(playerId);
       this.blazePrimaryMagazines.clear(playerId);
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
@@ -7761,14 +8898,17 @@ export class GameRoom extends Room<GameState> {
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.getPrimaryMagazineTracker(playerId, heroId)?.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
     } else if (heroId === 'chronos') {
       this.chronosPrimaryMagazines.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
     } else {
       this.phantomPrimaryMagazines.clear(playerId);
+      this.phantomSoulrendPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
       this.blazeScrapshotPrimaryMagazines.clear(playerId);
       this.chronosPrimaryMagazines.clear(playerId);
@@ -8017,7 +9157,12 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId === 'phantom') {
       this.handlePhantomSecondaryInput(player, input, previous.secondaryFire, now);
     } else if (player.heroId === 'blaze') {
-      if (!input.secondaryFire && previous.secondaryFire) {
+      const blazeSecondarySkill = this.getBlazeSecondarySkill(player.id);
+      if (shouldResolveBlazeSecondaryAttack({
+        skill: blazeSecondarySkill,
+        secondaryFire: input.secondaryFire,
+        previousSecondaryFire: previous.secondaryFire,
+      })) {
         this.tryResolveAttack(player, 'secondary', now);
       }
     } else if (shouldResolveGenericSecondaryAttack(player.heroId, input, previous.secondaryFire, isChronosLifelineCommit)) {
@@ -8101,7 +9246,10 @@ export class GameRoom extends Room<GameState> {
         heroId,
         mode,
         chronosAscendantActive: heroId === 'chronos' && mode === 'primary' && this.isChronosAscendantActive(player),
+        phantomPrimarySkill: heroId === 'phantom' ? this.getPhantomPrimarySkill(player.id) : undefined,
+        phantomSecondarySkill: heroId === 'phantom' ? this.getPhantomSecondarySkill(player.id) : undefined,
         blazePrimarySkill: heroId === 'blaze' ? this.getBlazePrimarySkill(player.id) : undefined,
+        blazeSecondarySkill: heroId === 'blaze' ? this.getBlazeSecondarySkill(player.id) : undefined,
       })
       : null;
     const readinessRejection = getAttackPreflightRejection({
@@ -8156,14 +9304,41 @@ export class GameRoom extends Room<GameState> {
           this.fireBlazeRocket(player, attack, now);
         }
       } else {
-        this.dropBlazeBomb(player, attack, now);
+        if (this.getBlazeSecondarySkill(player.id) === 'phosphor_flare') {
+          this.dropBlazePhosphorFlare(player, attack, now);
+        } else {
+          this.dropBlazeBomb(player, attack, now);
+        }
       }
+      return;
+    }
+
+    if (
+      heroId === 'phantom' &&
+      mode === 'secondary' &&
+      this.getPhantomSecondarySkill(player.id) === 'rift_bolt'
+    ) {
+      this.firePhantomRiftBolt(player, attack, now);
+      return;
+    }
+
+    if (
+      heroId === 'phantom' &&
+      mode === 'primary' &&
+      this.getPhantomPrimarySkill(player.id) === 'soulrend_daggers'
+    ) {
+      this.firePhantomSoulrend(player, attack, now);
       return;
     }
 
     const origin = this.getPlayerEyePosition(player);
     const rawForward = getForwardVector(player.lookYaw, player.lookPitch);
-    const castKind = getAttackCastKind({ heroId, mode });
+    const castKind = getAttackCastKind({
+      heroId,
+      mode,
+      phantomPrimarySkill: heroId === 'phantom' ? this.getPhantomPrimarySkill(player.id) : undefined,
+      phantomSecondarySkill: heroId === 'phantom' ? this.getPhantomSecondarySkill(player.id) : undefined,
+    });
     const forward = this.resolveValidatedCastAimDirection(
       player,
       castKind,
@@ -8187,7 +9362,12 @@ export class GameRoom extends Room<GameState> {
       aegisBlocksAttack,
       aegisPoint: aegisHit?.point,
     });
-    if (castKind === 'phantom_dire_ball' || castKind === 'phantom_void_ray') {
+    if (
+      castKind === 'phantom_dire_ball' ||
+      castKind === 'phantom_soulrend_daggers' ||
+      castKind === 'phantom_void_ray' ||
+      castKind === 'phantom_rift_bolt'
+    ) {
       this.broadcastPhantomAttackCast(player, castKind, now, attack.range, impactHint);
     } else if (castKind === 'hookshot_basic_attack' || castKind === 'hookshot_heavy_attack') {
       this.broadcastHookshotAttackCast(player, castKind, now, withHookshotHeavyAttackTargetHint({
@@ -8429,6 +9609,7 @@ export class GameRoom extends Room<GameState> {
   private shouldDamageBypassChronosAegis(damageType: string, context: DamageContext): boolean {
     return (
       damageType === 'airstrike' ||
+      damageType === 'phoenix_dive' ||
       damageType === 'void_zone' ||
       context.abilityId === 'blaze_airstrike' ||
       context.abilityId === 'phantom_void_zone'
@@ -8823,6 +10004,59 @@ export class GameRoom extends Room<GameState> {
     return moved;
   }
 
+  private stepBlazeAfterburnerWithoutCommand(
+    player: Player,
+    tickTime: number,
+    collisionWorld = this.getMovementCollisionWorld(tickTime)
+  ): boolean {
+    if (!this.getActiveBlazeAfterburnerDash(player.id, tickTime)) return false;
+
+    let moved = false;
+    const authority = this.getMovementAuthority(player.id);
+    for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+      const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+      if (!this.getActiveBlazeAfterburnerDash(player.id, stepNow)) break;
+      const before = vec3SchemaToPlain(player.position);
+      const input = suppressLocomotionInput(
+        player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)
+      );
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+      if (distance3D(before, player.position) <= 0.001) continue;
+      moved = true;
+      this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
+    }
+    return moved;
+  }
+
+  private stepBlazePhoenixDiveWithoutCommand(
+    player: Player,
+    tickTime: number,
+    collisionWorld = this.getMovementCollisionWorld(tickTime)
+  ): boolean {
+    const initialPhase = this.blazePhoenixDives.get(player.id)?.phase;
+    if (initialPhase !== 'hover' && initialPhase !== 'dive') return false;
+
+    let moved = false;
+    const authority = this.getMovementAuthority(player.id);
+    for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+      const dive = this.blazePhoenixDives.get(player.id);
+      if (!dive || (dive.phase !== 'hover' && dive.phase !== 'dive')) break;
+      const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+      const before = vec3SchemaToPlain(player.position);
+      const input = suppressLocomotionInput(
+        player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)
+      );
+      if (dive.phase === 'hover') {
+        this.applyBlazePhoenixDiveHoverVelocity(player, dive, stepNow);
+      }
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+      if (distance3D(before, player.position) <= 0.001) continue;
+      moved = true;
+      this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
+    }
+    return moved;
+  }
+
   private scheduleChronosTimebreakShockwave(
     casterId: string,
     castDirection: PlainVec3,
@@ -8897,8 +10131,7 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private getActiveSpeedMultiplier(player: Player): number {
-    const now = Date.now();
+  private getActiveSpeedMultiplier(player: Player, now = Date.now()): number {
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     if (this.isChronosAscendantActive(player, now)) {
@@ -8906,6 +10139,9 @@ export class GameRoom extends Room<GameState> {
     }
     if (this.powerupBoosts.has(player.id, now)) {
       multiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+    }
+    if (this.getActiveBlazeAfterburnerDash(player.id, now)) {
+      multiplier *= Math.max(1, BLAZE_AFTERBURNER_DASH_SPEED / BHOP_MAX_VELOCITY);
     }
     multiplier *= this.getChronosTimebreakTempoMultiplier(player);
     return multiplier;
@@ -10517,6 +11753,7 @@ export class GameRoom extends Room<GameState> {
     resetPlayerMovementRuntime(player);
     this.blazeBurns.clearTarget(player.id);
     this.blazeFlamethrowers.clearDamageTicksForPlayer(player.id);
+    this.stopBlazeAfterburnerDash(player.id);
     this.playerRoots.clear(player.id);
     this.powerupBoosts.clear(player.id);
     this.clearHookshotDragPullsInvolving(player.id);
@@ -10753,7 +11990,11 @@ export class GameRoom extends Room<GameState> {
     }
 
     // Initialize abilities for this hero
-    initializePlayerAbilities(player, heroId);
+    initializePlayerAbilities(
+      player,
+      heroId,
+      heroId === 'blaze' ? this.getBlazeAbilitySelection(player.id) : undefined
+    );
     this.syncMatchParticipant(player);
     this.syncReconnectParticipantFromPlayer(player);
 
@@ -11106,6 +12347,7 @@ export class GameRoom extends Room<GameState> {
     this.attackCooldowns.clearPlayer(player.id);
     this.clearPrimaryHoldStates(player.id);
     this.phantomVoidRayCharges.clear(player.id);
+    this.cancelPhantomRiftBolt(player);
 
     if ((player.heroId === 'phantom' || player.heroId === 'blaze') && slot === 'primary') {
       this.resetPrimaryMagazineForHero(player.id, player.heroId);
@@ -11402,6 +12644,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastBlazeFlamethrowerState(player, false, Date.now());
     this.clearPrimaryHoldStates(player.id);
     this.phantomVoidRayCharges.clear(player.id);
+    this.cancelPhantomRiftBolt(player);
     this.clearHookshotGrapple(player.id);
     this.clearHookshotDragPull(player.id);
     player.movement.isGrappling = false;
@@ -11877,6 +13120,11 @@ export class GameRoom extends Room<GameState> {
 
     if (!preserveBattleRoyalDeploymentGameplay) {
       this.blazeBurns.clearAll();
+      this.blazeLingeringAreas.clear();
+      this.blazeAfterburnerTrails.clear();
+      this.blazePhoenixDives.clear();
+      this.blazeAfterburnerDashes.clear();
+      this.phantomRiftBolts.clearAll();
     }
 
     this.state.players.forEach(player => {
@@ -12557,7 +13805,7 @@ export class GameRoom extends Room<GameState> {
 
       const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
       const frameState = resolveBlazeFlamethrowerFrameState({
-        isFiring: Boolean(player.lastInput?.ability1),
+        isFiring: this.isBlazeAbilityInputActive(player, 'blaze_flamethrower'),
         fuel: player.movement.jetpackFuel,
         dt,
         tempoMultiplier,
@@ -12965,6 +14213,8 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
       const grappleMoved = this.stepHookshotGrappleWithoutCommand(player, tickTime, collisionWorld);
       const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime, collisionWorld);
+      const afterburnerMoved = this.stepBlazeAfterburnerWithoutCommand(player, tickTime, collisionWorld);
+      const phoenixDiveMoved = this.stepBlazePhoenixDiveWithoutCommand(player, tickTime, collisionWorld);
       authority.metrics.queueLength = authority.pendingCommands.length;
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
       if (player.position.y < -10) {
@@ -12972,7 +14222,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       const client = this.clientRegistry.getClient(player.id);
-      if (client && (authority.correctionReason || grappleMoved || dragPullMoved)) {
+      if (client && (authority.correctionReason || grappleMoved || dragPullMoved || afterburnerMoved || phoenixDiveMoved)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
       return;

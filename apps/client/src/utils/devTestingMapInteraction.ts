@@ -6,6 +6,7 @@ import {
   getDefaultHeroSkinId,
   getHeroStats,
   type HeroId,
+  type BlazeUltimateSkill,
   type MapProfileId,
   type Player,
   type VoxelMapManifest,
@@ -55,7 +56,11 @@ export function getDevTestingHeroInteraction(
   return best;
 }
 
-export function createDevTestingHeroSwitchUpdates(localPlayer: Player, heroId: HeroId): Partial<Player> {
+export function createDevTestingHeroSwitchUpdates(
+  localPlayer: Player,
+  heroId: HeroId,
+  blazeUltimateSkill?: BlazeUltimateSkill,
+): Partial<Player> {
   const heroStats = getHeroStats(heroId);
 
   return {
@@ -79,7 +84,7 @@ export function createDevTestingHeroSwitchUpdates(localPlayer: Player, heroId: H
       isGrounded: localPlayer.movement.isGrounded,
       jetpackFuel: 100,
     }),
-    abilities: createPracticeAbilityStates(heroId),
+    abilities: createPracticeAbilityStates(heroId, blazeUltimateSkill),
     hasFlag: false,
     spawnProtectionUntil: Date.now() + 250,
   };

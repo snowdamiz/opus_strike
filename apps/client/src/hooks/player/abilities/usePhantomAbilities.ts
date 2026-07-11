@@ -13,10 +13,17 @@ import { useRef, useCallback } from 'react';
 import {
   ABILITY_DEFINITIONS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
-  PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_LIFETIME_MS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   VOID_RAY_CHARGE_TIME,
+  getPhantomPrimaryAbilityId,
+  getPhantomPrimaryMagazineSize,
+  getPhantomPrimaryProjectileSpeed,
+  getPhantomRiftBoltPosition,
+  type PhantomPrimarySkill,
+  type PhantomSecondarySkill,
   type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -25,7 +32,6 @@ import type { AbilityContext, PlayerSounds } from '../types';
 import {
   PHANTOM_DIRE_BALL_SOCKET,
   PHANTOM_FIRE_INTERVAL,
-  PHANTOM_PROJECTILE_SPEED,
   PHANTOM_VOID_RAY_SOCKET,
   calculatePlayerSocketPosition,
 } from '../constants';
@@ -74,7 +80,7 @@ export interface UsePhantomAbilitiesReturn {
   reloadPhantomPrimary: (now?: number) => boolean;
   resetPhantomPrimaryMagazine: () => void;
   fireDireBall: (ctx: AbilityContext, sounds: PlayerSounds) => void;
-  handleVoidRay: (ctx: AbilityContext, sounds: PlayerSounds) => void;
+  handleSecondaryFire: (ctx: AbilityContext, sounds: PlayerSounds) => { x: number; y: number; z: number } | null;
   executeBlink: (
     ctx: AbilityContext,
     sounds: PlayerSounds,
@@ -95,11 +101,17 @@ export interface UsePhantomAbilitiesReturn {
   ) => boolean;
 }
 
-export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
+export function usePhantomAbilities(
+  phantomPrimarySkill: PhantomPrimarySkill,
+  phantomSecondarySkill: PhantomSecondarySkill,
+): UsePhantomAbilitiesReturn {
+  const primaryMagazineSize = getPhantomPrimaryMagazineSize(phantomPrimarySkill);
+  const primaryAbilityId = getPhantomPrimaryAbilityId(phantomPrimarySkill);
+  const primaryProjectileSpeed = getPhantomPrimaryProjectileSpeed(phantomPrimarySkill);
   // Fire state
   const lastFireTimeRef = useRef(0);
   const direBallIdRef = useRef(0);
-  const phantomPrimaryAmmoRef = useRef(PHANTOM_PRIMARY_MAGAZINE_SIZE);
+  const phantomPrimaryAmmoRef = useRef(primaryMagazineSize);
   const phantomPrimaryReloadingRef = useRef(false);
   const phantomPrimaryReloadStartRef = useRef(0);
 
@@ -109,6 +121,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const voidRayIdRef = useRef(0);
   const phantomPrimaryHoldStartedAtRef = useRef(0);
   const localVoidRayLastReleaseAtRef = useRef(0);
+  const riftBoltPressedRef = useRef(false);
+  const riftBoltIdRef = useRef(0);
+  const localRiftBoltLastCastAtRef = useRef(0);
 
   const getOwnerTeam = (ctx: AbilityContext): Team => ctx.localPlayer.team || 'red';
 
@@ -120,7 +135,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     if (!ctx.camera) return null;
     return resolveAbilitySocketOrigin({
       ownerScope: 'localViewmodel',
-      abilityId: 'phantom_dire_ball',
+      abilityId: primaryAbilityId,
       side: launchSide,
       sampledContext: {
         camera: ctx.camera,
@@ -134,14 +149,15 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     });
   }
 
-  function samplePhantomVoidRaySpawn(
+  function samplePhantomSecondarySpawn(
     ctx: AbilityContext,
-    now: number
+    now: number,
+    abilityId: 'phantom_void_ray' | 'phantom_rift_bolt' = 'phantom_void_ray',
   ): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
     return resolveAbilitySocketOrigin({
       ownerScope: 'localViewmodel',
-      abilityId: 'phantom_void_ray',
+      abilityId,
       sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
@@ -153,22 +169,22 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   }
 
   const completePhantomPrimaryReload = useCallback(() => {
-    phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+    phantomPrimaryAmmoRef.current = primaryMagazineSize;
     phantomPrimaryReloadingRef.current = false;
     phantomPrimaryReloadStartRef.current = 0;
     phantomPrimaryHoldStartedAtRef.current = 0;
 
     const store = useGameStore.getState();
-    store.setPhantomPrimaryAmmo(PHANTOM_PRIMARY_MAGAZINE_SIZE);
+    store.setPhantomPrimaryAmmo(primaryMagazineSize);
     store.setPhantomPrimaryReload(false, 0, 0);
-  }, []);
+  }, [primaryMagazineSize]);
 
   const beginPhantomPrimaryReload = useCallback((now = Date.now()): boolean => {
     const store = useGameStore.getState();
     const currentAmmo = Math.min(store.phantomPrimaryAmmo, phantomPrimaryAmmoRef.current);
 
     if (store.phantomPrimaryReloading || phantomPrimaryReloadingRef.current) return false;
-    if (currentAmmo >= PHANTOM_PRIMARY_MAGAZINE_SIZE) return false;
+    if (currentAmmo >= primaryMagazineSize) return false;
 
     phantomPrimaryAmmoRef.current = Math.max(0, currentAmmo);
     phantomPrimaryReloadingRef.current = true;
@@ -179,7 +195,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     store.setPhantomPrimaryReload(true, now);
     playPredictedPhantomPrimaryReload(now);
     return true;
-  }, []);
+  }, [primaryMagazineSize]);
 
   const updatePhantomPrimaryReload = useCallback((now = Date.now()) => {
     const store = useGameStore.getState();
@@ -207,14 +223,17 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const resetPhantomPrimaryMagazine = useCallback(() => {
     lastFireTimeRef.current = 0;
     phantomPrimaryHoldStartedAtRef.current = 0;
-    phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+    phantomPrimaryAmmoRef.current = primaryMagazineSize;
     phantomPrimaryReloadingRef.current = false;
     phantomPrimaryReloadStartRef.current = 0;
     voidRayChargingRef.current = false;
     voidRayChargeStartRef.current = 0;
     localVoidRayLastReleaseAtRef.current = 0;
-    useGameStore.getState().resetPhantomPrimaryMagazine();
-  }, []);
+    riftBoltPressedRef.current = false;
+    localRiftBoltLastCastAtRef.current = 0;
+    useGameStore.getState().removeRiftBoltsByOwner(useGameStore.getState().localPlayer?.id ?? '');
+    useGameStore.getState().resetPhantomPrimaryMagazine(primaryMagazineSize);
+  }, [primaryMagazineSize]);
 
   // Fire Dire Ball (primary fire)
   const fireDireBall = useCallback((ctx: AbilityContext, _sounds: PlayerSounds) => {
@@ -260,9 +279,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       id: visualId,
       position: spawnPosition,
       velocity: {
-        x: direction.x * PHANTOM_PROJECTILE_SPEED,
-        y: direction.y * PHANTOM_PROJECTILE_SPEED,
-        z: direction.z * PHANTOM_PROJECTILE_SPEED,
+        x: direction.x * primaryProjectileSpeed,
+        y: direction.y * primaryProjectileSpeed,
+        z: direction.z * primaryProjectileSpeed,
       },
       startTime: now - PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS * 1000,
       ownerId: ctx.localPlayer.id,
@@ -270,17 +289,79 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       launchSide,
       launchYaw: ctx.yaw,
       viewmodelEventId: visualId,
+      abilityId: primaryAbilityId,
     });
-    markPredictedLocalAbilityVisual('phantom_dire_ball', ctx.localPlayer.id, visualId, {
+    markPredictedLocalAbilityVisual(primaryAbilityId, ctx.localPlayer.id, visualId, {
       launchSide,
       now,
     });
-  }, [beginPhantomPrimaryReload, updatePhantomPrimaryReload]);
+  }, [beginPhantomPrimaryReload, primaryAbilityId, primaryProjectileSpeed, updatePhantomPrimaryReload]);
 
   // Locally predict charge and release poses; server confirmation owns damage/cooldown.
-  const handleVoidRay = useCallback((ctx: AbilityContext, _sounds: PlayerSounds) => {
+  const handleSecondaryFire = useCallback((ctx: AbilityContext, _sounds: PlayerSounds): { x: number; y: number; z: number } | null => {
     const now = Date.now();
     const store = useGameStore.getState();
+
+    if (phantomSecondarySkill === 'rift_bolt') {
+      if (!ctx.inputState.secondaryFire) {
+        riftBoltPressedRef.current = false;
+        return null;
+      }
+      if (riftBoltPressedRef.current) return null;
+      riftBoltPressedRef.current = true;
+
+      const activeBolt = store.riftBolts.find((bolt) => bolt.ownerId === ctx.localPlayer.id);
+      if (activeBolt) {
+        const target = getPhantomRiftBoltPosition({
+          startPosition: activeBolt.startPosition,
+          direction: activeBolt.direction,
+          launchedAt: activeBolt.startTime,
+          impactPosition: activeBolt.impactPosition,
+        }, now);
+        markPredictedLocalAbilitySound('phantom_rift_bolt_teleport', now);
+        void playSharedSound('phantomBlink', { durationMs: 900, volume: 1.05, pitch: 1.18 });
+        if (store.isPracticeMode) {
+          store.removeRiftBolt(activeBolt.id);
+          return target;
+        }
+        return null;
+      }
+
+      const cooldownUntil = store.clientCooldowns.phantom_rift_bolt ?? 0;
+      if (
+        cooldownUntil > now ||
+        now - localRiftBoltLastCastAtRef.current < PHANTOM_RIFT_BOLT_COOLDOWN_MS
+      ) {
+        return null;
+      }
+
+      localRiftBoltLastCastAtRef.current = now;
+      riftBoltIdRef.current += 1;
+      const sampledSpawn = samplePhantomSecondarySpawn(ctx, now, 'phantom_rift_bolt');
+      const startPosition = sampledSpawn
+        ? vectorToPlainPosition(sampledSpawn.position)
+        : calculatePlayerSocketPosition(ctx.position, ctx.yaw, PHANTOM_VOID_RAY_SOCKET);
+      const direction = resolveAbilityAimDirection(ctx, startPosition);
+      const visualId = `predicted_phantom_rift_bolt_${ctx.localPlayer.id}_${riftBoltIdRef.current}`;
+      store.addRiftBolt({
+        id: visualId,
+        startPosition,
+        direction,
+        startTime: now,
+        expiresAt: now + PHANTOM_RIFT_BOLT_LIFETIME_MS,
+        ownerId: ctx.localPlayer.id,
+        ownerTeam: getOwnerTeam(ctx),
+      });
+      if (store.isPracticeMode) {
+        store.setClientCooldown('phantom_rift_bolt', now + PHANTOM_RIFT_BOLT_COOLDOWN_MS);
+      }
+      markPredictedLocalAbilityVisual('phantom_rift_bolt', ctx.localPlayer.id, visualId, { now });
+      markPredictedLocalAbilitySound('phantom_rift_bolt', now);
+      void playSharedSound('phantomVoidRay', { pitch: 1.28, volume: 0.72 });
+      return null;
+    }
+
+    riftBoltPressedRef.current = false;
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
     const chargeDurationMs = VOID_RAY_CHARGE_TIME / tempoMultiplier;
     const cooldownMs = PHANTOM_VOID_RAY_COOLDOWN_MS / tempoMultiplier;
@@ -289,27 +370,27 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       if (voidRayChargingRef.current || store.voidRayCharging) {
         voidRayChargingRef.current = true;
         voidRayChargeStartRef.current = voidRayChargeStartRef.current || store.voidRayChargeStart || now;
-        return;
+        return null;
       }
 
-      if (now - localVoidRayLastReleaseAtRef.current < cooldownMs) return;
+      if (now - localVoidRayLastReleaseAtRef.current < cooldownMs) return null;
       voidRayChargingRef.current = true;
       voidRayChargeStartRef.current = now;
       store.setVoidRayCharging(true, now);
       markPredictedLocalAbilityVisual('phantom_void_ray_charge', ctx.localPlayer.id, `predicted_phantom_void_ray_charge_${ctx.localPlayer.id}_${now}`, {
         now,
       });
-      return;
+      return null;
     }
 
     const chargeStart = voidRayChargeStartRef.current || store.voidRayChargeStart || now;
-    if (!voidRayChargingRef.current && !store.voidRayCharging) return;
+    if (!voidRayChargingRef.current && !store.voidRayCharging) return null;
 
     if (now - chargeStart < chargeDurationMs) {
       store.setVoidRayCharging(false, 0);
       voidRayChargingRef.current = false;
       voidRayChargeStartRef.current = 0;
-      return;
+      return null;
     }
 
     voidRayChargingRef.current = false;
@@ -318,7 +399,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     store.setVoidRayCharging(false, 0);
 
     voidRayIdRef.current += 1;
-    const sampledSpawn = samplePhantomVoidRaySpawn(ctx, now);
+    const sampledSpawn = samplePhantomSecondarySpawn(ctx, now);
     const startPosition = sampledSpawn
       ? vectorToPlainPosition(sampledSpawn.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, PHANTOM_VOID_RAY_SOCKET);
@@ -336,7 +417,8 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       store.setClientCooldown('phantom_void_ray', now + cooldownMs);
     }
     markPredictedLocalAbilityVisual('phantom_void_ray', ctx.localPlayer.id, visualId, { now });
-  }, []);
+    return null;
+  }, [phantomSecondarySkill]);
 
   // Phantom Q is requested through input and confirmed by the server.
   const executePersonalShield = useCallback((
@@ -386,7 +468,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     reloadPhantomPrimary,
     resetPhantomPrimaryMagazine,
     fireDireBall,
-    handleVoidRay,
+    handleSecondaryFire,
     executeBlink,
     executePersonalShield,
     executePhantomVeil,

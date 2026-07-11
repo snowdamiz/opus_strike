@@ -12,6 +12,8 @@ import {
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_RADIUS,
+  calculateBlazeAfterburnerVelocity,
+  calculateBlazePhoenixDiveLaunchVelocity,
   calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
 } from '@voxel-strike/shared';
@@ -56,6 +58,36 @@ export interface VoidZone {
   lastDamageTick: Map<string, number>;
 }
 
+export interface HeroAbilitySelection {
+  ability1: string;
+  ability2: string;
+  ultimate?: string;
+}
+
+function createAbilityState(abilityId: string): AbilityStateSchema | null {
+  const abilityDef = ABILITY_DEFINITIONS[abilityId];
+  if (!abilityDef) return null;
+
+  const abilityState = new AbilityStateSchema();
+  abilityState.abilityId = abilityId;
+  abilityState.cooldownRemaining = 0;
+  abilityState.charges = abilityDef.charges || 1;
+  abilityState.isActive = false;
+  return abilityState;
+}
+
+function getSelectedAbilityIds(
+  heroId: HeroId,
+  selection?: HeroAbilitySelection
+): [string, string, string] {
+  const heroDef = HERO_DEFINITIONS[heroId];
+  return [
+    selection?.ability1 ?? heroDef.ability1.abilityId,
+    selection?.ability2 ?? heroDef.ability2.abilityId,
+    selection?.ultimate ?? heroDef.ultimate.abilityId,
+  ];
+}
+
 // ============================================================================
 // ABILITY INITIALIZATION
 // ============================================================================
@@ -63,47 +95,37 @@ export interface VoidZone {
 /**
  * Initializes all abilities for a player based on their hero
  */
-export function initializePlayerAbilities(player: Player, heroId: HeroId): void {
+export function initializePlayerAbilities(
+  player: Player,
+  heroId: HeroId,
+  selection?: HeroAbilitySelection
+): void {
   const heroDef = HERO_DEFINITIONS[heroId];
   if (!heroDef) return;
 
   // Clear existing abilities
   player.abilities.clear();
 
-  // Initialize ability 1
-  const ability1Id = heroDef.ability1.abilityId;
-  const ability1Def = ABILITY_DEFINITIONS[ability1Id];
-  if (ability1Def) {
-    const ability1State = new AbilityStateSchema();
-    ability1State.abilityId = ability1Id;
-    ability1State.cooldownRemaining = 0;
-    ability1State.charges = ability1Def.charges || 1;
-    ability1State.isActive = false;
-    player.abilities.set(ability1Id, ability1State);
+  for (const abilityId of getSelectedAbilityIds(heroId, selection)) {
+    const abilityState = createAbilityState(abilityId);
+    if (abilityState) player.abilities.set(abilityId, abilityState);
   }
+}
 
-  // Initialize ability 2
-  const ability2Id = heroDef.ability2.abilityId;
-  const ability2Def = ABILITY_DEFINITIONS[ability2Id];
-  if (ability2Def) {
-    const ability2State = new AbilityStateSchema();
-    ability2State.abilityId = ability2Id;
-    ability2State.cooldownRemaining = 0;
-    ability2State.charges = ability2Def.charges || 1;
-    ability2State.isActive = false;
-    player.abilities.set(ability2Id, ability2State);
+export function reconcilePlayerAbilities(
+  player: Player,
+  heroId: HeroId,
+  selection?: HeroAbilitySelection
+): void {
+  const desiredAbilityIds = new Set(getSelectedAbilityIds(heroId, selection));
+  const currentAbilityIds = Array.from(player.abilities.keys());
+  for (const abilityId of currentAbilityIds) {
+    if (!desiredAbilityIds.has(abilityId)) player.abilities.delete(abilityId);
   }
-
-  // Initialize ultimate
-  const ultimateId = heroDef.ultimate.abilityId;
-  const ultimateDef = ABILITY_DEFINITIONS[ultimateId];
-  if (ultimateDef) {
-    const ultimateState = new AbilityStateSchema();
-    ultimateState.abilityId = ultimateId;
-    ultimateState.cooldownRemaining = 0;
-    ultimateState.charges = ultimateDef.charges || 1;
-    ultimateState.isActive = false;
-    player.abilities.set(ultimateId, ultimateState);
+  for (const abilityId of desiredAbilityIds) {
+    if (player.abilities.has(abilityId)) continue;
+    const abilityState = createAbilityState(abilityId);
+    if (abilityState) player.abilities.set(abilityId, abilityState);
   }
 }
 
@@ -139,7 +161,8 @@ export interface AbilityUseResult {
  */
 export function tryUseAbility(
   player: Player,
-  slot: 'ability1' | 'ability2' | 'ultimate'
+  slot: 'ability1' | 'ability2' | 'ultimate',
+  selectedAbilityId?: string
 ): AbilityUseResult {
   const heroId = player.heroId as HeroId;
   if (!heroId) {
@@ -151,8 +174,7 @@ export function tryUseAbility(
     return { success: false, reason: 'Invalid hero' };
   }
 
-  const abilitySlot = heroDef[slot];
-  const abilityId = abilitySlot.abilityId;
+  const abilityId = selectedAbilityId ?? heroDef[slot].abilityId;
   const abilityDef = ABILITY_DEFINITIONS[abilityId];
   if (!abilityDef) {
     return { success: false, reason: 'Invalid ability' };
@@ -335,9 +357,34 @@ export function executeAbility(
       break;
     }
 
+    case 'blaze_afterburner': {
+      const velocity = calculateBlazeAfterburnerVelocity(player.velocity, player.lookYaw);
+      player.velocity.x = velocity.x;
+      player.velocity.y = velocity.y;
+      player.velocity.z = velocity.z;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+      context.markAuthoritativePosition?.(player.id, 450, 'knockback');
+      break;
+    }
+
     case 'blaze_airstrike': {
       abilityState.isActive = true;
       abilityState.activatedAt = now;
+      break;
+    }
+
+    case 'blaze_phoenix_dive': {
+      const velocity = calculateBlazePhoenixDiveLaunchVelocity(player.velocity, player.lookYaw);
+      player.velocity.x = velocity.x;
+      player.velocity.y = velocity.y;
+      player.velocity.z = velocity.z;
+      player.position.y += 0.5;
+      stopUpwardVelocityAtCeiling(player, clampPlayerPosition(player, context).clampedY);
+      player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+      context.markAuthoritativePosition?.(player.id, 650, 'knockback');
       break;
     }
 

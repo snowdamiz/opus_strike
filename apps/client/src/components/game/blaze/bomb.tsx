@@ -617,6 +617,10 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
 interface BombTargetingIndicatorProps {
   isActive: boolean;
   showIndicator?: boolean;
+  maxRange?: number;
+  minRange?: number;
+  radius?: number;
+  raycastFeature?: string;
   onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
@@ -628,7 +632,15 @@ const _bombLookDir = new THREE.Vector3();
 const _bombTargetPos = new THREE.Vector3();
 const _bombHorizDir = new THREE.Vector3();
 
-export function BombTargetingIndicator({ isActive, showIndicator = true, onTargetUpdate }: BombTargetingIndicatorProps) {
+export function BombTargetingIndicator({
+  isActive,
+  showIndicator = true,
+  maxRange = BLAZE_BOMB_MAX_RANGE,
+  minRange = BLAZE_BOMB_MIN_RANGE,
+  radius = BLAZE_BOMB_SPLASH_RADIUS,
+  raycastFeature = 'targeting:blazeBomb',
+  onTargetUpdate,
+}: BombTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
   const targetOuterRef = useRef<THREE.Mesh>(null);
   const targetMiddleRef = useRef<THREE.Mesh>(null);
@@ -712,10 +724,10 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
           directHit,
           camera.position.x, camera.position.y, camera.position.z,
           _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
-          BLAZE_BOMB_MAX_RANGE + 10,
+          maxRange + 10,
           {
             priority: 'visual',
-            feature: 'targeting:blazeBomb',
+            feature: raycastFeature,
           }
         )) {
           targetX = directHit.point.x;
@@ -726,10 +738,12 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
           if (!directHit.isWalkable) {
             const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
               priority: 'visual',
-              feature: 'targeting:blazeBomb',
+              feature: raycastFeature,
             });
             if (groundBelow?.isWalkable) {
               targetY = groundBelow.groundY + 0.1;
+            } else {
+              foundTarget = false;
             }
           } else {
             targetY += 0.1;
@@ -741,7 +755,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
           const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
           for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
             const dist = sampleIndex === 3
-              ? BLAZE_BOMB_MAX_RANGE
+              ? maxRange
               : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
             const sampleX = camera.position.x + _bombLookDir.x * dist;
             const sampleY = camera.position.y + _bombLookDir.y * dist;
@@ -749,7 +763,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
 
             const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
               priority: 'visual',
-              feature: 'targeting:blazeBomb',
+              feature: raycastFeature,
             });
 
             if (groundCheck?.isWalkable) {
@@ -768,15 +782,15 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
           const dz = targetZ - localPlayer.position.z;
           const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-          if (dist3D > BLAZE_BOMB_MAX_RANGE) {
-            const scale = BLAZE_BOMB_MAX_RANGE / dist3D;
+          if (dist3D > maxRange) {
+            const scale = maxRange / dist3D;
             targetX = localPlayer.position.x + dx * scale;
             targetY = localPlayer.position.y + dy * scale;
             targetZ = localPlayer.position.z + dz * scale;
 
             const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
               priority: 'visual',
-              feature: 'targeting:blazeBomb',
+              feature: raycastFeature,
             });
             if (groundCheck?.isWalkable) {
               targetY = groundCheck.groundY + 0.1;
@@ -790,7 +804,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
             (targetZ - localPlayer.position.z) ** 2
           );
 
-          if (foundTarget && finalDistH >= BLAZE_BOMB_MIN_RANGE) {
+          if (foundTarget && finalDistH >= minRange) {
             isValid = true;
           }
         }
@@ -803,14 +817,14 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
 
           const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100, {
             priority: 'visual',
-            feature: 'targeting:blazeBomb',
+              feature: raycastFeature,
           });
           if (groundCheck?.isWalkable) {
             targetY = groundCheck.groundY + 0.1;
             isValid = Math.sqrt(
               (targetX - localPlayer.position.x) ** 2 +
               (targetZ - localPlayer.position.z) ** 2
-            ) >= BLAZE_BOMB_MIN_RANGE;
+            ) >= minRange;
           }
         }
       }
@@ -843,23 +857,23 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
 
     if (targetOuterRef.current) {
       targetOuterRef.current.rotation.z = time * 0.75;
-      targetOuterRef.current.scale.set(BLAZE_BOMB_SPLASH_RADIUS * pulse, BLAZE_BOMB_SPLASH_RADIUS * pulse, 1);
+      targetOuterRef.current.scale.set(radius * pulse, radius * pulse, 1);
     }
     if (targetMiddleRef.current) {
       targetMiddleRef.current.rotation.z = -time * 1.1;
-      const radius = BLAZE_BOMB_SPLASH_RADIUS * 0.66 * slowPulse;
-      targetMiddleRef.current.scale.set(radius, radius, 1);
+      const middleRadius = radius * 0.66 * slowPulse;
+      targetMiddleRef.current.scale.set(middleRadius, middleRadius, 1);
     }
     if (targetInnerRef.current) {
       targetInnerRef.current.rotation.z = time * 1.8;
-      const radius = BLAZE_BOMB_SPLASH_RADIUS * 0.33 * pulse;
-      targetInnerRef.current.scale.set(radius, radius, 1);
+      const innerRadius = radius * 0.33 * pulse;
+      targetInnerRef.current.scale.set(innerRadius, innerRadius, 1);
     }
     if (targetCenterRef.current) {
       targetCenterRef.current.scale.setScalar(0.42 + validity * 0.18 + Math.sin(time * 7) * 0.04);
     }
     if (targetFillRef.current) {
-      const fillScale = BLAZE_BOMB_SPLASH_RADIUS * (0.9 + Math.sin(time * 3.4) * 0.04 * validity);
+      const fillScale = radius * (0.9 + Math.sin(time * 3.4) * 0.04 * validity);
       targetFillRef.current.scale.set(fillScale, fillScale, 1);
     }
     if (targetBeamRef.current) {
@@ -887,13 +901,13 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
   
   return (
     <group ref={indicatorRef}>
-      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[BLAZE_BOMB_SPLASH_RADIUS, BLAZE_BOMB_SPLASH_RADIUS, 1]} material={materials.ring1} />
-      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[BLAZE_BOMB_SPLASH_RADIUS * 0.66, BLAZE_BOMB_SPLASH_RADIUS * 0.66, 1]} material={materials.ring2} />
-      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[BLAZE_BOMB_SPLASH_RADIUS * 0.33, BLAZE_BOMB_SPLASH_RADIUS * 0.33, 1]} material={materials.ring3} />
+      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[radius, radius, 1]} material={materials.ring1} />
+      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[radius * 0.66, radius * 0.66, 1]} material={materials.ring2} />
+      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[radius * 0.33, radius * 0.33, 1]} material={materials.ring3} />
       <mesh ref={targetCenterRef} rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]} material={materials.center} />
-      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[BLAZE_BOMB_SPLASH_RADIUS, BLAZE_BOMB_SPLASH_RADIUS, 1]} material={materials.fill} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, BLAZE_BOMB_SPLASH_RADIUS * 2, 1]} material={materials.cross} />
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, BLAZE_BOMB_SPLASH_RADIUS * 2, 1]} material={materials.cross} />
+      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[radius, radius, 1]} material={materials.fill} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, radius * 2, 1]} material={materials.cross} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, radius * 2, 1]} material={materials.cross} />
       <mesh ref={targetBeamRef} position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
       <mesh ref={targetBeamTopRef} position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
       <BudgetedPointLight budgetPriority={2} color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />

@@ -1,6 +1,7 @@
 import {
-  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_AFTERBURNER_MAX_TRAIL_POINTS,
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
+  getSquaredDistanceToBlazeAfterburnerTrail,
   isPlayerAliveOrDowned,
   type Team,
 } from '@voxel-strike/shared';
@@ -50,33 +51,37 @@ export class PendingAreaDamageQueue {
   }
 }
 
-export interface BlazeGearstormInstance {
+export interface BlazeLingeringAreaInstance {
   id: string;
   ownerId: string;
   ownerTeam: Team;
   position: PlainVec3;
   radius: number;
   damage: number;
+  damageIntervalMs: number;
+  damageType: string;
+  abilityId: string;
+  falloffScale: number;
   startTime: number;
   endTime: number;
   lastDamageTick: Map<string, number>;
 }
 
-export interface BlazeGearstormTarget {
+export interface BlazeLingeringAreaTarget {
   id: string;
   state: string;
   position: PlainVec3;
 }
 
-export class BlazeGearstormTracker {
-  private readonly storms: BlazeGearstormInstance[] = [];
+export class BlazeLingeringAreaTracker {
+  private readonly areas: BlazeLingeringAreaInstance[] = [];
 
   get size(): number {
-    return this.storms.length;
+    return this.areas.length;
   }
 
-  add(input: Omit<BlazeGearstormInstance, 'lastDamageTick'>): void {
-    this.storms.push({
+  add(input: Omit<BlazeLingeringAreaInstance, 'lastDamageTick'>): void {
+    this.areas.push({
       ...input,
       position: { ...input.position },
       lastDamageTick: new Map(),
@@ -84,53 +89,209 @@ export class BlazeGearstormTracker {
   }
 
   clear(): void {
-    this.storms.length = 0;
+    this.areas.length = 0;
   }
 
-  update<TTarget extends BlazeGearstormTarget>(
+  update<TTarget extends BlazeLingeringAreaTarget>(
     now: number,
     options: {
       hasOwner: (ownerId: string) => boolean;
-      getTargets: (storm: BlazeGearstormInstance) => Iterable<TTarget>;
+      getTargets: (area: BlazeLingeringAreaInstance) => Iterable<TTarget>;
       applyDamage: (
-        storm: BlazeGearstormInstance,
+        area: BlazeLingeringAreaInstance,
         target: TTarget,
         distance: number
       ) => void;
     }
   ): void {
-    if (this.storms.length === 0) return;
+    if (this.areas.length === 0) return;
 
     let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.storms.length; readIndex++) {
-      const storm = this.storms[readIndex];
-      if (now >= storm.endTime) continue;
-
-      if (!options.hasOwner(storm.ownerId)) {
-        this.storms[writeIndex++] = storm;
+    for (let readIndex = 0; readIndex < this.areas.length; readIndex++) {
+      const area = this.areas[readIndex];
+      if (now >= area.endTime) continue;
+      if (now < area.startTime) {
+        this.areas[writeIndex++] = area;
         continue;
       }
 
-      const radiusSq = storm.radius * storm.radius;
-      for (const target of options.getTargets(storm)) {
+      if (!options.hasOwner(area.ownerId)) {
+        this.areas[writeIndex++] = area;
+        continue;
+      }
+
+      const radiusSq = area.radius * area.radius;
+      for (const target of options.getTargets(area)) {
         if (!isPlayerAliveOrDowned(target)) continue;
 
-        const dx = target.position.x - storm.position.x;
-        const dy = target.position.y - storm.position.y;
-        const dz = target.position.z - storm.position.z;
+        const dx = target.position.x - area.position.x;
+        const dy = target.position.y - area.position.y;
+        const dz = target.position.z - area.position.z;
         const distSq = dx * dx + dy * dy + dz * dz;
         if (distSq > radiusSq) continue;
 
-        const lastDamage = storm.lastDamageTick.get(target.id) || 0;
-        if (now - lastDamage < BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS) continue;
-        storm.lastDamageTick.set(target.id, now);
+        const lastDamage = area.lastDamageTick.get(target.id) || 0;
+        if (now - lastDamage < area.damageIntervalMs) continue;
+        area.lastDamageTick.set(target.id, now);
 
-        options.applyDamage(storm, target, Math.sqrt(distSq));
+        options.applyDamage(area, target, Math.sqrt(distSq));
       }
 
-      this.storms[writeIndex++] = storm;
+      this.areas[writeIndex++] = area;
     }
-    this.storms.length = writeIndex;
+    this.areas.length = writeIndex;
+  }
+}
+
+export interface BlazeAfterburnerTrailInstance {
+  id: string;
+  ownerId: string;
+  ownerTeam: Team;
+  points: PlainVec3[];
+  radius: number;
+  damage: number;
+  damageIntervalMs: number;
+  startTime: number;
+  endTime: number;
+  lastDamageTick: Map<string, number>;
+  boundsCenter: PlainVec3;
+  boundsHalfLength: number;
+  boundsMin: PlainVec3;
+  boundsMax: PlainVec3;
+}
+
+type BlazeAfterburnerTrailInput = Omit<
+  BlazeAfterburnerTrailInstance,
+  'lastDamageTick' | 'boundsCenter' | 'boundsHalfLength' | 'boundsMin' | 'boundsMax'
+>;
+
+function updateBlazeAfterburnerTrailBounds(
+  trail: BlazeAfterburnerTrailInstance,
+  point: PlainVec3
+): void {
+  trail.boundsMin.x = Math.min(trail.boundsMin.x, point.x);
+  trail.boundsMin.y = Math.min(trail.boundsMin.y, point.y);
+  trail.boundsMin.z = Math.min(trail.boundsMin.z, point.z);
+  trail.boundsMax.x = Math.max(trail.boundsMax.x, point.x);
+  trail.boundsMax.y = Math.max(trail.boundsMax.y, point.y);
+  trail.boundsMax.z = Math.max(trail.boundsMax.z, point.z);
+
+  const spanX = trail.boundsMax.x - trail.boundsMin.x;
+  const spanY = trail.boundsMax.y - trail.boundsMin.y;
+  const spanZ = trail.boundsMax.z - trail.boundsMin.z;
+  trail.boundsCenter.x = trail.boundsMin.x + spanX * 0.5;
+  trail.boundsCenter.y = trail.boundsMin.y + spanY * 0.5;
+  trail.boundsCenter.z = trail.boundsMin.z + spanZ * 0.5;
+  trail.boundsHalfLength = Math.sqrt(spanX * spanX + spanY * spanY + spanZ * spanZ) * 0.5;
+}
+
+export class BlazeAfterburnerTrailTracker {
+  private readonly trails: BlazeAfterburnerTrailInstance[] = [];
+
+  get size(): number {
+    return this.trails.length;
+  }
+
+  add(input: BlazeAfterburnerTrailInput): void {
+    const points = input.points
+      .slice(0, BLAZE_AFTERBURNER_MAX_TRAIL_POINTS)
+      .map((point) => ({ ...point }));
+    const firstPoint = points[0] ?? { x: 0, y: 0, z: 0 };
+    const trail: BlazeAfterburnerTrailInstance = {
+      ...input,
+      points,
+      lastDamageTick: new Map(),
+      boundsCenter: { ...firstPoint },
+      boundsHalfLength: 0,
+      boundsMin: { ...firstPoint },
+      boundsMax: { ...firstPoint },
+    };
+    for (let index = 1; index < points.length; index++) {
+      updateBlazeAfterburnerTrailBounds(trail, points[index]);
+    }
+    this.trails.push(trail);
+  }
+
+  appendPoint(trailId: string, point: PlainVec3): boolean {
+    const trail = this.trails.find((candidate) => candidate.id === trailId);
+    if (!trail) return false;
+    if (trail.points.length >= BLAZE_AFTERBURNER_MAX_TRAIL_POINTS) return false;
+    const storedPoint = { ...point };
+    trail.points.push(storedPoint);
+    if (trail.points.length === 1) {
+      trail.boundsCenter.x = storedPoint.x;
+      trail.boundsCenter.y = storedPoint.y;
+      trail.boundsCenter.z = storedPoint.z;
+      trail.boundsMin.x = storedPoint.x;
+      trail.boundsMin.y = storedPoint.y;
+      trail.boundsMin.z = storedPoint.z;
+      trail.boundsMax.x = storedPoint.x;
+      trail.boundsMax.y = storedPoint.y;
+      trail.boundsMax.z = storedPoint.z;
+      trail.boundsHalfLength = 0;
+    } else {
+      updateBlazeAfterburnerTrailBounds(trail, storedPoint);
+    }
+    return true;
+  }
+
+  clear(): void {
+    this.trails.length = 0;
+  }
+
+  update<TTarget extends BlazeLingeringAreaTarget>(
+    now: number,
+    options: {
+      hasOwner: (ownerId: string) => boolean;
+      getTargets: (trail: BlazeAfterburnerTrailInstance) => Iterable<TTarget>;
+      applyDamage: (
+        trail: BlazeAfterburnerTrailInstance,
+        target: TTarget
+      ) => void;
+    }
+  ): void {
+    let writeIndex = 0;
+    for (let readIndex = 0; readIndex < this.trails.length; readIndex++) {
+      const trail = this.trails[readIndex];
+      if (now >= trail.endTime) continue;
+      if (now < trail.startTime || !options.hasOwner(trail.ownerId)) {
+        this.trails[writeIndex++] = trail;
+        continue;
+      }
+
+      const radiusSq = trail.radius * trail.radius;
+      for (const target of options.getTargets(trail)) {
+        if (!isPlayerAliveOrDowned(target)) continue;
+        const lastDamage = trail.lastDamageTick.get(target.id) || 0;
+        if (now - lastDamage < trail.damageIntervalMs) continue;
+
+        let isWithinTrail = false;
+        for (let pointIndex = 1; pointIndex < trail.points.length; pointIndex++) {
+          if (getSquaredDistanceToBlazeAfterburnerTrail(
+            target.position,
+            trail.points[pointIndex - 1],
+            trail.points[pointIndex]
+          ) <= radiusSq) {
+            isWithinTrail = true;
+            break;
+          }
+        }
+        if (trail.points.length === 1) {
+          isWithinTrail = getSquaredDistanceToBlazeAfterburnerTrail(
+            target.position,
+            trail.points[0],
+            trail.points[0]
+          ) <= radiusSq;
+        }
+        if (!isWithinTrail) continue;
+
+        trail.lastDamageTick.set(target.id, now);
+        options.applyDamage(trail, target);
+      }
+
+      this.trails[writeIndex++] = trail;
+    }
+    this.trails.length = writeIndex;
   }
 }
 

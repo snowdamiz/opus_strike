@@ -6,11 +6,16 @@ import type {
   SelfMovementAck,
   SelfMovementAuthority,
   Vec3,
+  BlazePhoenixDiveHoverMotion,
 } from '@voxel-strike/shared';
 import {
   MOVEMENT_PROTOCOL_VERSION,
+  MOVEMENT_SUBSTEP_SECONDS,
   ABILITY_DEFINITIONS,
   BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
+  BHOP_MAX_VELOCITY,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_DASH_SPEED,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
@@ -23,6 +28,10 @@ import {
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
   advanceBattleRoyalDropPodMotion,
   calculateBlazeRocketJumpVelocity,
+  calculateBlazeAfterburnerVelocity,
+  createBlazePhoenixDiveHoverMotion,
+  getBlazePhoenixDiveHoverVelocity,
+  getBlazeAfterburnerDirection,
   calculateLookDirection,
   inputStateToMovementButtons,
   compareMovementSeq,
@@ -68,6 +77,16 @@ let latestServerCollisionRevision = 0;
 const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
 let pendingSelfMovementAuthoritiesOutOfOrder = false;
 let localRootedUntil = 0;
+let localBlazeAfterburnerDash: {
+  playerId: string;
+  direction: { x: number; z: number };
+  expiresAt: number;
+} | null = null;
+let localBlazePhoenixDivingPlayerId: string | null = null;
+let localBlazePhoenixHover: {
+  playerId: string;
+  motion: BlazePhoenixDiveHoverMotion;
+} | null = null;
 const EMPTY_MOVEMENT_AABBS: readonly MovementAabb[] = [];
 const clientAnchorWallAabbCache = new AnchorWallAabbCache();
 
@@ -91,7 +110,66 @@ export function setLocalMovementRootedUntil(rootedUntil: number, nowMs = Date.no
   localRootedUntil = Math.max(localRootedUntil, rootedUntil);
   if (localRootedUntil <= nowMs) {
     localRootedUntil = 0;
+  } else {
+    localBlazeAfterburnerDash = null;
+    localBlazePhoenixDivingPlayerId = null;
+    localBlazePhoenixHover = null;
   }
+}
+
+export function setLocalBlazePhoenixDiving(playerId: string, active: boolean): void {
+  localBlazePhoenixDivingPlayerId = active ? playerId : null;
+  if (active && localBlazePhoenixHover?.playerId === playerId) {
+    localBlazePhoenixHover = null;
+  }
+}
+
+export function setLocalBlazePhoenixHovering(
+  playerId: string,
+  hover: { velocity: Vec3; lookYaw: number; startedAtMs?: number } | null,
+): void {
+  localBlazePhoenixHover = hover
+    ? {
+      playerId,
+      motion: createBlazePhoenixDiveHoverMotion(
+        hover.velocity,
+        hover.lookYaw,
+        hover.startedAtMs ?? Date.now(),
+      ),
+    }
+    : null;
+  if (hover && localBlazePhoenixDivingPlayerId === playerId) {
+    localBlazePhoenixDivingPlayerId = null;
+  }
+}
+
+export function startLocalBlazeAfterburnerDash(
+  playerId: string,
+  lookYaw: number,
+  nowMs = Date.now()
+): void {
+  const direction = getBlazeAfterburnerDirection(lookYaw);
+  const existingExpiresAt = localBlazeAfterburnerDash?.playerId === playerId &&
+    localBlazeAfterburnerDash.expiresAt > nowMs
+    ? localBlazeAfterburnerDash.expiresAt
+    : null;
+  localBlazeAfterburnerDash = {
+    playerId,
+    direction: { x: direction.x, z: direction.z },
+    expiresAt: existingExpiresAt ?? nowMs + BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  };
+}
+
+function getActiveLocalBlazeAfterburnerDash(playerId: string, nowMs: number) {
+  if (
+    !localBlazeAfterburnerDash ||
+    localBlazeAfterburnerDash.playerId !== playerId ||
+    nowMs >= localBlazeAfterburnerDash.expiresAt
+  ) {
+    localBlazeAfterburnerDash = null;
+    return null;
+  }
+  return localBlazeAfterburnerDash;
 }
 
 function isLocalMovementRooted(nowMs: number): boolean {
@@ -161,6 +239,9 @@ export function resetLocalMovementPrediction(
   pendingSelfMovementAuthorities.length = 0;
   pendingSelfMovementAuthoritiesOutOfOrder = false;
   localRootedUntil = 0;
+  localBlazeAfterburnerDash = null;
+  localBlazePhoenixDivingPlayerId = null;
+  localBlazePhoenixHover = null;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, lastAckSeq);
     advanceNextCommandSeqPastAck(lastAckSeq);
@@ -293,13 +374,13 @@ function clampClientPosition(position: Vec3): { position: Vec3; clampedY: boolea
   };
 }
 
-export function getLocalPredictionContext(player: Player): MovementPredictionContext {
+export function getLocalPredictionContext(player: Player, now = Date.now()): MovementPredictionContext {
   let activeSpeedMultiplier = 1;
   const phantomVeil = player.heroId === 'phantom' ? player.abilities?.['phantom_veil'] : undefined;
   if (phantomVeil?.isActive) {
-    const activatedAt = phantomVeil.activatedAt ?? Date.now();
+    const activatedAt = phantomVeil.activatedAt ?? now;
     const durationMs = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 0) * 1000;
-    if (durationMs <= 0 || Date.now() - activatedAt < durationMs) {
+    if (durationMs <= 0 || now - activatedAt < durationMs) {
       activeSpeedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
   }
@@ -312,8 +393,18 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
   if (isDowned) {
     activeSpeedMultiplier *= BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER;
   }
-  if ((player.powerupBoostUntil ?? 0) > Date.now()) {
+  if ((player.powerupBoostUntil ?? 0) > now) {
     activeSpeedMultiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+  }
+  const afterburnerDash = player.state === 'alive'
+    ? getActiveLocalBlazeAfterburnerDash(player.id, now)
+    : null;
+  const phoenixDiving = player.state === 'alive' && localBlazePhoenixDivingPlayerId === player.id;
+  const phoenixHoverVelocity = player.state === 'alive' && localBlazePhoenixHover?.playerId === player.id
+    ? getBlazePhoenixDiveHoverVelocity(localBlazePhoenixHover.motion, now)
+    : null;
+  if (afterburnerDash) {
+    activeSpeedMultiplier *= Math.max(1, BLAZE_AFTERBURNER_DASH_SPEED / BHOP_MAX_VELOCITY);
   }
 
   const terrain = getClientTerrainAdapter();
@@ -324,6 +415,16 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     flagCarrier: player.hasFlag,
     activeSpeedMultiplier,
     chronosAscendantActive,
+    forcedHorizontalVelocity: phoenixDiving
+      ? { x: 0, z: 0 }
+      : phoenixHoverVelocity
+      ? { x: phoenixHoverVelocity.x, z: phoenixHoverVelocity.z }
+      : afterburnerDash
+      ? {
+        x: afterburnerDash.direction.x * BLAZE_AFTERBURNER_DASH_SPEED,
+        z: afterburnerDash.direction.z * BLAZE_AFTERBURNER_DASH_SPEED,
+      }
+      : undefined,
   };
 }
 
@@ -428,6 +529,42 @@ export function predictLocalPhantomBlink(player: Player, lookYaw: number, lookPi
   }, lookYaw);
 }
 
+export function predictLocalRiftBoltTeleport(player: Player, target: Vec3): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  const offset = {
+    x: target.x - current.position.x,
+    y: target.y - current.position.y,
+    z: target.z - current.position.z,
+  };
+  const distance = Math.hypot(offset.x, offset.y, offset.z);
+  const lookup = getClientProceduralTerrainLookup();
+  const position = resolveCapsuleTeleportDestination(
+    getClientCollisionWorld(),
+    current.position,
+    offset,
+    distance,
+    {
+      minDistance: 0,
+      distanceStep: 0.25,
+      clampPosition: lookup ? (candidate) => lookup.clampToPlayableMap(candidate) : undefined,
+    },
+  );
+
+  return applyLocalPredictedState(player.id, {
+    position,
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: {
+      ...current.movement,
+      isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+    },
+  }, player.lookYaw);
+}
+
 export function addLocalMovementImpulse(impulse: Vec3, mode: 'add' | 'set' = 'add'): MovementSimulationState | null {
   const current = localMovementPrediction.getState();
   if (!current) return null;
@@ -478,6 +615,23 @@ export function predictLocalBlazeRocketJump(player: Player, lookYaw: number): Mo
     movement: {
       ...current.movement,
       isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+    },
+  }, lookYaw);
+}
+
+export function predictLocalBlazeAfterburner(player: Player, lookYaw: number): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  const velocity = calculateBlazeAfterburnerVelocity(current.velocity, lookYaw);
+  startLocalBlazeAfterburnerDash(player.id, lookYaw);
+
+  return applyLocalPredictedState(player.id, {
+    position: current.position,
+    velocity,
+    movement: {
+      ...current.movement,
       isSliding: false,
       slideTimeRemaining: 0,
     },
@@ -748,7 +902,7 @@ export function applySelfMovementAuthority(
   applyServerCollisionRevision(authority.collisionRevision);
   const result = localMovementPrediction.acknowledgeAuthority(
     authority,
-    getLocalPredictionContext(player),
+    getLocalPredictionContext(player, nowMs),
     nowMs
   );
   advanceNextCommandSeqPastAck(authority.ackSeq);
@@ -764,7 +918,44 @@ export function applySelfMovementAuthority(
 
 export function stepLocalMovementPrediction(player: Player, command: MovementCommand): MovementSimulationState {
   ensureLocalPredictionInitialized(player);
-  return localMovementPrediction.step(command, getLocalPredictionContext(player));
+  const hover = localBlazePhoenixHover?.playerId === player.id ? localBlazePhoenixHover : null;
+  if (hover && player.state === 'alive') {
+    const currentState = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+    const velocity = getBlazePhoenixDiveHoverVelocity(hover.motion, command.clientTimeMs);
+    localMovementPrediction.overwriteState({
+      position: currentState.position,
+      velocity,
+      movement: {
+        ...currentState.movement,
+        isGrounded: false,
+        isSliding: false,
+        slideTimeRemaining: 0,
+      },
+    });
+  }
+
+  const nextState = localMovementPrediction.step(
+    command,
+    getLocalPredictionContext(player, command.clientTimeMs),
+  );
+  if (!hover || player.state !== 'alive') return nextState;
+
+  const hoverVelocity = getBlazePhoenixDiveHoverVelocity(
+    hover.motion,
+    command.clientTimeMs + MOVEMENT_SUBSTEP_SECONDS * 1000,
+  );
+  const hoverState: MovementSimulationState = {
+    position: { ...nextState.position },
+    velocity: hoverVelocity,
+    movement: {
+      ...nextState.movement,
+      isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+    },
+  };
+  localMovementPrediction.overwriteState(hoverState, { updateLatestCommandRecord: true });
+  return hoverState;
 }
 
 export function getLocalMovementCollisionRevision(): number {

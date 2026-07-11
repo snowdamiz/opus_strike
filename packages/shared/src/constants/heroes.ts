@@ -32,6 +32,11 @@ export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
 export const PHANTOM_DIRE_BALL_DAMAGE = 18;
 export const PHANTOM_DIRE_BALL_SPEED = 91;
 export const PHANTOM_DIRE_BALL_COLLISION_RADIUS = 0.21;
+export const PHANTOM_SOULREND_DAMAGE = 14;
+export const PHANTOM_SOULREND_MAGAZINE_SIZE = 10;
+export const PHANTOM_SOULREND_SPEED = 120;
+export const PHANTOM_SOULREND_COLLISION_RADIUS = 0.16;
+export const PHANTOM_SOULREND_RICOCHET_RADIUS = 8;
 export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
 export const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 export const HERO_OUT_OF_COMBAT_REGEN_DELAY_MS = 4000;
@@ -42,6 +47,13 @@ export const PHANTOM_VOID_RAY_COOLDOWN_MS = PHANTOM_VOID_RAY_COOLDOWN_SECONDS * 
 export const PHANTOM_VOID_RAY_DAMAGE = 51;
 export const PHANTOM_VOID_RAY_COLLISION_RADIUS = 0.45;
 export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
+export const PHANTOM_RIFT_BOLT_DAMAGE = 22;
+export const PHANTOM_RIFT_BOLT_SPEED = 12;
+export const PHANTOM_RIFT_BOLT_MAX_DISTANCE = 30;
+export const PHANTOM_RIFT_BOLT_COLLISION_RADIUS = 0.38;
+export const PHANTOM_RIFT_BOLT_COOLDOWN_SECONDS = 6;
+export const PHANTOM_RIFT_BOLT_COOLDOWN_MS = PHANTOM_RIFT_BOLT_COOLDOWN_SECONDS * 1000;
+export const PHANTOM_RIFT_BOLT_LIFETIME_MS = PHANTOM_RIFT_BOLT_COOLDOWN_MS;
 export const PHANTOM_BLINK_DISTANCE = 8;
 export const PHANTOM_VOID_ZONE_RADIUS = 3;
 export const PHANTOM_VOID_ZONE_DAMAGE = 12;
@@ -143,11 +155,31 @@ export const BLAZE_BOMB_SPLASH_RADIUS = 4;
 export const BLAZE_BOMB_MAX_RANGE = 60;
 export const BLAZE_BOMB_MIN_RANGE = 3;
 export const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
+export const BLAZE_PHOSPHOR_FLARE_COOLDOWN_SECONDS = 6;
+export const BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS = BLAZE_PHOSPHOR_FLARE_COOLDOWN_SECONDS * 1000;
+export const BLAZE_PHOSPHOR_FLARE_DAMAGE = 12;
+export const BLAZE_PHOSPHOR_FLARE_DAMAGE_INTERVAL_MS = 500;
+export const BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS = 4;
+export const BLAZE_PHOSPHOR_FLARE_DURATION_MS = BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS * 1000;
+export const BLAZE_PHOSPHOR_FLARE_RADIUS = 3.4;
+export const BLAZE_PHOSPHOR_FLARE_MAX_RANGE = 32;
+export const BLAZE_PHOSPHOR_FLARE_MIN_RANGE = 2.5;
+export const BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS = 0.2;
+export const BLAZE_AFTERBURNER_COOLDOWN_SECONDS = 7;
+export const BLAZE_AFTERBURNER_TRAIL_DAMAGE = 6;
+export const BLAZE_AFTERBURNER_TRAIL_DAMAGE_INTERVAL_MS = 600;
+export const BLAZE_AFTERBURNER_TRAIL_DURATION_SECONDS = 2.4;
+export const BLAZE_AFTERBURNER_TRAIL_DURATION_MS = BLAZE_AFTERBURNER_TRAIL_DURATION_SECONDS * 1000;
+export const BLAZE_AFTERBURNER_TRAIL_RADIUS = 1.35;
+export const BLAZE_AFTERBURNER_TRAIL_SAMPLE_SPACING = 0.45;
 export const BLAZE_FLAMETHROWER_COLLISION_RADIUS = 0.42;
 export const BLAZE_GEARSTORM_DAMAGE = 14;
 export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 400;
 export const BLAZE_GEARSTORM_DURATION_SECONDS = 6;
 export const BLAZE_GEARSTORM_DURATION_MS = BLAZE_GEARSTORM_DURATION_SECONDS * 1000;
+export const BLAZE_PHOENIX_DIVE_DAMAGE = 80;
+export const BLAZE_PHOENIX_DIVE_RADIUS = 5;
+export const BLAZE_PHOENIX_DIVE_MAX_RANGE = BLAZE_BOMB_MAX_RANGE;
 
 export type AbilityCardStatFormat = 'number' | 'seconds';
 
@@ -165,9 +197,20 @@ export const ABILITY_CARD_STATS = {
     { value: PHANTOM_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
     { value: PHANTOM_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
   ],
+  phantom_soulrend_daggers: [
+    { value: PHANTOM_SOULREND_DAMAGE, label: 'dmg' },
+    { value: 1, label: 'ricochet' },
+    { value: PHANTOM_SOULREND_MAGAZINE_SIZE, label: 'ammo' },
+    { value: PHANTOM_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
+  ],
   phantom_void_ray: [
     { value: PHANTOM_VOID_RAY_DAMAGE, label: 'dmg' },
     { value: VOID_RAY_CHARGE_TIME / 1000, label: 'charge', format: 'seconds' },
+  ],
+  phantom_rift_bolt: [
+    { value: PHANTOM_RIFT_BOLT_DAMAGE, label: 'dmg' },
+    { value: PHANTOM_RIFT_BOLT_SPEED, label: 'speed' },
+    { value: PHANTOM_RIFT_BOLT_MAX_DISTANCE, label: 'range' },
   ],
   phantom_blink: [
     { value: PHANTOM_VOID_ZONE_DAMAGE, label: 'dmg/tick' },
@@ -201,6 +244,11 @@ export const ABILITY_CARD_STATS = {
   blaze_bomb: [
     { value: BLAZE_BOMB_DAMAGE, label: 'dmg' },
   ],
+  blaze_phosphor_flare: [
+    { value: BLAZE_PHOSPHOR_FLARE_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_PHOSPHOR_FLARE_RADIUS, label: 'radius' },
+    { value: BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS, label: 'duration', format: 'seconds' },
+  ],
   blaze_flamethrower: [
     { value: BLAZE_FLAMETHROWER_DAMAGE, label: 'dmg/tick' },
     { value: BLAZE_FLAMETHROWER_BURN_DAMAGE, label: `burn dmg x${BLAZE_FLAMETHROWER_BURN_TICKS}` },
@@ -208,10 +256,19 @@ export const ABILITY_CARD_STATS = {
     { value: BLAZE_FLAMETHROWER_FUEL_DRAIN, label: 'drain', suffix: '/s' },
     { value: BLAZE_FLAMETHROWER_FUEL_REGEN, label: 'regen', suffix: '/s' },
   ],
+  blaze_afterburner: [
+    { value: BLAZE_AFTERBURNER_TRAIL_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_AFTERBURNER_TRAIL_RADIUS, label: 'trail radius' },
+    { value: BLAZE_AFTERBURNER_TRAIL_DURATION_SECONDS, label: 'trail duration', format: 'seconds' },
+  ],
   blaze_airstrike: [
     { value: BLAZE_GEARSTORM_DAMAGE, label: 'dmg/tick' },
     { value: BLAZE_GEARSTORM_RADIUS, label: 'radius' },
     { value: BLAZE_GEARSTORM_DURATION_SECONDS, label: 'duration', format: 'seconds' },
+  ],
+  blaze_phoenix_dive: [
+    { value: BLAZE_PHOENIX_DIVE_DAMAGE, label: 'impact dmg' },
+    { value: BLAZE_PHOENIX_DIVE_RADIUS, label: 'radius' },
   ],
   chronos_verdant_pulse: [
     { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
@@ -333,6 +390,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
     description: 'Hold to charge for 1 second, then release a piercing long-range beam.',
   },
+  phantom_rift_bolt: {
+    id: 'phantom_rift_bolt',
+    name: 'Rift Bolt',
+    type: 'movement',
+    targeting: 'direction',
+    cooldown: PHANTOM_RIFT_BOLT_COOLDOWN_SECONDS,
+    duration: PHANTOM_RIFT_BOLT_LIFETIME_MS / 1000,
+    description: 'Fire a slow void orb that deals damage on impact. Re-press secondary fire to teleport to it.',
+  },
   phantom_personal_shield: {
     id: 'phantom_personal_shield',
     name: 'Shadow Bubble',
@@ -407,6 +473,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: BLAZE_BOMB_COOLDOWN_SECONDS,
     description: 'Mark a target zone, then call a blazing meteor down at an angle.',
   },
+  blaze_phosphor_flare: {
+    id: 'blaze_phosphor_flare',
+    name: 'Phosphor Flare',
+    type: 'offensive',
+    targeting: 'ground',
+    cooldown: BLAZE_PHOSPHOR_FLARE_COOLDOWN_SECONDS,
+    duration: BLAZE_PHOSPHOR_FLARE_DURATION_SECONDS,
+    description: 'Lob a thermite canister that burns a ground zone for 4 seconds.',
+  },
   blaze_flamethrower: {
     id: 'blaze_flamethrower',
     name: 'Flamethrower',
@@ -423,6 +498,14 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 8,
     description: 'Launch yourself upward and forward with an explosion.',
   },
+  blaze_afterburner: {
+    id: 'blaze_afterburner',
+    name: 'Afterburner Dash',
+    type: 'movement',
+    targeting: 'direction',
+    cooldown: BLAZE_AFTERBURNER_COOLDOWN_SECONDS,
+    description: 'Dash horizontally in your facing direction, leaving a damaging fire trail behind you.',
+  },
   blaze_airstrike: {
     id: 'blaze_airstrike',
     name: 'Infernal Gearstorm',
@@ -432,6 +515,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: BLAZE_GEARSTORM_DURATION_SECONDS,
     resourceCost: 100,
     description: 'Ignite a massive area around yourself, scorching the ground while flaming cogs spin through the air.',
+  },
+  blaze_phoenix_dive: {
+    id: 'blaze_phoenix_dive',
+    name: 'Phoenix Dive',
+    type: 'ultimate',
+    targeting: 'ground',
+    cooldown: 0,
+    resourceCost: 100,
+    description: 'Launch high into the air, then crash down at a targeted location in a huge fiery explosion.',
   },
 
   // Chronos Abilities

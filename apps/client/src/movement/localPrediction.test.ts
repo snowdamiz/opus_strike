@@ -6,6 +6,7 @@ import {
   BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  BLAZE_AFTERBURNER_DASH_SPEED,
   PITCH_LIMIT,
   createEmptyInputState,
   movementButtonsToInputState,
@@ -21,9 +22,12 @@ import {
   getLocalPredictionContext,
   getLocalMovementCollisionRevision,
   predictLocalBattleRoyalDrop,
+  predictLocalBlazeAfterburner,
   predictLocalBlazeRocketJump,
   resetLocalMovementPrediction,
+  setLocalBlazePhoenixHovering,
   setLocalMovementRootedUntil,
+  stepLocalMovementPrediction,
   suppressDownedMovementInput,
 } from './localPrediction';
 
@@ -294,6 +298,47 @@ assert.equal(
   airborneBlazeState.velocity.z - BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE
 );
 assert.equal(rocketJumpFromAirborneState.movement.isGrounded, false);
+
+resetLocalMovementPrediction(airborneBlazeState, 0, blazePlayer.id);
+const afterburnerFromAirborneState = predictLocalBlazeAfterburner(blazePlayer, 0);
+assert.equal(afterburnerFromAirborneState.position.x, airborneBlazeState.position.x);
+assert.equal(afterburnerFromAirborneState.position.z, airborneBlazeState.position.z);
+assert.equal(afterburnerFromAirborneState.velocity.y, airborneBlazeState.velocity.y);
+assert.equal(afterburnerFromAirborneState.velocity.z, -BLAZE_AFTERBURNER_DASH_SPEED);
+assert.equal(afterburnerFromAirborneState.movement.isGrounded, false);
+assert.equal(afterburnerFromAirborneState.movement.isSliding, false);
+const afterburnerStep = stepLocalMovementPrediction(blazePlayer, createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0,
+  lookPitch: 0,
+  clientTimeMs: Date.now(),
+}));
+assert.ok(afterburnerStep.position.z < airborneBlazeState.position.z);
+assert.ok(afterburnerStep.position.z > airborneBlazeState.position.z - 1);
+
+const phoenixHoverPosition = { x: 6, y: 14, z: -9 };
+const phoenixHoverStartState: MovementSimulationState = {
+  position: phoenixHoverPosition,
+  velocity: { x: 0, y: 3, z: -6 },
+  movement: { ...airborneBlazeState.movement, isGrounded: false },
+};
+resetLocalMovementPrediction(phoenixHoverStartState, 0, blazePlayer.id);
+setLocalBlazePhoenixHovering(blazePlayer.id, {
+  velocity: phoenixHoverStartState.velocity,
+  lookYaw: 0,
+  startedAtMs: 10_000,
+});
+const phoenixHoverStep = stepLocalMovementPrediction(blazePlayer, createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0.4,
+  lookPitch: -0.2,
+  clientTimeMs: 10_500,
+}));
+assert.equal(phoenixHoverStep.position.x, phoenixHoverPosition.x);
+assert.ok(phoenixHoverStep.position.z < phoenixHoverPosition.z, 'Phoenix hover should keep drifting forward');
+assert.ok(phoenixHoverStep.velocity.z < -1.25);
+assert.ok(phoenixHoverStep.velocity.z > -6, 'Phoenix hover forward speed should quickly decay');
+assert.ok(phoenixHoverStep.velocity.y < 3, 'Phoenix hover ascent should ease near the top of the arc');
+assert.equal(phoenixHoverStep.movement.isGrounded, false);
+setLocalBlazePhoenixHovering(blazePlayer.id, null);
 
 const dropStartState: MovementSimulationState = {
   position: { x: 0, y: 20, z: 0 },

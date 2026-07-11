@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
+  BLAZE_ABILITY_SKILLS,
   createEmptyInputState,
   HERO_DEFINITIONS,
   MOVEMENT_MAX_PACKET_COMMANDS,
@@ -24,6 +25,7 @@ import {
 } from '../../movement/localPrediction';
 import { createPracticeAbilityStates } from '../../utils/practiceAbilityStates';
 import { useGameStore } from '../../store/gameStore';
+import { useLoadoutStore } from '../../store/loadoutStore';
 import { removePlayerVisualState, visualStore } from '../../store/visualStore';
 import {
   deriveDownedServerCombatInput,
@@ -34,6 +36,8 @@ import {
   runInputPhase,
   runAuthorityPhase,
   runPredictionAndCommandPhase,
+  resolveEquippedUltimateAbilityId,
+  resolvePracticeBlazePhoenixHoverState,
   shouldForceImmediateCombatCommand,
   suppressJumpInputUntilReleased,
   withCastActionFields,
@@ -354,8 +358,9 @@ useGameStore.setState({
 for (const heroId of ['phantom', 'hookshot', 'blaze', 'chronos'] as const satisfies readonly HeroId[]) {
   const practiceAbilities = createPracticeAbilityStates(heroId);
   const expectedAbilityIds = [
-    HERO_DEFINITIONS[heroId].ability1.abilityId,
-    HERO_DEFINITIONS[heroId].ability2.abilityId,
+    ...(heroId === 'blaze'
+      ? BLAZE_ABILITY_SKILLS
+      : [HERO_DEFINITIONS[heroId].ability1.abilityId, HERO_DEFINITIONS[heroId].ability2.abilityId]),
     HERO_DEFINITIONS[heroId].ultimate.abilityId,
   ];
 
@@ -368,16 +373,57 @@ for (const heroId of ['phantom', 'hookshot', 'blaze', 'chronos'] as const satisf
   }
 }
 
+const phoenixPracticeAbilities = createPracticeAbilityStates('blaze', 'phoenix_dive');
+assert.equal(phoenixPracticeAbilities.blaze_phoenix_dive?.abilityId, 'blaze_phoenix_dive');
+assert.equal(phoenixPracticeAbilities.blaze_airstrike, undefined);
+assert.equal(resolveEquippedUltimateAbilityId('blaze', 'phoenix_dive'), 'blaze_phoenix_dive');
+assert.equal(resolveEquippedUltimateAbilityId('blaze', 'infernal_gearstorm'), 'blaze_airstrike');
+
+const staleGroundedBlaze = makePlayer('blaze');
+staleGroundedBlaze.position = { x: 2, y: 1, z: 3 };
+staleGroundedBlaze.velocity = { x: 0, y: 0, z: 0 };
+const liveAirborneState: MovementSimulationState = {
+  position: { x: 5.5, y: 11.75, z: -1.25 },
+  velocity: { x: 6, y: 4.5, z: -2 },
+  movement: makeMovement({ isGrounded: false }),
+};
+resetLocalMovementPrediction(liveAirborneState, 0, staleGroundedBlaze.id);
+const practiceHoverState = resolvePracticeBlazePhoenixHoverState(staleGroundedBlaze, 0, 5000);
+assert.deepEqual(
+  practiceHoverState.position,
+  liveAirborneState.position,
+  'Phoenix hover must anchor to the live airborne prediction, not the stale ground store position',
+);
+assert.notDeepEqual(practiceHoverState.position, staleGroundedBlaze.position);
+assert.ok(Math.abs(practiceHoverState.velocity.x) < 1e-9);
+assert.ok(practiceHoverState.velocity.y > 0);
+assert.ok(practiceHoverState.velocity.z < 0);
+assert.equal(practiceHoverState.movement.isGrounded, false);
+
 const baseInput = input({ primaryFire: true, secondaryFire: true, ability1: true });
 const primaryOnly = getExclusiveHeroInput('phantom', baseInput, false, false);
 assert.equal(primaryOnly.primaryFire, true);
 assert.equal(primaryOnly.secondaryFire, false);
 assert.equal(primaryOnly.ability1, false);
 
+const phoenixConfirmOnly = getExclusiveHeroInput(
+  'blaze',
+  input({ primaryFire: true, secondaryFire: true, ability1: true, ultimate: true }),
+  false,
+  false,
+  null,
+  null,
+  true,
+);
+assert.equal(phoenixConfirmOnly.ultimate, true);
+assert.equal(phoenixConfirmOnly.primaryFire, false);
+assert.equal(phoenixConfirmOnly.secondaryFire, false);
+assert.equal(phoenixConfirmOnly.ability1, false);
+
 const continuedSecondary = getContinuingHeroHoldInput(
   'phantom',
   input({ secondaryFire: true, primaryFire: true }),
-  { primaryFire: false, secondaryFire: true, ability1: false }
+  { primaryFire: false, secondaryFire: true, ability1: false, ability2: false }
 );
 assert.deepEqual(continuedSecondary, { secondaryFire: true });
 
@@ -528,6 +574,19 @@ const phantomBlinkInput = runInputPhase(
 );
 assert.deepEqual(phantomBlinkInput.serverCombatInput, combatInput({ ability1: true }));
 assert.deepEqual(phantomBlinkInput.requestedCommandScheduleReasons, ['movement_barrier']);
+
+useLoadoutStore.getState().setBlazeUltimateSkill('phoenix_dive');
+const blazePhoenixDiveInput = runInputPhase(
+  makeInputPhaseContext(),
+  makePlayer('blaze'),
+  'blaze',
+  input({ ultimate: true }),
+  input({ ultimate: true }),
+  1000
+);
+assert.deepEqual(blazePhoenixDiveInput.serverCombatInput, combatInput({ ultimate: true }));
+assert.deepEqual(blazePhoenixDiveInput.requestedCommandScheduleReasons, ['movement_barrier']);
+useLoadoutStore.getState().setBlazeUltimateSkill('infernal_gearstorm');
 
 assert.deepEqual(
   deriveServerCombatInput({

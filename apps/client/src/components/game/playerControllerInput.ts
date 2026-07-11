@@ -5,7 +5,7 @@ import type {
 } from '@voxel-strike/shared';
 
 export type CastActionFields = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2' | 'ultimate'>;
-export type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>;
+export type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2'>;
 export type ServerCombatInput = CastActionFields;
 export type CommandScheduleReason = 'combat_edge' | 'movement_barrier' | 'crouch_edge';
 
@@ -19,6 +19,7 @@ export const EMPTY_EXCLUSIVE_HOLD_INPUT: ExclusiveHoldInput = {
   primaryFire: false,
   secondaryFire: false,
   ability1: false,
+  ability2: false,
 };
 
 export const EMPTY_SERVER_COMBAT_INPUT: ServerCombatInput = {
@@ -62,7 +63,8 @@ export function getExclusiveHeroInput(
   isActionLocked: boolean,
   isBombTargeting: boolean,
   continuingHoldInput: Partial<CastActionFields> | null = null,
-  lockedAllowedInput: Partial<CastActionFields> | null = null
+  lockedAllowedInput: Partial<CastActionFields> | null = null,
+  isPhoenixDiveTargeting = false
 ): InputState {
   if (isActionLocked) {
     return withCastActionFields(input, lockedAllowedInput ?? {});
@@ -70,6 +72,10 @@ export function getExclusiveHeroInput(
 
   if (isBombTargeting) {
     return withCastActionFields(input, { secondaryFire: input.secondaryFire });
+  }
+
+  if (isPhoenixDiveTargeting) {
+    return withCastActionFields(input, { ultimate: input.ultimate });
   }
 
   if (continuingHoldInput) {
@@ -116,6 +122,10 @@ export function getContinuingHeroHoldInput(
     return { ability1: true };
   }
 
+  if (heroId === 'blaze' && previousInput.ability2 && input.ability2) {
+    return { ability2: true };
+  }
+
   return null;
 }
 
@@ -124,6 +134,7 @@ export function getExclusiveHoldInput(input: InputState): ExclusiveHoldInput {
     primaryFire: input.primaryFire,
     secondaryFire: input.secondaryFire,
     ability1: input.ability1,
+    ability2: input.ability2,
   };
 }
 

@@ -2,7 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { FeaturedHeroPreviewFallback } from './FeaturedHeroPreviewFallback';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
-import type { BlazePrimarySkill } from '@voxel-strike/shared';
+import type { BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, PhantomPrimarySkill, PhantomSecondarySkill } from '@voxel-strike/shared';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { AbilityIcon, HeroIcon } from './HeroIcons';
 import { SkinRarityChrome } from './SkinRarityChrome';
@@ -10,7 +10,11 @@ import { SKILL_RARITY_COLORS } from '../../styles/colorTokens';
 import { formatKeybind } from '../../utils/keybindings';
 import {
   HERO_LOADOUT_POOL,
+  BLAZE_PHOSPHOR_FLARE_OPTION_ID,
   BLAZE_SCRAPSHOT_OPTION_ID,
+  BLAZE_PHOENIX_DIVE_OPTION_ID,
+  PHANTOM_SOULREND_OPTION_ID,
+  PHANTOM_RIFT_BOLT_OPTION_ID,
   LOADOUT_GROUPS,
   LOADOUT_SLOTS,
   defaultOptionId,
@@ -50,18 +54,46 @@ interface LoadoutTabProps {
 export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
   const [filter, setFilter] = useState<LoadoutFilter>('all');
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
+  const phantomPrimarySkill = useLoadoutStore((state) => state.phantomPrimarySkill);
+  const phantomSecondarySkill = useLoadoutStore((state) => state.phantomSecondarySkill);
+  const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
+  const blazeUltimateSkill = useLoadoutStore((state) => state.blazeUltimateSkill);
   const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
   const setBlazePrimarySkill = useLoadoutStore((state) => state.setBlazePrimarySkill);
+  const setPhantomPrimarySkill = useLoadoutStore((state) => state.setPhantomPrimarySkill);
+  const setPhantomSecondarySkill = useLoadoutStore((state) => state.setPhantomSecondarySkill);
+  const setBlazeSecondarySkill = useLoadoutStore((state) => state.setBlazeSecondarySkill);
+  const setBlazeUltimateSkill = useLoadoutStore((state) => state.setBlazeUltimateSkill);
   const assignHeroAbility = useLoadoutStore((state) => state.assignHeroAbility);
 
   const heroDef = HERO_DEFINITIONS[featuredHero];
   const pool = HERO_LOADOUT_POOL[featuredHero];
   const equippedAbilities = resolveHeroAbilityBindings(featuredHero, heroAbilityBindings);
   const equippedId = (slot: LoadoutSlotKey) => {
+    if (featuredHero === 'phantom' && slot === 'primaryFire') {
+      return phantomPrimarySkill === 'soulrend_daggers'
+        ? PHANTOM_SOULREND_OPTION_ID
+        : defaultOptionId('phantom', 'primaryFire');
+    }
+    if (featuredHero === 'phantom' && slot === 'secondaryFire') {
+      return phantomSecondarySkill === 'rift_bolt'
+        ? PHANTOM_RIFT_BOLT_OPTION_ID
+        : defaultOptionId('phantom', 'secondaryFire');
+    }
     if (featuredHero === 'blaze' && slot === 'primaryFire') {
       return blazePrimarySkill === 'scrapshot'
         ? BLAZE_SCRAPSHOT_OPTION_ID
         : defaultOptionId('blaze', 'primaryFire');
+    }
+    if (featuredHero === 'blaze' && slot === 'secondaryFire') {
+      return blazeSecondarySkill === 'phosphor_flare'
+        ? BLAZE_PHOSPHOR_FLARE_OPTION_ID
+        : defaultOptionId('blaze', 'secondaryFire');
+    }
+    if (featuredHero === 'blaze' && slot === 'ultimate') {
+      return blazeUltimateSkill === 'phoenix_dive'
+        ? BLAZE_PHOENIX_DIVE_OPTION_ID
+        : defaultOptionId('blaze', 'ultimate');
     }
     if (slot === 'ability1' || slot === 'ability2') {
       const option = getAbilityPool(featuredHero).find((candidate) => (
@@ -73,11 +105,39 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
   };
 
   const handleEquip = (slot: LoadoutSlotKey, optionId: string) => {
+    if (featuredHero === 'phantom' && slot === 'primaryFire') {
+      const skill: PhantomPrimarySkill = optionId === PHANTOM_SOULREND_OPTION_ID
+        ? 'soulrend_daggers'
+        : 'dire_ball';
+      setPhantomPrimarySkill(skill);
+      return;
+    }
+    if (featuredHero === 'phantom' && slot === 'secondaryFire') {
+      const skill: PhantomSecondarySkill = optionId === PHANTOM_RIFT_BOLT_OPTION_ID
+        ? 'rift_bolt'
+        : 'void_ray';
+      setPhantomSecondarySkill(skill);
+      return;
+    }
     if (featuredHero === 'blaze' && slot === 'primaryFire') {
       const skill: BlazePrimarySkill = optionId === BLAZE_SCRAPSHOT_OPTION_ID
         ? 'scrapshot'
         : 'fireball_rockets';
       setBlazePrimarySkill(skill);
+      return;
+    }
+    if (featuredHero === 'blaze' && slot === 'secondaryFire') {
+      const skill: BlazeSecondarySkill = optionId === BLAZE_PHOSPHOR_FLARE_OPTION_ID
+        ? 'phosphor_flare'
+        : 'meteor_strike';
+      setBlazeSecondarySkill(skill);
+      return;
+    }
+    if (featuredHero === 'blaze' && slot === 'ultimate') {
+      const skill: BlazeUltimateSkill = optionId === BLAZE_PHOENIX_DIVE_OPTION_ID
+        ? 'phoenix_dive'
+        : 'infernal_gearstorm';
+      setBlazeUltimateSkill(skill);
     }
   };
 
@@ -89,10 +149,14 @@ export function LoadoutTab({ featuredHero, onSelectHero }: LoadoutTabProps) {
   };
 
   const tunedCount = (heroId: HeroId) => {
+    const phantomTuned = heroId === 'phantom' && phantomPrimarySkill === 'soulrend_daggers' ? 1 : 0;
+    const phantomSecondaryTuned = heroId === 'phantom' && phantomSecondarySkill === 'rift_bolt' ? 1 : 0;
     const blazeTuned = heroId === 'blaze' && blazePrimarySkill === 'scrapshot' ? 1 : 0;
+    const blazeSecondaryTuned = heroId === 'blaze' && blazeSecondarySkill === 'phosphor_flare' ? 1 : 0;
+    const blazeUltimateTuned = heroId === 'blaze' && blazeUltimateSkill === 'phoenix_dive' ? 1 : 0;
     const defaults = getDefaultHeroAbilityBindings(heroId);
     const abilities = resolveHeroAbilityBindings(heroId, heroAbilityBindings);
-    return blazeTuned
+    return phantomTuned + phantomSecondaryTuned + blazeTuned + blazeSecondaryTuned + blazeUltimateTuned
       + (abilities.ability1 === defaults.ability1 ? 0 : 1)
       + (abilities.ability2 === defaults.ability2 ? 0 : 1);
   };

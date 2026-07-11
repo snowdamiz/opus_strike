@@ -21,7 +21,9 @@ import {
   type Player,
   type SafeZoneSnapshot,
   type BlazePrimarySkill,
+  type PhantomPrimarySkill,
   getBlazePrimaryMagazineSize,
+  getPhantomPrimaryMagazineSize,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { useCombatFeedbackStore, type KillFeedEvent, type LocalDamageEvent } from '../../store/combatFeedbackStore';
@@ -1478,23 +1480,25 @@ const PhantomAmmoCounter = memo(function PhantomAmmoCounter({
   reloading,
   reloadStart,
   reloadEnd,
+  primarySkill,
 }: {
   ammo: number;
   reloading: boolean;
   reloadStart: number;
   reloadEnd: number;
+  primarySkill: PhantomPrimarySkill;
 }) {
   const now = useHudNow();
 
   return (
     <PrimaryShotCounter
-      label="dire"
+      label={primarySkill === 'soulrend_daggers' ? 'dagger' : 'dire'}
       ammo={ammo}
       reloading={reloading}
       reloadStart={reloadStart}
       reloadEnd={reloadEnd}
       now={now}
-      maxAmmo={PHANTOM_PRIMARY_MAGAZINE_SIZE}
+      maxAmmo={getPhantomPrimaryMagazineSize(primarySkill)}
       reloadMs={PHANTOM_PRIMARY_RELOAD_MS}
       tone={PHANTOM_SHOT_COUNTER_TONE}
     />
@@ -1697,7 +1701,11 @@ function ChronosLifelineHelper() {
 }
 
 export function HUD() {
+  const phantomPrimarySkill = useLoadoutStore((state) => state.phantomPrimarySkill);
+  const phantomSecondarySkill = useLoadoutStore((state) => state.phantomSecondarySkill);
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
+  const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
+  const blazeUltimateSkill = useLoadoutStore((state) => state.blazeUltimateSkill);
   const heroAbilityBindings = useLoadoutStore((state) => state.heroAbilityBindings);
   const {
     // Local player decomposed into the specific fields the HUD reads, so the HUD
@@ -1918,6 +1926,10 @@ export function HUD() {
       localHeroId,
       blazePrimarySkill,
       resolveHeroAbilityBindings(localHeroId, heroAbilityBindings),
+      blazeSecondarySkill,
+      blazeUltimateSkill,
+      phantomPrimarySkill,
+      phantomSecondarySkill,
     )
     : [];
   const skillAccent = localHeroId ? HUD_HERO_COLORS[localHeroId].primary : HUD_HERO_COLORS.blaze.primary;
@@ -1956,6 +1968,7 @@ export function HUD() {
           reloading={phantomPrimaryReloading}
           reloadStart={phantomPrimaryReloadStart}
           reloadEnd={phantomPrimaryReloadEnd}
+          primarySkill={phantomPrimarySkill}
         />
       )}
       {localHeroId === 'hookshot' && <HookshotShotCounter />}

@@ -21,6 +21,8 @@ import {
   RocketJumpExplosions,
   AirStrikeEffects,
   BombEffect,
+  PhosphorFlareEffect,
+  AfterburnerTrails,
   FlamethrowerEffect,
   RemoteFlamethrowerInstancedVisuals,
   type FlamethrowerPose,
@@ -29,6 +31,7 @@ import {
 // Re-export trigger functions and targeting indicators for external use
 export { 
   triggerRocketJumpExplosion,
+  triggerAfterburnerTrail,
   triggerAirStrike,
   BombTargetingIndicator,
 } from './blaze';
@@ -449,6 +452,7 @@ function BurningHeroFire({ playerId }: { playerId: string }) {
 
 export function BlazeEffectsManager({ config }: { config: BlazeEffectsConfig }) {
   const bombs = useGameStore(state => state.bombs);
+  const phosphorFlares = useGameStore(state => state.phosphorFlares);
   const flamethrowerActive = useGameStore(state => state.flamethrowerActive);
   const [remoteFlamethrowerPlayerIds, setRemoteFlamethrowerPlayerIds] = useState<string[]>([]);
   const [burningPlayerIds, setBurningPlayerIds] = useState<string[]>([]);
@@ -478,6 +482,11 @@ export function BlazeEffectsManager({ config }: { config: BlazeEffectsConfig }) 
     recordEffectSlotDiagnostics('blazeBomb', {
       active: bombs.length,
       capacity: Math.max(1, bombs.length),
+      hiddenMounted: 0,
+    });
+    recordEffectSlotDiagnostics('blazePhosphorFlare', {
+      active: phosphorFlares.length,
+      capacity: Math.max(1, phosphorFlares.length),
       hiddenMounted: 0,
     });
   };
@@ -529,9 +538,15 @@ export function BlazeEffectsManager({ config }: { config: BlazeEffectsConfig }) 
       {bombs.map(bomb => (
         <BombEffect key={bomb.id} bomb={bomb} />
       ))}
+
+      {phosphorFlares.map((flare) => (
+        <PhosphorFlareEffect key={flare.id} flare={flare} />
+      ))}
       
       {/* Rocket jump explosions */}
       <RocketJumpExplosions />
+
+      <AfterburnerTrails />
       
       {/* Infernal Gearstorm ultimate */}
       <AirStrikeEffects />

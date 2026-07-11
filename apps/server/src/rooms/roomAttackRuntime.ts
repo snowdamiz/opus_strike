@@ -4,6 +4,11 @@ import {
   BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_MAX_RANGE,
   BLAZE_BOMB_SPLASH_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS,
+  BLAZE_PHOSPHOR_FLARE_DAMAGE,
+  BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
   BLAZE_ROCKET_COLLISION_RADIUS,
   BLAZE_ROCKET_DAMAGE,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
@@ -29,11 +34,21 @@ import {
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  PHANTOM_RIFT_BOLT_DAMAGE,
+  PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+  PHANTOM_SOULREND_COLLISION_RADIUS,
+  PHANTOM_SOULREND_DAMAGE,
+  PHANTOM_SOULREND_RICOCHET_RADIUS,
   PHANTOM_VOID_RAY_COLLISION_RADIUS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   PHANTOM_VOID_RAY_DAMAGE,
   type BlazePrimarySkill,
+  type BlazeSecondarySkill,
   type HeroId,
+  type PhantomPrimarySkill,
+  type PhantomSecondarySkill,
 } from '@voxel-strike/shared';
 import type { PlainVec3 } from './bot-ai';
 
@@ -59,7 +74,9 @@ export interface SkillImpactHint {
 
 export type AttackCastKind =
   | 'phantom_dire_ball'
+  | 'phantom_soulrend_daggers'
   | 'phantom_void_ray'
+  | 'phantom_rift_bolt'
   | 'hookshot_basic_attack'
   | 'hookshot_heavy_attack'
   | 'chronos_verdant_pulse';
@@ -120,6 +137,34 @@ export const BLAZE_SCRAPSHOT_ATTACK: AttackConfig = {
   damageType: 'scrapshot',
 };
 
+export const PHANTOM_SOULREND_ATTACK: AttackConfig = {
+  damage: PHANTOM_SOULREND_DAMAGE,
+  range: 30,
+  cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS,
+  coneDot: Math.cos(0.18),
+  collisionRadius: PHANTOM_SOULREND_COLLISION_RADIUS,
+  damageType: 'soulrend_daggers',
+};
+
+export const PHANTOM_RIFT_BOLT_ATTACK: AttackConfig = {
+  damage: PHANTOM_RIFT_BOLT_DAMAGE,
+  range: PHANTOM_RIFT_BOLT_MAX_DISTANCE,
+  cooldownMs: PHANTOM_RIFT_BOLT_COOLDOWN_MS,
+  coneDot: 1,
+  collisionRadius: PHANTOM_RIFT_BOLT_COLLISION_RADIUS,
+  damageType: 'rift_bolt',
+};
+
+export const BLAZE_PHOSPHOR_FLARE_ATTACK: AttackConfig = {
+  damage: BLAZE_PHOSPHOR_FLARE_DAMAGE,
+  range: BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  cooldownMs: BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS,
+  coneDot: 1,
+  radius: BLAZE_PHOSPHOR_FLARE_RADIUS,
+  collisionRadius: BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS,
+  damageType: 'phosphor_flare',
+};
+
 export const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: {
     damage: PHANTOM_VOID_RAY_DAMAGE,
@@ -165,10 +210,22 @@ export function getRoomAttackConfig(input: {
   heroId: HeroId;
   mode: AttackMode;
   chronosAscendantActive: boolean;
+  phantomPrimarySkill?: PhantomPrimarySkill;
+  phantomSecondarySkill?: PhantomSecondarySkill;
   blazePrimarySkill?: BlazePrimarySkill;
+  blazeSecondarySkill?: BlazeSecondarySkill;
 }): AttackConfig | null {
+  if (input.heroId === 'phantom' && input.mode === 'primary' && input.phantomPrimarySkill === 'soulrend_daggers') {
+    return PHANTOM_SOULREND_ATTACK;
+  }
+  if (input.heroId === 'phantom' && input.mode === 'secondary' && input.phantomSecondarySkill === 'rift_bolt') {
+    return PHANTOM_RIFT_BOLT_ATTACK;
+  }
   if (input.heroId === 'blaze' && input.mode === 'primary' && input.blazePrimarySkill === 'scrapshot') {
     return BLAZE_SCRAPSHOT_ATTACK;
+  }
+  if (input.heroId === 'blaze' && input.mode === 'secondary' && input.blazeSecondarySkill === 'phosphor_flare') {
+    return BLAZE_PHOSPHOR_FLARE_ATTACK;
   }
   const baseAttack = input.mode === 'primary'
     ? PRIMARY_ATTACKS[input.heroId]
@@ -188,6 +245,16 @@ export function getRoomAttackConfig(input: {
   }
 
   return baseAttack;
+}
+
+export function shouldResolveBlazeSecondaryAttack(input: {
+  skill: BlazeSecondarySkill;
+  secondaryFire: boolean;
+  previousSecondaryFire: boolean;
+}): boolean {
+  return input.skill === 'phosphor_flare'
+    ? input.secondaryFire && !input.previousSecondaryFire
+    : !input.secondaryFire && input.previousSecondaryFire;
 }
 
 export function getAttackPreflightRejection(input: AttackPreflightInput): { reason: string; logEvent: boolean } | null {
@@ -226,12 +293,18 @@ export function getChronosAegisCollisionRadiusForAttack(attack: Pick<AttackConfi
       return HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS;
     case 'dire_ball':
       return PHANTOM_DIRE_BALL_COLLISION_RADIUS;
+    case 'soulrend_daggers':
+      return PHANTOM_SOULREND_COLLISION_RADIUS;
+    case 'rift_bolt':
+      return PHANTOM_RIFT_BOLT_COLLISION_RADIUS;
     case 'rocket':
       return BLAZE_ROCKET_COLLISION_RADIUS;
     case 'scrapshot':
       return BLAZE_SCRAPSHOT_AEGIS_COLLISION_RADIUS;
     case 'bomb':
       return BLAZE_BOMB_AEGIS_COLLISION_RADIUS;
+    case 'phosphor_flare':
+      return BLAZE_PHOSPHOR_FLARE_AEGIS_COLLISION_RADIUS;
     case 'verdant_pulse':
       return CHRONOS_VERDANT_PULSE_COLLISION_RADIUS;
     case 'ascendant_verdant_pulse':
@@ -256,9 +329,18 @@ export function buildAttackImpactHint(input: {
 export function getAttackCastKind(input: {
   heroId: HeroId;
   mode: AttackMode;
+  phantomPrimarySkill?: PhantomPrimarySkill;
+  phantomSecondarySkill?: PhantomSecondarySkill;
 }): AttackCastKind | null {
   if (input.heroId === 'phantom') {
-    return input.mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray';
+    if (input.mode === 'primary' && input.phantomPrimarySkill === 'soulrend_daggers') {
+      return 'phantom_soulrend_daggers';
+    }
+    return input.mode === 'primary'
+      ? 'phantom_dire_ball'
+      : input.phantomSecondarySkill === 'rift_bolt'
+        ? 'phantom_rift_bolt'
+        : 'phantom_void_ray';
   }
   if (input.heroId === 'hookshot') {
     return input.mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack';
@@ -267,6 +349,36 @@ export function getAttackCastKind(input: {
     return 'chronos_verdant_pulse';
   }
   return null;
+}
+
+export interface SoulrendRicochetCandidate {
+  id: string;
+  position: PlainVec3;
+}
+
+export function selectSoulrendRicochetTarget<T extends SoulrendRicochetCandidate>(
+  origin: PlainVec3,
+  candidates: Iterable<T>,
+  excludedIds: ReadonlySet<string>,
+  radius = PHANTOM_SOULREND_RICOCHET_RADIUS,
+): T | null {
+  const radiusSq = radius * radius;
+  let best: T | null = null;
+  let bestDistanceSq = radiusSq;
+
+  for (const candidate of candidates) {
+    if (excludedIds.has(candidate.id)) continue;
+    const dx = candidate.position.x - origin.x;
+    const dy = candidate.position.y - origin.y;
+    const dz = candidate.position.z - origin.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq > bestDistanceSq) continue;
+    if (distanceSq === bestDistanceSq && best && candidate.id >= best.id) continue;
+    best = candidate;
+    bestDistanceSq = distanceSq;
+  }
+
+  return best;
 }
 
 export function withHookshotHeavyAttackTargetHint(input: {

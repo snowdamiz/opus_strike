@@ -91,7 +91,7 @@ pnpm run dev:server  # Start the Docker server cluster and tail its logs
 
 ### Distributed Colyseus Development
 
-Local server development is Docker-backed and Redis-backed by default so it stays close to production. `pnpm dev` starts Postgres, Redis, and five server containers: three US machines (`server-us-1..3`) plus one Europe and one Asia machine. `server-us-1` is exposed at `ws://localhost:2567` for the client; the other machines are exposed at ports `2568` through `2571` so Colyseus direct seat reservations can connect to the room-owning process.
+Local server development is Docker-backed and Redis-backed by default so it stays close to production. `pnpm dev` starts Postgres, Redis, and three server containers: one North America machine (`server-us-1`), one Europe machine (`server-eu-1`), and one Asia machine (`server-asia-1`). This is the smallest cluster that preserves production's three-region shape while still exercising Redis-backed multi-process coordination. `server-us-1` is exposed at `ws://localhost:2567` for the client; the Europe and Asia machines are exposed at ports `2568` and `2569` so Colyseus direct seat reservations can connect to the room-owning process.
 
 `pnpm dev`, `pnpm dev:server`, and `pnpm db:up` run a Docker readiness preflight before calling Compose. On macOS, if Docker Desktop is installed but closed, the preflight opens it and waits up to 120 seconds by default before continuing. Override that wait with `DOCKER_START_TIMEOUT_MS`, or set `DOCKER_AUTO_START=0` to require Docker to be started manually.
 

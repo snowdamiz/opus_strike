@@ -19,10 +19,21 @@ export {
   AIR_STRIKE_DURATION,
 } from './airstrike';
 
-export { 
+export {
   BombEffect, 
   BombTargetingIndicator,
 } from './bomb';
+
+export {
+  PhosphorFlareEffect,
+  getPhosphorFlareGpuPrewarmMaterials,
+  prewarmPhosphorFlareResources,
+} from './phosphorFlare';
+
+export {
+  AfterburnerTrails,
+  triggerAfterburnerTrail,
+} from './afterburnerTrail';
 
 export { 
   FlamethrowerEffect,

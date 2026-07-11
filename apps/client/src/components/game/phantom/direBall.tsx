@@ -4,9 +4,14 @@ import * as THREE from 'three';
 import {
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PHANTOM_DIRE_BALL_DAMAGE,
+  PHANTOM_SOULREND_COLLISION_RADIUS,
+  PHANTOM_SOULREND_DAMAGE,
+  PHANTOM_SOULREND_RICOCHET_RADIUS,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
   type Team,
+  getPlayerBodyAimPosition,
+  type Player,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { DireBallData } from '../../../store/types';
@@ -14,7 +19,7 @@ import { getPhysicsWorld, isPhysicsReady, raycastInto, type RaycastHitResult } f
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
-import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { fillCombatVisualEnemyPlayers, findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
@@ -40,6 +45,8 @@ interface DireBallRuntimeSlot {
   velocity: MutableVec3;
   direction: MutableVec3;
   impactPosition: MutableVec3 | null;
+  ricochetPosition: MutableVec3 | null;
+  abilityId: 'phantom_dire_ball' | 'phantom_soulrend_daggers';
   right: MutableVec3;
   up: MutableVec3;
   speed: number;
@@ -49,12 +56,47 @@ interface DireBallRuntimeSlot {
 
 const WORLD_UP = { x: 0, y: 1, z: 0 };
 const ZERO_VEC3 = { x: 0, y: 0, z: 0 };
+const daggerDirectionScratch = new THREE.Vector3();
 
 let sharedCoreMaterial: THREE.ShaderMaterial | null = null;
 let sharedGlowMaterial: THREE.ShaderMaterial | null = null;
 let sharedInnerCoreMaterial: THREE.MeshBasicMaterial | null = null;
 let sharedSecondaryShellMaterial: THREE.MeshBasicMaterial | null = null;
 let sharedParticleMaterial: THREE.PointsMaterial | null = null;
+let sharedSoulrendMaterial: THREE.MeshStandardMaterial | null = null;
+let sharedSoulrendGlowMaterial: THREE.MeshBasicMaterial | null = null;
+
+function getSoulrendMaterial(): THREE.MeshStandardMaterial {
+  if (!sharedSoulrendMaterial) {
+    sharedSoulrendMaterial = new THREE.MeshStandardMaterial({
+      color: 0x201036,
+      emissive: 0x8b5cf6,
+      emissiveIntensity: 1.8,
+      metalness: 0.72,
+      roughness: 0.2,
+    });
+  }
+  return sharedSoulrendMaterial;
+}
+
+function getSoulrendGlowMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedSoulrendGlowMaterial) {
+    sharedSoulrendGlowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xc084fc,
+      transparent: true,
+      opacity: 0.42,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  }
+  return sharedSoulrendGlowMaterial;
+}
+
+function getProjectileCollisionRadius(slot: DireBallRuntimeSlot): number {
+  return slot.abilityId === 'phantom_soulrend_daggers'
+    ? PHANTOM_SOULREND_COLLISION_RADIUS
+    : PHANTOM_DIRE_BALL_COLLISION_RADIUS;
+}
 
 function normalizeInto(input: MutableVec3, output: MutableVec3): number {
   const speed = Math.sqrt(input.x * input.x + input.y * input.y + input.z * input.z);
@@ -304,6 +346,8 @@ class DireBallRuntimePool {
       velocity: { ...ZERO_VEC3 },
       direction: { x: 1, y: 0, z: 0 },
       impactPosition: null,
+      ricochetPosition: null,
+      abilityId: 'phantom_dire_ball',
       right: { x: 0, y: 0, z: 1 },
       up: { x: 0, y: 1, z: 0 },
       speed: 0,
@@ -314,7 +358,30 @@ class DireBallRuntimePool {
   }
 
   add(ball: DireBallData, expiresAtMs: number, ownerTeam: Team | null): void {
-    if (this.idToSlot.has(ball.id)) return;
+    const existingIndex = this.idToSlot.get(ball.id);
+    if (existingIndex !== undefined) {
+      const existing = this.slots[existingIndex];
+      existing.abilityId = ball.abilityId ?? existing.abilityId;
+      existing.impactPosition = ball.impactPosition ? { ...ball.impactPosition } : existing.impactPosition;
+      existing.ricochetPosition = ball.ricochetPosition ? { ...ball.ricochetPosition } : existing.ricochetPosition;
+      if (
+        existing.abilityId === 'phantom_soulrend_daggers' &&
+        ball.impactPosition &&
+        ball.ricochetPosition
+      ) {
+        const toImpactX = ball.impactPosition.x - existing.position.x;
+        const toImpactY = ball.impactPosition.y - existing.position.y;
+        const toImpactZ = ball.impactPosition.z - existing.position.z;
+        const impactIsBehindProjectile =
+          toImpactX * existing.direction.x +
+          toImpactY * existing.direction.y +
+          toImpactZ * existing.direction.z <= 0;
+        if (impactIsBehindProjectile) {
+          beginSoulrendRicochet(existing, ball.impactPosition);
+        }
+      }
+      return;
+    }
 
     const slotIndex = this.allocateSlot();
     const slot = this.slots[slotIndex];
@@ -330,9 +397,9 @@ class DireBallRuntimePool {
     slot.velocity.x = ball.velocity.x;
     slot.velocity.y = ball.velocity.y;
     slot.velocity.z = ball.velocity.z;
-    slot.impactPosition = ball.interceptedByChronosAegis && ball.impactPosition
-      ? { ...ball.impactPosition }
-      : null;
+    slot.impactPosition = ball.impactPosition ? { ...ball.impactPosition } : null;
+    slot.ricochetPosition = ball.ricochetPosition ? { ...ball.ricochetPosition } : null;
+    slot.abilityId = ball.abilityId ?? 'phantom_dire_ball';
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
     slot.particlePhase = ((slotIndex * 37) % 97) / 97;
@@ -381,6 +448,8 @@ class DireBallRuntimePool {
     slot.ownerId = '';
     slot.ownerTeam = null;
     slot.impactPosition = null;
+    slot.ricochetPosition = null;
+    slot.abilityId = 'phantom_dire_ball';
     this.activeCount = Math.max(0, this.activeCount - 1);
     this.freeList.push(index);
   }
@@ -454,6 +523,54 @@ function setSphereInstance(
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
+function setDaggerInstance(
+  mesh: THREE.InstancedMesh,
+  dummy: THREE.Object3D,
+  index: number,
+  slot: DireBallRuntimeSlot,
+  scale = 1,
+): void {
+  dummy.position.set(slot.position.x, slot.position.y, slot.position.z);
+  daggerDirectionScratch.set(slot.direction.x, slot.direction.y, slot.direction.z);
+  dummy.quaternion.setFromUnitVectors(
+    dummy.up,
+    daggerDirectionScratch,
+  );
+  dummy.rotateX(Math.PI / 2);
+  dummy.rotateY((slot.particlePhase * Math.PI * 2) + getFrameClock().elapsedSeconds * 9);
+  dummy.scale.set(0.11 * scale, 0.72 * scale, 0.055 * scale);
+  dummy.updateMatrix();
+  mesh.setMatrixAt(index, dummy.matrix);
+}
+
+function beginSoulrendRicochet(slot: DireBallRuntimeSlot, point: MutableVec3): boolean {
+  const target = slot.ricochetPosition;
+  if (slot.abilityId !== 'phantom_soulrend_daggers' || !target) return false;
+
+  slot.position.x = point.x;
+  slot.position.y = point.y;
+  slot.position.z = point.z;
+  slot.velocity.x = target.x - point.x;
+  slot.velocity.y = target.y - point.y;
+  slot.velocity.z = target.z - point.z;
+  normalizeInto(slot.velocity, slot.direction);
+  slot.velocity.x = slot.direction.x * slot.speed;
+  slot.velocity.y = slot.direction.y * slot.speed;
+  slot.velocity.z = slot.direction.z * slot.speed;
+  slot.impactPosition = { ...target };
+  slot.ricochetPosition = null;
+
+  crossInto(slot.direction, WORLD_UP, slot.right);
+  if (normalizeInto(slot.right, slot.right) <= 0.0001) {
+    slot.right.x = 0;
+    slot.right.y = 0;
+    slot.right.z = 1;
+  }
+  crossInto(slot.right, slot.direction, slot.up);
+  normalizeInto(slot.up, slot.up);
+  return true;
+}
+
 function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number): void {
   if (!mesh) return;
   mesh.count = count;
@@ -474,6 +591,8 @@ export function prewarmDireBallResources(): void {
   getSharedInnerCoreMaterial();
   getSharedSecondaryShellMaterial();
   getSharedParticleMaterial();
+  getSoulrendMaterial();
+  getSoulrendGlowMaterial();
 }
 
 export function appendDireBallGpuPrewarmObjects(target: THREE.Object3D): void {
@@ -498,6 +617,7 @@ export function appendDireBallGpuPrewarmObjects(target: THREE.Object3D): void {
   addInstancedMesh(SHARED_GEOMETRIES.sphere12, getSharedGlowMaterial(), 'gpu-prewarm-dire-ball-glow');
   addInstancedMesh(SHARED_GEOMETRIES.sphere8, getSharedInnerCoreMaterial(), 'gpu-prewarm-dire-ball-inner');
   addInstancedMesh(SHARED_GEOMETRIES.sphere8, getSharedSecondaryShellMaterial(), 'gpu-prewarm-dire-ball-shell');
+  addInstancedMesh(SHARED_GEOMETRIES.cone4, getSoulrendMaterial(), 'gpu-prewarm-soulrend-dagger');
 
   const particleGeometry = new THREE.BufferGeometry();
   particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
@@ -514,6 +634,7 @@ export function DireBallsManager() {
   const poolRef = useRef<DireBallRuntimePool>();
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
   const removalsRef = useRef<string[]>([]);
+  const ricochetCandidatesRef = useRef<Player[]>([]);
   const rayDirectionRef = useRef<MutableVec3>({ x: 1, y: 0, z: 0 });
   const terrainHitRef = useRef<RaycastHitResult>({
     point: { x: 0, y: 0, z: 0 },
@@ -525,6 +646,8 @@ export function DireBallsManager() {
   const glowMeshRef = useRef<THREE.InstancedMesh>(null);
   const innerMeshRef = useRef<THREE.InstancedMesh>(null);
   const secondaryShellMeshRef = useRef<THREE.InstancedMesh>(null);
+  const soulrendMeshRef = useRef<THREE.InstancedMesh>(null);
+  const soulrendGlowMeshRef = useRef<THREE.InstancedMesh>(null);
   const particlesRef = useRef<THREE.Points>(null);
 
   if (!poolRef.current) {
@@ -567,6 +690,8 @@ export function DireBallsManager() {
       glowMeshRef.current,
       innerMeshRef.current,
       secondaryShellMeshRef.current,
+      soulrendMeshRef.current,
+      soulrendGlowMeshRef.current,
     ]);
   }, []);
 
@@ -613,6 +738,8 @@ export function DireBallsManager() {
       setInstancedMeshCount(glowMeshRef.current, 0);
       setInstancedMeshCount(innerMeshRef.current, 0);
       setInstancedMeshCount(secondaryShellMeshRef.current, 0);
+      setInstancedMeshCount(soulrendMeshRef.current, 0);
+      setInstancedMeshCount(soulrendGlowMeshRef.current, 0);
       particleGeometry.setDrawRange(0, 0);
       return;
     }
@@ -631,16 +758,17 @@ export function DireBallsManager() {
 
       const moveDistance = slot.speed * delta;
       if (moveDistance > 0.001) {
+        const collisionRadius = getProjectileCollisionRadius(slot);
         rayDirectionRef.current.x = slot.direction.x;
         rayDirectionRef.current.y = slot.direction.y;
         rayDirectionRef.current.z = slot.direction.z;
-        const collisionDistance = moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS;
+        const collisionDistance = moveDistance + collisionRadius;
         const authoritativeHit = getAuthoritativeProjectileImpactHit(
           slot.position,
           rayDirectionRef.current,
           slot.impactPosition,
           collisionDistance,
-          PHANTOM_DIRE_BALL_COLLISION_RADIUS
+          collisionRadius
         );
         const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
@@ -648,7 +776,7 @@ export function DireBallsManager() {
           collisionDistance,
           slot.ownerTeam,
           slot.ownerId,
-          PHANTOM_DIRE_BALL_COLLISION_RADIUS
+          collisionRadius
         );
         const terrainHit = physicsWorld && raycastInto(terrainHitRef.current, physicsWorld, slot.position, rayDirectionRef.current, collisionDistance, {
             priority: 'visual',
@@ -670,34 +798,88 @@ export function DireBallsManager() {
             direction: slot.direction,
           });
           playPrimaryImpactSound('phantom', hit.point);
+          if (hit === authoritativeHit && beginSoulrendRicochet(slot, hit.point)) {
+            return;
+          }
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;
         }
       }
 
-      const hitPlayer = findCombatVisualEnemyPlayerHit(
-        combatCache,
-        slot.ownerTeam,
-        slot.ownerId,
-        slot.position,
-        slot.direction,
-        moveDistance,
-        PHANTOM_DIRE_BALL_COLLISION_RADIUS,
-        slot.position,
-        moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
-      );
+      const collisionRadius = getProjectileCollisionRadius(slot);
+      const hitPlayer = slot.abilityId === 'phantom_soulrend_daggers' && (
+        !store.isPracticeMode || slot.impactPosition
+      )
+        ? null
+        : findCombatVisualEnemyPlayerHit(
+          combatCache,
+          slot.ownerTeam,
+          slot.ownerId,
+          slot.position,
+          slot.direction,
+          moveDistance,
+          collisionRadius,
+          slot.position,
+          moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
+        );
       if (hitPlayer) {
+        const isSoulrend = slot.abilityId === 'phantom_soulrend_daggers';
         applyTutorialOfflineTrainingDamage({
           target: hitPlayer,
-          damage: PHANTOM_DIRE_BALL_DAMAGE,
-          damageType: 'dire_ball',
+          damage: isSoulrend
+            ? PHANTOM_SOULREND_DAMAGE
+            : PHANTOM_DIRE_BALL_DAMAGE,
+          damageType: isSoulrend
+            ? 'soulrend_daggers'
+            : 'dire_ball',
           hitPosition: slot.position,
           sourceId: slot.ownerId,
           sourceTeam: slot.ownerTeam,
-          abilityId: 'phantom_dire_ball',
+          abilityId: slot.abilityId,
         });
         playPrimaryImpactSound('phantom', slot.position);
+        if (isSoulrend && store.isPracticeMode) {
+          const candidates = fillCombatVisualEnemyPlayers(
+            combatCache,
+            slot.ownerTeam,
+            slot.ownerId,
+            ricochetCandidatesRef.current,
+            slot.position,
+            PHANTOM_SOULREND_RICOCHET_RADIUS,
+          );
+          let ricochetTarget: Player | null = null;
+          let nearestDistanceSq = PHANTOM_SOULREND_RICOCHET_RADIUS ** 2;
+          for (const candidate of candidates) {
+            if (candidate.id === hitPlayer.id) continue;
+            const dx = candidate.position.x - slot.position.x;
+            const dy = candidate.position.y - slot.position.y;
+            const dz = candidate.position.z - slot.position.z;
+            const distanceSq = dx * dx + dy * dy + dz * dz;
+            if (distanceSq > nearestDistanceSq) continue;
+            if (distanceSq === nearestDistanceSq && ricochetTarget && candidate.id >= ricochetTarget.id) continue;
+            nearestDistanceSq = distanceSq;
+            ricochetTarget = candidate;
+          }
+
+          if (ricochetTarget) {
+            const targetPosition = getPlayerBodyAimPosition({
+              position: ricochetTarget.position,
+              heroId: ricochetTarget.heroId,
+            });
+            slot.ricochetPosition = { ...targetPosition };
+            applyTutorialOfflineTrainingDamage({
+              target: ricochetTarget,
+              damage: PHANTOM_SOULREND_DAMAGE,
+              damageType: 'soulrend_daggers',
+              hitPosition: targetPosition,
+              sourceId: slot.ownerId,
+              sourceTeam: slot.ownerTeam,
+              abilityId: slot.abilityId,
+            });
+            if (beginSoulrendRicochet(slot, slot.position)) return;
+          }
+        }
         removals.push(slot.id);
         pool.deactivate(slotIndex);
         return;
@@ -712,10 +894,16 @@ export function DireBallsManager() {
       const innerMesh = innerMeshRef.current;
       const secondaryShellMesh = secondaryShellMeshRef.current;
       if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
-        setSphereInstance(coreMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS);
-        setSphereInstance(glowMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 1.68);
-        setSphereInstance(innerMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 0.4);
-        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 0.5);
+        const sphereScale = slot.abilityId === 'phantom_dire_ball' ? PHANTOM_DIRE_BALL_COLLISION_RADIUS : 0;
+        setSphereInstance(coreMesh, dummy, instanceIndex, slot, sphereScale);
+        setSphereInstance(glowMesh, dummy, instanceIndex, slot, sphereScale * 1.68);
+        setSphereInstance(innerMesh, dummy, instanceIndex, slot, sphereScale * 0.4);
+        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, sphereScale * 0.5);
+      }
+      if (soulrendMeshRef.current && soulrendGlowMeshRef.current) {
+        const daggerScale = slot.abilityId === 'phantom_soulrend_daggers' ? 1 : 0;
+        setDaggerInstance(soulrendMeshRef.current, dummy, instanceIndex, slot, daggerScale);
+        setDaggerInstance(soulrendGlowMeshRef.current, dummy, instanceIndex, slot, daggerScale * 1.35);
       }
 
       particleOffset = fillTrailParticles(slot, elapsedSeconds, positions, particleOffset);
@@ -727,6 +915,8 @@ export function DireBallsManager() {
     setInstancedMeshCount(glowMeshRef.current, instanceIndex);
     setInstancedMeshCount(innerMeshRef.current, instanceIndex);
     setInstancedMeshCount(secondaryShellMeshRef.current, instanceIndex);
+    setInstancedMeshCount(soulrendMeshRef.current, instanceIndex);
+    setInstancedMeshCount(soulrendGlowMeshRef.current, instanceIndex);
 
     particleGeometry.setDrawRange(0, particleOffset);
     const positionAttribute = particleGeometry.attributes.position as THREE.BufferAttribute;
@@ -758,6 +948,16 @@ export function DireBallsManager() {
       <instancedMesh
         ref={secondaryShellMeshRef}
         args={[SHARED_GEOMETRIES.sphere8, getSharedSecondaryShellMaterial(), DIRE_BALL_CAPACITY]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={soulrendMeshRef}
+        args={[SHARED_GEOMETRIES.cone4, getSoulrendMaterial(), DIRE_BALL_CAPACITY]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={soulrendGlowMeshRef}
+        args={[SHARED_GEOMETRIES.cone4, getSoulrendGlowMaterial(), DIRE_BALL_CAPACITY]}
         frustumCulled={false}
       />
       <points ref={particlesRef} geometry={particleGeometry} frustumCulled={false}>

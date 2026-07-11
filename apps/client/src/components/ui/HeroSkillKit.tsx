@@ -3,12 +3,16 @@ import {
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
   DEFAULT_BLAZE_PRIMARY_SKILL,
+  DEFAULT_BLAZE_SECONDARY_SKILL,
+  DEFAULT_BLAZE_ULTIMATE_SKILL,
+  DEFAULT_PHANTOM_PRIMARY_SKILL,
+  DEFAULT_PHANTOM_SECONDARY_SKILL,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
-import type { AbilityCardStat, BlazePrimarySkill, HeroId } from '@voxel-strike/shared';
+import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, HeroId, PhantomPrimarySkill, PhantomSecondarySkill } from '@voxel-strike/shared';
 import {
   DRAG_HOOK_COOLDOWN,
   HOOKSHOT_FIRE_INTERVAL,
@@ -184,6 +188,54 @@ export const BLAZE_SCRAPSHOT_SKILL: HeroClickSkill = {
   rarity: 'epic',
 };
 
+export const PHANTOM_SOULREND_SKILL: HeroClickSkill = {
+  input: 'LMB',
+  statKey: 'phantom_soulrend_daggers',
+  name: 'Soulrend Daggers',
+  description: 'Throw spectral daggers that ricochet once to the nearest enemy within 8 meters of the first target.',
+  cooldown: secondsFromMs(PHANTOM_FIRE_INTERVAL),
+  iconType: 'soulrend',
+  rarity: 'epic',
+};
+
+export const PHANTOM_RIFT_BOLT_SKILL: HeroClickSkill = {
+  input: 'RMB',
+  abilityId: 'phantom_rift_bolt',
+  statKey: 'phantom_rift_bolt',
+  name: ABILITY_DEFINITIONS.phantom_rift_bolt.name,
+  description: ABILITY_DEFINITIONS.phantom_rift_bolt.description,
+  cooldown: ABILITY_DEFINITIONS.phantom_rift_bolt.cooldown,
+  duration: ABILITY_DEFINITIONS.phantom_rift_bolt.duration,
+  iconType: 'riftbolt',
+  rarity: 'epic',
+};
+
+export const BLAZE_PHOSPHOR_FLARE_SKILL: HeroClickSkill = {
+  input: 'RMB',
+  abilityId: 'blaze_phosphor_flare',
+  statKey: 'blaze_phosphor_flare',
+  name: ABILITY_DEFINITIONS.blaze_phosphor_flare.name,
+  description: ABILITY_DEFINITIONS.blaze_phosphor_flare.description,
+  cooldown: ABILITY_DEFINITIONS.blaze_phosphor_flare.cooldown,
+  duration: ABILITY_DEFINITIONS.blaze_phosphor_flare.duration,
+  iconType: 'phosphorflare',
+  rarity: 'epic',
+};
+
+export const BLAZE_AFTERBURNER_SKILL: HeroSkillItem = fromAbility(
+  'E',
+  'blaze_afterburner',
+  undefined,
+  { iconType: 'afterburner', rarity: 'epic' },
+);
+
+export const BLAZE_PHOENIX_DIVE_SKILL: HeroSkillItem = fromAbility(
+  'F',
+  'blaze_phoenix_dive',
+  'ultimate',
+  { iconType: 'phoenixdive', rarity: 'epic' },
+);
+
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   phantom: [
     fromAbility('E', 'phantom_blink'),
@@ -216,23 +268,42 @@ export function getHeroSkillItems(
   heroId: HeroId,
   blazePrimarySkill: BlazePrimarySkill = DEFAULT_BLAZE_PRIMARY_SKILL,
   abilityBindings: HeroAbilityBindings = getDefaultHeroAbilityBindings(heroId),
+  blazeSecondarySkill: BlazeSecondarySkill = DEFAULT_BLAZE_SECONDARY_SKILL,
+  blazeUltimateSkill: BlazeUltimateSkill = DEFAULT_BLAZE_ULTIMATE_SKILL,
+  phantomPrimarySkill: PhantomPrimarySkill = DEFAULT_PHANTOM_PRIMARY_SKILL,
+  phantomSecondarySkill: PhantomSecondarySkill = DEFAULT_PHANTOM_SECONDARY_SKILL,
 ): HeroSkillItem[] {
   const cacheKey = [
     heroId,
     heroId === 'blaze' ? blazePrimarySkill : DEFAULT_BLAZE_PRIMARY_SKILL,
+    heroId === 'blaze' ? blazeSecondarySkill : DEFAULT_BLAZE_SECONDARY_SKILL,
+    heroId === 'blaze' ? blazeUltimateSkill : DEFAULT_BLAZE_ULTIMATE_SKILL,
     abilityBindings.ability1,
     abilityBindings.ability2,
+    heroId === 'phantom' ? phantomPrimarySkill : DEFAULT_PHANTOM_PRIMARY_SKILL,
+    heroId === 'phantom' ? phantomSecondarySkill : DEFAULT_PHANTOM_SECONDARY_SKILL,
   ].join(':');
   const cached = heroSkillItemsCache.get(cacheKey);
   if (cached) return cached;
 
-  const clickSkills = heroId === 'blaze' && blazePrimarySkill === 'scrapshot'
-    ? [BLAZE_SCRAPSHOT_SKILL, HERO_CLICK_SKILLS.blaze[1]]
-    : HERO_CLICK_SKILLS[heroId];
+  const clickSkills = heroId === 'blaze'
+    ? [
+      blazePrimarySkill === 'scrapshot' ? BLAZE_SCRAPSHOT_SKILL : HERO_CLICK_SKILLS.blaze[0],
+      blazeSecondarySkill === 'phosphor_flare' ? BLAZE_PHOSPHOR_FLARE_SKILL : HERO_CLICK_SKILLS.blaze[1],
+    ]
+    : heroId === 'phantom'
+      ? [
+        phantomPrimarySkill === 'soulrend_daggers' ? PHANTOM_SOULREND_SKILL : HERO_CLICK_SKILLS.phantom[0],
+        phantomSecondarySkill === 'rift_bolt' ? PHANTOM_RIFT_BOLT_SKILL : HERO_CLICK_SKILLS.phantom[1],
+      ]
+      : HERO_CLICK_SKILLS[heroId];
   const stockAbilitySkills = HERO_ABILITY_SKILLS[heroId];
   const stockAbilityById = new Map(
     stockAbilitySkills.slice(0, 2).map((skill) => [skill.abilityId, skill]),
   );
+  if (heroId === 'blaze') {
+    stockAbilityById.set('blaze_afterburner', BLAZE_AFTERBURNER_SKILL);
+  }
   const slottedAbilitySkills: HeroSkillItem[] = [
     {
       ...(stockAbilityById.get(abilityBindings.ability1) ?? stockAbilitySkills[0]),
@@ -242,7 +313,9 @@ export function getHeroSkillItems(
       ...(stockAbilityById.get(abilityBindings.ability2) ?? stockAbilitySkills[1]),
       input: 'Q',
     },
-    stockAbilitySkills[2],
+    heroId === 'blaze' && blazeUltimateSkill === 'phoenix_dive'
+      ? BLAZE_PHOENIX_DIVE_SKILL
+      : stockAbilitySkills[2],
   ];
 
   const items: HeroSkillItem[] = [
@@ -257,7 +330,7 @@ export function getHeroSkillItems(
     })),
     ...slottedAbilitySkills.map((skill) => ({
       ...skill,
-      rarity: 'common' as const,
+      rarity: skill.rarity ?? 'common' as const,
       meta: [
         ...getAbilityCardMeta(skill.statKey),
         ...(skill.meta ?? []),

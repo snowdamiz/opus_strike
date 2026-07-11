@@ -67,6 +67,7 @@ export type HeroLoadoutPool = Record<HeroId, Record<LoadoutSlotKey, LoadoutSkill
 interface NewEpicSkill {
   /** id suffix, unique within hero + slot (e.g. 'soulrend') */
   key: string;
+  abilityId?: string;
   iconType: AbilityIconType;
   /** drives the cooldown-suppression rule in buildDisplayMeta ('LMB' hides cd) */
   input: 'LMB' | 'RMB' | 'E' | 'F';
@@ -98,10 +99,11 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
       tagline: 'Spectral daggers that ricochet to a second nearby target.',
       description:
         'Replaces the Dire Ball stream with thrown spectral daggers that ricochet once to a nearby enemy — less single-target DPS, but tags flankers around cover and punishes grouped backlines.',
-      meta: ['14 dmg', 'ricochets x1', '8 ammo'],
+      meta: ['14 dmg', 'ricochets x1', '10 ammo'],
     },
     secondaryFire: {
       key: 'riftbolt',
+      abilityId: 'phantom_rift_bolt',
       iconType: 'riftbolt',
       input: 'RMB',
       cooldown: 6,
@@ -204,17 +206,19 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
     },
     ability: {
       key: 'afterburner',
+      abilityId: 'blaze_afterburner',
       iconType: 'afterburner',
       input: 'E',
       cooldown: 7,
       name: 'Afterburner Dash',
-      tagline: 'Jet sideways, leaving a trail of fire behind you.',
+      tagline: 'Surge forward, leaving a trail of fire behind you.',
       description:
-        'A horizontal afterburner dash that leaves a fire trail — sideways aerial repositioning and chip damage, a counterpart to Rocket Jump’s vertical launch.',
-      meta: ['forward dash', 'fire trail'],
+        'A fast forward afterburner burst that leaves a damaging ground fire trail — horizontal repositioning and chip damage, a counterpart to Rocket Jump’s vertical launch.',
+      meta: ['long forward dash', 'wide fire trail'],
     },
     ultimate: {
       key: 'phoenixdive',
+      abilityId: 'blaze_phoenix_dive',
       iconType: 'phoenixdive',
       input: 'F',
       name: 'Phoenix Dive',
@@ -314,6 +318,7 @@ function buildStockOption(heroId: HeroId, slot: LoadoutSlotDef, base: HeroSkillI
 function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill): LoadoutSkillOption {
   const item: HeroSkillItem = {
     input: def.input,
+    abilityId: def.abilityId,
     name: def.name,
     description: def.description,
     iconType: def.iconType,
@@ -329,7 +334,16 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     isPlaceholder: false,
     tagline: def.tagline,
     rarity: 'epic',
-    ownership: heroId === 'blaze' && slot.key === 'primaryFire' && def.key === 'scrapshot'
+    ownership: (heroId === 'phantom' && (
+      (slot.key === 'primaryFire' && def.key === 'soulrend') ||
+      (slot.key === 'secondaryFire' && def.key === 'riftbolt')
+    )) ||
+      (heroId === 'blaze' && (
+      (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
+      (slot.key === 'secondaryFire' && def.key === 'phosphorflare') ||
+      (slot.key === 'ability1' && def.key === 'afterburner') ||
+      (slot.key === 'ultimate' && def.key === 'phoenixdive')
+      ))
       ? 'owned'
       : 'locked',
     meta: buildDisplayMeta(item),
@@ -369,6 +383,11 @@ export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
 }
 
 export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
+export const PHANTOM_SOULREND_OPTION_ID = 'phantom-primaryFire-soulrend';
+export const PHANTOM_RIFT_BOLT_OPTION_ID = 'phantom-secondaryFire-riftbolt';
+export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
+export const BLAZE_AFTERBURNER_OPTION_ID = 'blaze-ability1-afterburner';
+export const BLAZE_PHOENIX_DIVE_OPTION_ID = 'blaze-ultimate-phoenixdive';
 
 // E (ability1) and Q (ability2) draw from one shared, interchangeable pool —
 // any ability can occupy either slot.

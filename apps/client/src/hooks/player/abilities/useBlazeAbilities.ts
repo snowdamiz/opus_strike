@@ -3,13 +3,13 @@
  * 
  * Handles Blaze-specific abilities:
  * - Fireballs (primary fire)
- * - Meteor Strike (secondary fire - targeting)
+ * - Meteor Strike or Phosphor Flare (selected secondary fire)
  * - Flamethrower (E ability - hold)
  * - Rocket Jump (Q ability)
  * - Infernal Gearstorm (Ultimate - hero-centered AOE)
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import * as THREE from 'three';
 import {
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
@@ -18,13 +18,22 @@ import {
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_BOMB_SPLASH_RADIUS,
+  BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS,
+  BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+  BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+  BLAZE_PHOSPHOR_FLARE_MIN_RANGE,
+  BLAZE_PHOSPHOR_FLARE_RADIUS,
+  BLAZE_AFTERBURNER_DASH_DURATION_MS,
+  BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
   BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_ROCKET_STAFF_SOCKET,
   BLAZE_SCRAPSHOT_RANGE,
   getBlazePrimaryAbilityId,
   getBlazePrimaryMagazineSize,
   getBlazeScrapshotPelletDirections,
+  getBlazePhosphorFlareFlightDurationMs,
   type BlazePrimarySkill,
+  type BlazeSecondarySkill,
   type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -34,6 +43,7 @@ import {
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
   BLAZE_BOMB_WARNING_LEAD,
+  EYE_HEIGHT,
   FUEL_UPDATE_THRESHOLD,
   calculatePlayerSocketPosition,
 } from '../constants';
@@ -61,8 +71,19 @@ import { isActionLockBlocking } from '../actionLock';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 import { playSharedSound } from '../../useAudio';
-import { addScrapshotEffects } from '../../../components/game/Effects';
+import {
+  addScrapshotEffects,
+  type ScrapshotEffectImpactInput,
+} from '../../../components/game/Effects';
+import { triggerAfterburnerTrail } from '../../../components/game/blaze';
+import { startLocalBlazeAfterburnerDash } from '../../../movement/localPrediction';
 import { applyTutorialOfflineTrainingScrapshot } from '../../../utils/tutorialOfflineCombatRuntime';
+import {
+  checkGroundWithNormal,
+  createRaycastDirectionHitResult,
+  isPhysicsReady,
+  raycastDirectionInto,
+} from '../../usePhysics';
 
 const FUEL_AUTHORITY_EPSILON = 0.05;
 
@@ -122,26 +143,30 @@ function playPredictedBlazePrimaryReload(now: number): void {
   });
 }
 
-function sampleBlazeStaffTipPose(
+function resolveBlazeStaffTipPose(
   ctx: AbilityContext,
   abilityId: string,
   nowMs: number,
   holdBlend: number
 ): ResolvedAbilitySocketOrigin | null {
-  if (!ctx.camera) return null;
-
-  ctx.camera.updateMatrixWorld();
+  ctx.camera?.updateMatrixWorld();
 
   return resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
-    sampledContext: {
-      camera: ctx.camera,
-      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
-      holdBlend,
-      timestampMs: ctx.viewmodelNowMs ?? nowMs,
-    } satisfies BlazeRocketStaffPoseSampleContext,
-    preferSampled: true,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
+    sampledContext: ctx.camera
+      ? {
+        camera: ctx.camera,
+        elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+        holdBlend,
+        timestampMs: ctx.viewmodelNowMs ?? nowMs,
+      } satisfies BlazeRocketStaffPoseSampleContext
+      : undefined,
+    preferSampled: false,
     warnOnSampleDrift: true,
   });
 }
@@ -167,6 +192,8 @@ export interface UseBlazeAbilitiesReturn {
   blazePrimaryReloadStartRef: React.MutableRefObject<number>;
   bombTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   bombValidRef: React.MutableRefObject<boolean>;
+  phoenixDiveTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
+  phoenixDiveValidRef: React.MutableRefObject<boolean>;
   flamethrowerFuelRef: React.MutableRefObject<number>;
   flamethrowerActiveRef: React.MutableRefObject<boolean>;
   secondaryFirePressedRef: React.MutableRefObject<boolean>;
@@ -180,24 +207,22 @@ export interface UseBlazeAbilitiesReturn {
   updateBlazePrimaryReload: (now?: number) => void;
   reloadBlazePrimary: (now?: number) => boolean;
   resetBlazePrimaryMagazine: () => void;
-  handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
+  handleSecondaryFire: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   firePrimary: (ctx: AbilityContext) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
   handleFlamethrower: (
     ctx: AbilityContext,
     sounds: PlayerSounds,
+    isTryingToFire: boolean,
     setFlamethrowerActive: (active: boolean) => void,
     setFlamethrowerFuel: (fuel: number) => void
   ) => void;
   executeRocketJump: (ctx: AbilityContext) => void;
+  executeAfterburner: (ctx: AbilityContext) => void;
   updateRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   resetRocketJump: () => void;
-  executeAirStrike: (
-    ctx: AbilityContext,
-    sounds: PlayerSounds,
-    updateLocalPlayer: (data: any) => void
-  ) => void;
   handleBombTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
+  handlePhoenixDiveTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
 interface PendingRocketJump {
@@ -205,18 +230,25 @@ interface PendingRocketJump {
   activateAtMs: number;
 }
 
-export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlazeAbilitiesReturn {
+export function useBlazeAbilities(
+  blazePrimarySkill: BlazePrimarySkill,
+  blazeSecondarySkill: BlazeSecondarySkill
+): UseBlazeAbilitiesReturn {
   const primaryMagazineSize = getBlazePrimaryMagazineSize(blazePrimarySkill);
   const lastPrimaryTimeRef = useRef(0);
   const primaryShotIdRef = useRef(0);
   const blazePrimaryAmmoRef = useRef(primaryMagazineSize);
   const blazePrimaryReloadingRef = useRef(false);
   const blazePrimaryReloadStartRef = useRef(0);
+  const scrapshotTerrainHitRef = useRef(createRaycastDirectionHitResult());
+  const phosphorTerrainHitRef = useRef(createRaycastDirectionHitResult());
 
   // Meteor Strike state
   const lastBombTimeRef = useRef(0);
   const bombTargetRef = useRef<THREE.Vector3 | null>(null);
   const bombValidRef = useRef(false);
+  const phoenixDiveTargetRef = useRef<THREE.Vector3 | null>(null);
+  const phoenixDiveValidRef = useRef(false);
   const secondaryFirePressedRef = useRef(false);
 
   // Flamethrower state
@@ -225,8 +257,17 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
   const lastAuthoritativeFlamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
   const flamethrowerActiveRef = useRef(false);
   const pendingRocketJumpRef = useRef<PendingRocketJump | null>(null);
+  const phosphorImpactSoundTimeoutRef = useRef<number | null>(null);
 
   const actionLockUntilRef = useRef(0);
+
+  const clearPhosphorImpactSoundTimeout = useCallback(() => {
+    if (phosphorImpactSoundTimeoutRef.current === null) return;
+    window.clearTimeout(phosphorImpactSoundTimeoutRef.current);
+    phosphorImpactSoundTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => clearPhosphorImpactSoundTimeout, [clearPhosphorImpactSoundTimeout]);
 
   const getOwnerTeam = (team?: string | null): Team => team || 'red';
 
@@ -304,14 +345,29 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     useGameStore.getState().resetBlazePrimaryMagazine(primaryMagazineSize);
   }, [primaryMagazineSize]);
 
-  // Handle Meteor Strike targeting mode
-  const handleBombTargeting = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
+  // Handle Blaze's selected secondary fire. Meteor Strike uses hold/release
+  // targeting; Phosphor Flare lobs immediately on the initial press.
+  const handleSecondaryFire = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const store = useGameStore.getState();
     const bombTargeting = store.bombTargeting;
     const now = Date.now();
     const timestampMs = ctx.viewmodelNowMs ?? now;
     const isHoldingSecondary = ctx.inputState.secondaryFire;
     const wasHoldingSecondary = secondaryFirePressedRef.current;
+
+    if (blazeSecondarySkill === 'phosphor_flare') {
+      if (bombTargeting) {
+        store.setBombTargeting(false, false);
+        bombTargetRef.current = null;
+        bombValidRef.current = false;
+        setBlazeBombTargetHeld(false, timestampMs);
+      }
+      if (isHoldingSecondary && !wasHoldingSecondary) {
+        executePhosphorFlare(ctx, sounds);
+      }
+      secondaryFirePressedRef.current = isHoldingSecondary;
+      return;
+    }
 
     if (isHoldingSecondary) {
       if (!bombTargeting) {
@@ -345,7 +401,7 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     }
 
     secondaryFirePressedRef.current = isHoldingSecondary;
-  }, []);
+  }, [blazeSecondarySkill]);
 
   const firePrimary = useCallback((ctx: AbilityContext) => {
     if (!ctx.inputState.primaryFire) return;
@@ -367,7 +423,7 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     primaryShotIdRef.current += 1;
     const abilityId = getBlazePrimaryAbilityId(blazePrimarySkill);
     const holdBlend = 1;
-    const staffTipPose = sampleBlazeStaffTipPose(ctx, abilityId, now, holdBlend);
+    const staffTipPose = resolveBlazeStaffTipPose(ctx, abilityId, now, holdBlend);
     const startPosition = staffTipPose
       ? vectorToPlainPosition(staffTipPose.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
@@ -386,17 +442,43 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
 
     if (blazePrimarySkill === 'scrapshot') {
       const pelletDirections = getBlazeScrapshotPelletDirections(direction);
-      addScrapshotEffects(startPosition, pelletDirections.map((pelletDirection) => ({
-        x: startPosition.x + pelletDirection.x * BLAZE_SCRAPSHOT_RANGE,
-        y: startPosition.y + pelletDirection.y * BLAZE_SCRAPSHOT_RANGE,
-        z: startPosition.z + pelletDirection.z * BLAZE_SCRAPSHOT_RANGE,
-      })));
-      applyTutorialOfflineTrainingScrapshot({
+      const practiceResult = applyTutorialOfflineTrainingScrapshot({
         origin: startPosition,
         direction,
         sourceId: ctx.localPlayer.id,
         sourceTeam: getOwnerTeam(ctx.localPlayer.team),
       });
+      const predictedImpacts: ScrapshotEffectImpactInput[] = pelletDirections.map((pelletDirection) => {
+        const terrainHit = scrapshotTerrainHitRef.current;
+        const didHitTerrain = isPhysicsReady() && raycastDirectionInto(
+          terrainHit,
+          ctx.position.x,
+          ctx.position.y + EYE_HEIGHT,
+          ctx.position.z,
+          pelletDirection.x,
+          pelletDirection.y,
+          pelletDirection.z,
+          BLAZE_SCRAPSHOT_RANGE,
+          { priority: 'visual', feature: 'ability:blazeScrapshot' },
+        );
+        return {
+          position: didHitTerrain
+            ? { ...terrainHit.point }
+            : {
+              x: startPosition.x + pelletDirection.x * BLAZE_SCRAPSHOT_RANGE,
+              y: startPosition.y + pelletDirection.y * BLAZE_SCRAPSHOT_RANGE,
+              z: startPosition.z + pelletDirection.z * BLAZE_SCRAPSHOT_RANGE,
+            },
+          kind: didHitTerrain ? 'terrain' as const : 'miss' as const,
+        };
+      });
+      practiceResult.playerImpacts.forEach((impact) => {
+        predictedImpacts[impact.pelletIndex] = {
+          position: impact.position,
+          kind: 'player',
+        };
+      });
+      addScrapshotEffects(startPosition, predictedImpacts, 'prediction');
     } else {
       store.addRocket({
         id: visualId,
@@ -469,10 +551,99 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     setBlazeBombTargetHeld(false, now);
   }, []);
 
+  const executePhosphorFlare = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
+    const now = Date.now();
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    const cooldownMs = BLAZE_PHOSPHOR_FLARE_COOLDOWN_MS / tempoMultiplier;
+    if (now - lastBombTimeRef.current < cooldownMs) return;
+
+    lastBombTimeRef.current = now;
+    triggerBlazeStaffShockwave(now);
+    lockActions(BLAZE_STAFF_SHOCKWAVE_DURATION_MS + BLAZE_STAFF_RETURN_TO_IDLE_MS, now);
+    markPredictedLocalAbilitySound('blaze_phosphor_flare', now);
+    sounds.playBlazeBombRelease();
+
+    const store = useGameStore.getState();
+    store.setClientCooldown('blaze_phosphor_flare', now + cooldownMs);
+    if (!store.isPracticeMode || store.localPlayer?.heroId !== 'blaze') return;
+
+    const staffTipPose = resolveBlazeStaffTipPose(ctx, 'blaze_phosphor_flare', now, 1);
+    const startPosition = staffTipPose
+      ? vectorToPlainPosition(staffTipPose.position)
+      : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, startPosition, BLAZE_PHOSPHOR_FLARE_MAX_RANGE);
+    const terrainHit = phosphorTerrainHitRef.current;
+    const didHitTerrain = isPhysicsReady() && raycastDirectionInto(
+      terrainHit,
+      ctx.position.x,
+      ctx.position.y + EYE_HEIGHT,
+      ctx.position.z,
+      direction.x,
+      direction.y,
+      direction.z,
+      BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+      { priority: 'visual', feature: 'ability:blazePhosphorFlare' }
+    );
+    const candidate = didHitTerrain
+      ? terrainHit.point
+      : {
+        x: startPosition.x + direction.x * BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+        y: startPosition.y + direction.y * BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+        z: startPosition.z + direction.z * BLAZE_PHOSPHOR_FLARE_MAX_RANGE,
+      };
+    const horizontalDistance = Math.hypot(
+      candidate.x - ctx.position.x,
+      candidate.z - ctx.position.z
+    );
+    const minRangeScale = horizontalDistance > 0.0001
+      ? Math.max(1, BLAZE_PHOSPHOR_FLARE_MIN_RANGE / horizontalDistance)
+      : 0;
+    const targetX = minRangeScale > 0
+      ? ctx.position.x + (candidate.x - ctx.position.x) * minRangeScale
+      : ctx.position.x + Math.sin(ctx.yaw) * BLAZE_PHOSPHOR_FLARE_MIN_RANGE;
+    const targetZ = minRangeScale > 0
+      ? ctx.position.z + (candidate.z - ctx.position.z) * minRangeScale
+      : ctx.position.z - Math.cos(ctx.yaw) * BLAZE_PHOSPHOR_FLARE_MIN_RANGE;
+    const groundHit = checkGroundWithNormal(
+      targetX,
+      candidate.y + 24,
+      targetZ,
+      64,
+      { priority: 'visual', feature: 'ability:blazePhosphorFlareGround' }
+    );
+    const targetPosition = {
+      x: targetX,
+      y: groundHit?.groundY ?? candidate.y,
+      z: targetZ,
+    };
+    const flightDurationMs = getBlazePhosphorFlareFlightDurationMs(startPosition, targetPosition);
+    const impactTime = now + flightDurationMs;
+    store.addPhosphorFlare({
+      id: `practice_blaze_phosphor_flare_${store.localPlayer.id}_${now}`,
+      startPosition,
+      targetPosition,
+      impactPosition: targetPosition,
+      interceptedByChronosAegis: false,
+      impactProgress: 1,
+      startTime: now,
+      impactTime,
+      poolEndsAt: impactTime + BLAZE_PHOSPHOR_FLARE_DURATION_MS,
+      radius: BLAZE_PHOSPHOR_FLARE_RADIUS,
+      ownerId: store.localPlayer.id,
+      ownerTeam: getOwnerTeam(store.localPlayer.team),
+    });
+    clearPhosphorImpactSoundTimeout();
+    phosphorImpactSoundTimeoutRef.current = window.setTimeout(() => {
+      phosphorImpactSoundTimeoutRef.current = null;
+      sounds.playBlazeBombExplode();
+    }, flightDurationMs);
+  }, [clearPhosphorImpactSoundTimeout, lockActions]);
+
   // Handle flamethrower (E ability - hold)
   const handleFlamethrower = useCallback((
     ctx: AbilityContext,
     sounds: PlayerSounds,
+    isTryingToFire: boolean,
     setFlamethrowerActive: (active: boolean) => void,
     setFlamethrowerFuel: (fuel: number) => void
   ) => {
@@ -495,10 +666,10 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
       lastAuthoritativeFlamethrowerFuelRef.current = authoritativeFuel;
     }
 
-    const isTryingToFire = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
+    const canFire = isTryingToFire && flamethrowerFuelRef.current > 0;
 
     if (canUsePracticeFuel) {
-      const fuelDelta = (isTryingToFire ? -BLAZE_FLAMETHROWER_FUEL_DRAIN : BLAZE_FLAMETHROWER_FUEL_REGEN) *
+      const fuelDelta = (canFire ? -BLAZE_FLAMETHROWER_FUEL_DRAIN : BLAZE_FLAMETHROWER_FUEL_REGEN) *
         fuelStepSeconds *
         tempoMultiplier;
       fuel = clampFlamethrowerFuel(flamethrowerFuelRef.current + fuelDelta);
@@ -508,14 +679,14 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
         currentFuel: flamethrowerFuelRef.current,
         authoritativeFuel,
         lastAuthoritativeFuel: lastAuthoritativeFlamethrowerFuelRef.current,
-        isTryingToFire,
+        isTryingToFire: canFire,
         deltaSeconds: fuelStepSeconds,
         tempoMultiplier,
       });
       fuel = projectedFuel.fuel;
       lastAuthoritativeFlamethrowerFuelRef.current = projectedFuel.lastAuthoritativeFuel;
     }
-    const isHoldingFlamethrower = ctx.inputState.ability1 && fuel > 0;
+    const isHoldingFlamethrower = canFire && fuel > 0;
     const serverActive = Boolean(
       localPlayer?.heroId === 'blaze' &&
       localPlayer.state === 'alive' &&
@@ -548,7 +719,7 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
       setFlamethrowerActive(true);
 
       const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);
-      const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_flamethrower', now, holdBlend);
+      const staffTipPose = resolveBlazeStaffTipPose(ctx, 'blaze_flamethrower', now, holdBlend);
       const staffTipOrigin = staffTipPose ? vectorToPlainPosition(staffTipPose.position) : undefined;
       const { origin, direction } = calculateBlazeFlamethrowerPose(ctx, staffTipOrigin);
       setFlamethrowerVisualPose(origin, direction);
@@ -573,6 +744,22 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     pendingRocketJumpRef.current = null;
   }, []);
 
+  const executeAfterburner = useCallback((ctx: AbilityContext) => {
+    const now = Date.now();
+    const startPosition = vectorToPlainPosition(ctx.position);
+    const visualId = `predicted_blaze_afterburner_${ctx.localPlayer.id}_${now}`;
+    startLocalBlazeAfterburnerDash(ctx.localPlayer.id, ctx.yaw, now);
+    triggerAfterburnerTrail({
+      id: visualId,
+      playerId: ctx.localPlayer.id,
+      startPosition,
+      dashDurationMs: BLAZE_AFTERBURNER_DASH_DURATION_MS,
+      trailDurationMs: BLAZE_AFTERBURNER_TRAIL_DURATION_MS,
+    });
+    markPredictedLocalAbilityVisual('blaze_afterburner', ctx.localPlayer.id, visualId, { now });
+    lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, now);
+  }, [lockActions]);
+
   const updateRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const pendingRocketJump = pendingRocketJumpRef.current;
     if (!pendingRocketJump) return;
@@ -591,20 +778,9 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
 
   const resetRocketJump = useCallback(() => {
     pendingRocketJumpRef.current = null;
+    clearPhosphorImpactSoundTimeout();
     clearBlazeRocketJumpStaffSlam();
-  }, []);
-
-  // Execute Infernal Gearstorm (Ultimate)
-  const executeAirStrike = useCallback((
-    ctx: AbilityContext,
-    _sounds: PlayerSounds,
-    _updateLocalPlayer: (data: any) => void
-  ) => {
-    const localPlayer = useGameStore.getState().localPlayer;
-    if (!localPlayer || (localPlayer.ultimateCharge ?? 0) < 100) return;
-
-    lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, ctx.viewmodelNowMs ?? Date.now());
-  }, []);
+  }, [clearPhosphorImpactSoundTimeout]);
 
   // Handle bomb target updates
   const handleBombTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
@@ -617,6 +793,16 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     }
   }, []);
 
+  const handlePhoenixDiveTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
+    phoenixDiveTargetRef.current = position;
+    phoenixDiveValidRef.current = isValid;
+
+    const store = useGameStore.getState();
+    if (store.phoenixDiveTargeting && store.phoenixDiveTargetValid !== isValid) {
+      store.setPhoenixDiveTargeting(true, isValid);
+    }
+  }, []);
+
   return {
     lastPrimaryTimeRef,
     primaryShotIdRef,
@@ -626,6 +812,8 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     lastBombTimeRef,
     bombTargetRef,
     bombValidRef,
+    phoenixDiveTargetRef,
+    phoenixDiveValidRef,
     flamethrowerFuelRef,
     flamethrowerActiveRef,
     secondaryFirePressedRef,
@@ -637,14 +825,15 @@ export function useBlazeAbilities(blazePrimarySkill: BlazePrimarySkill): UseBlaz
     updateBlazePrimaryReload,
     reloadBlazePrimary,
     resetBlazePrimaryMagazine,
-    handleBombTargeting,
+    handleSecondaryFire,
     firePrimary,
     executeBombDrop,
     handleFlamethrower,
     executeRocketJump,
+    executeAfterburner,
     updateRocketJump,
     resetRocketJump,
-    executeAirStrike,
     handleBombTargetUpdate,
+    handlePhoenixDiveTargetUpdate,
   };
 }

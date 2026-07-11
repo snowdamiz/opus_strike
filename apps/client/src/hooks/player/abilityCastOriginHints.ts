@@ -22,10 +22,11 @@ import {
 import { offsetResolvedChronosOrbVisualOrigin } from '../../model-system/chronosOrbVisualOrigin';
 import { resolveAbilityAimDirection } from './abilityAim';
 import type { AbilityContext } from './types';
-import { useLoadoutStore } from '../../store/loadoutStore';
+import { isHeroAbilityInputActive, useLoadoutStore } from '../../store/loadoutStore';
 
 interface BuildAbilityCastOriginHintOptions {
   bombTargeting?: boolean;
+  phoenixDiveTarget?: { x: number; y: number; z: number } | null;
 }
 
 function plainOrigin(origin: ResolvedAbilitySocketOrigin): { x: number; y: number; z: number } {
@@ -52,6 +53,21 @@ function hintFromOrigin(
   });
 }
 
+function hintFromPlayerRoot(
+  ctx: AbilityContext,
+  abilityId: string,
+  sampledAtMs: number,
+  aimPoint = ctx.aimPoint ?? undefined,
+): AbilityCastOriginHint {
+  return quantizeAbilityCastOriginHint({
+    abilityId,
+    socketName: 'root',
+    origin: ctx.position,
+    aimPoint,
+    sampledAtMs,
+  });
+}
+
 function pushHint(
   hints: AbilityCastOriginHint[],
   seen: Set<string>,
@@ -72,8 +88,6 @@ function resolveBlazeStaffOrigin(
   now: number,
   holdBlend: number
 ): ResolvedAbilitySocketOrigin | null {
-  if (!ctx.camera) return null;
-
   return resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
@@ -81,13 +95,15 @@ function resolveBlazeStaffOrigin(
       position: ctx.position,
       yaw: ctx.yaw,
     },
-    sampledContext: {
-      camera: ctx.camera,
-      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
-      holdBlend,
-      timestampMs: ctx.viewmodelNowMs ?? now,
-    } satisfies BlazeRocketStaffPoseSampleContext,
-    preferSampled: true,
+    sampledContext: ctx.camera
+      ? {
+        camera: ctx.camera,
+        elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+        holdBlend,
+        timestampMs: ctx.viewmodelNowMs ?? now,
+      } satisfies BlazeRocketStaffPoseSampleContext
+      : undefined,
+    preferSampled: false,
     warnOnSampleDrift: true,
   });
 }
@@ -207,6 +223,7 @@ function shouldBuildAbilityCastOriginHints(
         input.ability1 ||
         input.secondaryFire ||
         input.ability2 ||
+        input.ultimate ||
         options.bombTargeting === true
       );
     case 'chronos':
@@ -231,20 +248,36 @@ export function buildAbilityCastOriginHints(
 
   if (ctx.heroId === 'phantom') {
     if (input.primaryFire) {
+      const primaryAbilityId = useLoadoutStore.getState().phantomPrimarySkill === 'soulrend_daggers'
+        ? 'phantom_soulrend_daggers'
+        : 'phantom_dire_ball';
       for (const side of [-1, 1] as const) {
         pushHint(
           hints,
           seen,
           hintFromOrigin(
             ctx,
-            'phantom_dire_ball',
-            resolvePhantomPrimaryOrigin(ctx, 'phantom_dire_ball', side, now)
+            primaryAbilityId,
+            resolvePhantomPrimaryOrigin(ctx, primaryAbilityId, side, now)
           )
         );
       }
     }
 
     if (input.secondaryFire) {
+      const secondarySkill = useLoadoutStore.getState().phantomSecondarySkill;
+      if (secondarySkill === 'rift_bolt') {
+        pushHint(
+          hints,
+          seen,
+          hintFromOrigin(
+            ctx,
+            'phantom_rift_bolt',
+            resolvePhantomVoidRayOrigin(ctx, 'phantom_rift_bolt', now)
+          )
+        );
+        return hints.length > 0 ? hints : undefined;
+      }
       pushHint(
         hints,
         seen,
@@ -308,6 +341,7 @@ export function buildAbilityCastOriginHints(
   }
 
   if (ctx.heroId === 'blaze') {
+    const heroAbilityBindings = useLoadoutStore.getState().heroAbilityBindings;
     if (input.primaryFire) {
       const primaryAbilityId = useLoadoutStore.getState().blazePrimarySkill === 'scrapshot'
         ? 'blaze_scrapshot'
@@ -323,7 +357,7 @@ export function buildAbilityCastOriginHints(
       );
     }
 
-    if (input.ability1) {
+    if (isHeroAbilityInputActive(input, 'blaze', heroAbilityBindings, 'blaze_flamethrower')) {
       pushHint(
         hints,
         seen,
@@ -336,18 +370,26 @@ export function buildAbilityCastOriginHints(
     }
 
     if (options.bombTargeting || input.secondaryFire) {
+      const secondaryAbilityId = useLoadoutStore.getState().blazeSecondarySkill === 'phosphor_flare'
+        ? 'blaze_phosphor_flare'
+        : 'blaze_bomb';
       pushHint(
         hints,
         seen,
         hintFromOrigin(
           ctx,
-          'blaze_bomb',
-          resolveBlazeStaffOrigin(ctx, 'blaze_bomb', now, getBlazeBombTargetHeldBlend(now))
+          secondaryAbilityId,
+          resolveBlazeStaffOrigin(
+            ctx,
+            secondaryAbilityId,
+            now,
+            secondaryAbilityId === 'blaze_bomb' ? getBlazeBombTargetHeldBlend(now) : 1
+          )
         )
       );
     }
 
-    if (input.ability2) {
+    if (isHeroAbilityInputActive(input, 'blaze', heroAbilityBindings, 'blaze_rocketjump')) {
       pushHint(
         hints,
         seen,
@@ -355,6 +397,22 @@ export function buildAbilityCastOriginHints(
           ctx,
           'blaze_rocketjump',
           resolveBlazeStaffOrigin(ctx, 'blaze_rocketjump', now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS, 1)
+        )
+      );
+    }
+
+    if (
+      input.ultimate &&
+      useLoadoutStore.getState().blazeUltimateSkill === 'phoenix_dive'
+    ) {
+      pushHint(
+        hints,
+        seen,
+        hintFromPlayerRoot(
+          ctx,
+          'blaze_phoenix_dive',
+          now,
+          options.phoenixDiveTarget ?? ctx.aimPoint ?? undefined,
         )
       );
     }
