@@ -1,6 +1,10 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { GameplayMode, MatchMode, MatchOutcome, Team } from '@voxel-strike/shared';
-import { calculateRankedRatingUpdates, type RankedUserState } from '../ranking/ratingService';
+import {
+  calculateRankedRatingUpdates,
+  type RankedBattleRoyalRulesVersion,
+  type RankedUserState,
+} from '../ranking/ratingService';
 import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
 import { tryGrantRankedFounderSkins } from '../cosmetics/rankedFounderRewards';
 import {
@@ -27,6 +31,7 @@ function prismaJson(value: unknown): Prisma.InputJsonValue {
 }
 
 interface StoredBattleRoyalBreakdown {
+  rulesVersion?: RankedBattleRoyalRulesVersion;
   activeTeamCount?: number;
   humanKills?: number;
   botKills?: number;
@@ -632,6 +637,7 @@ export async function applyHeldRankedOutcome(prisma: PrismaClient, input: {
     humanParticipants: firstBreakdown?.humanParticipants,
     botParticipants: firstBreakdown?.botParticipants,
     activeTeamCount: firstBreakdown?.activeTeamCount,
+    battleRoyalRulesVersion: firstBreakdown?.rulesVersion,
   });
   const updatesByUserId = new Map(updates.map((update) => [update.userId, update]));
   const usersById = new Map(users.map((user) => [user.id, user]));

@@ -634,6 +634,17 @@ export interface MatchIntegritySummary {
   message: string;
 }
 
+export interface RankedMatchSummaryBreakdown {
+  rulesVersion: string;
+  placement: number;
+  placementPoints: number;
+  combatPoints: number;
+  entryCost: number;
+  qualityMultiplier: number;
+  grossPoints: number;
+  earlyLeaver: boolean;
+}
+
 export interface MatchSummaryPlayer {
   playerId: string;
   userId: string | null;
@@ -650,6 +661,7 @@ export interface MatchSummaryPlayer {
   ratingDelta?: number | null;
   rankBefore?: PublicRankSnapshot | null;
   rankAfter?: PublicRankSnapshot | null;
+  rankedBreakdown?: RankedMatchSummaryBreakdown | null;
 }
 
 export interface ChatMessage {

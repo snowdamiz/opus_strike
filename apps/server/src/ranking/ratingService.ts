@@ -20,9 +20,11 @@ export const LEAVER_PENALTY = 10;
 export const MATCH_DELTA_MIN = -50;
 export const MATCH_DELTA_MAX = 50;
 export const UNEMPLOYED_DIVISION_START_INDEX = 20;
-export const RANKED_BATTLE_ROYAL_RULES_VERSION = 'ranked_br_v1';
-export const BATTLE_ROYAL_MATCH_DELTA_MIN = -75;
+export const RANKED_BATTLE_ROYAL_RULES_VERSION = 'ranked_br_v2';
+export const BATTLE_ROYAL_MATCH_DELTA_MIN = -100;
+export const BATTLE_ROYAL_MATCH_DELTA_MAX = 75;
 export const BATTLE_ROYAL_COMBAT_RP_CAP = 75;
+export type RankedBattleRoyalRulesVersion = 'ranked_br_v1' | typeof RANKED_BATTLE_ROYAL_RULES_VERSION;
 
 export interface RankedUserState {
   id: string;
@@ -57,7 +59,7 @@ export interface RankedMatchParticipant {
 }
 
 export interface RankedBattleRoyalBreakdown {
-  rulesVersion: typeof RANKED_BATTLE_ROYAL_RULES_VERSION;
+  rulesVersion: RankedBattleRoyalRulesVersion;
   placement: number;
   activeTeamCount: number;
   normalizedPlacement: number;
@@ -100,15 +102,48 @@ export interface RankedRatingUpdate {
   rankedBreakdown?: RankedBattleRoyalBreakdown;
 }
 
-const BATTLE_ROYAL_PLACEMENT_POINTS = [125, 85, 60, 40, 20, 10, 0, -10, -15] as const;
+interface BattleRoyalRankedRules {
+  version: RankedBattleRoyalRulesVersion;
+  placementPoints: readonly number[];
+  entryCostByTier: Readonly<Record<RankTierId, number>>;
+  matchDeltaMin: number;
+  getPositiveCap(humanParticipants: number): number;
+}
 
-const BATTLE_ROYAL_ENTRY_COST_BY_TIER: Record<RankTierId, number> = {
-  plastic: 0,
-  bronze: 6,
-  silver: 14,
-  gold: 26,
-  diamond: 40,
-  unemployed: 58,
+const BATTLE_ROYAL_RANKED_RULES: Record<RankedBattleRoyalRulesVersion, BattleRoyalRankedRules> = {
+  ranked_br_v1: {
+    version: 'ranked_br_v1',
+    placementPoints: [125, 85, 60, 40, 20, 10, 0, -10, -15],
+    entryCostByTier: {
+      plastic: 0,
+      bronze: 6,
+      silver: 14,
+      gold: 26,
+      diamond: 40,
+      unemployed: 58,
+    },
+    matchDeltaMin: -75,
+    getPositiveCap(humanParticipants) {
+      if (humanParticipants <= 1) return 35;
+      if (humanParticipants <= 5) return 60;
+      if (humanParticipants <= 15) return 90;
+      return 125;
+    },
+  },
+  ranked_br_v2: {
+    version: RANKED_BATTLE_ROYAL_RULES_VERSION,
+    placementPoints: [110, 80, 60, 45, 30, 15, 0, 0, 0],
+    entryCostByTier: {
+      plastic: 0,
+      bronze: 30,
+      silver: 40,
+      gold: 50,
+      diamond: 60,
+      unemployed: 75,
+    },
+    matchDeltaMin: BATTLE_ROYAL_MATCH_DELTA_MIN,
+    getPositiveCap: () => BATTLE_ROYAL_MATCH_DELTA_MAX,
+  },
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -233,23 +268,31 @@ export function calculateLegacyTeamRankedRatingUpdates(input: {
   });
 }
 
-function normalizeBattleRoyalPlacement(placement: number, activeTeamCount: number): number {
+function normalizeBattleRoyalPlacement(
+  placement: number,
+  activeTeamCount: number,
+  placementPointCount: number
+): number {
   const safeActiveTeamCount = Math.max(1, Math.floor(activeTeamCount));
   const safePlacement = clamp(Math.floor(placement), 1, safeActiveTeamCount);
   if (safeActiveTeamCount <= 1) return 1;
   return clamp(
-    Math.round(((safePlacement - 1) / (safeActiveTeamCount - 1)) * (BATTLE_ROYAL_PLACEMENT_POINTS.length - 1)) + 1,
+    Math.round(((safePlacement - 1) / (safeActiveTeamCount - 1)) * (placementPointCount - 1)) + 1,
     1,
-    BATTLE_ROYAL_PLACEMENT_POINTS.length
+    placementPointCount
   );
 }
 
-function getBattleRoyalPlacementPoints(placement: number, activeTeamCount: number): { normalizedPlacement: number; points: number } {
-  const normalizedPlacement = normalizeBattleRoyalPlacement(placement, activeTeamCount);
+function getBattleRoyalPlacementPoints(
+  placement: number,
+  activeTeamCount: number,
+  rules: BattleRoyalRankedRules
+): { normalizedPlacement: number; points: number } {
+  const normalizedPlacement = normalizeBattleRoyalPlacement(placement, activeTeamCount, rules.placementPoints.length);
   return {
     normalizedPlacement,
-    points: BATTLE_ROYAL_PLACEMENT_POINTS[normalizedPlacement - 1]
-      ?? BATTLE_ROYAL_PLACEMENT_POINTS[BATTLE_ROYAL_PLACEMENT_POINTS.length - 1],
+    points: rules.placementPoints[normalizedPlacement - 1]
+      ?? rules.placementPoints[rules.placementPoints.length - 1],
   };
 }
 
@@ -261,23 +304,20 @@ function getBattleRoyalPlacementMultiplier(normalizedPlacement: number): number 
   return 0.5;
 }
 
-function getBattleRoyalEntryCost(user: RankedUserState): number {
+function getBattleRoyalEntryCost(user: RankedUserState, rules: BattleRoyalRankedRules): number {
   const tier = getRankFromRating(user.competitiveRating, user.rankedGames).tier;
-  return tier === 'unranked' ? 0 : BATTLE_ROYAL_ENTRY_COST_BY_TIER[tier];
+  return tier === 'unranked' ? 0 : rules.entryCostByTier[tier];
 }
 
-function getBattleRoyalParticipantEntryCost(participant: RankedMatchParticipant, user: RankedUserState): number {
+function getBattleRoyalParticipantEntryCost(
+  participant: RankedMatchParticipant,
+  user: RankedUserState,
+  rules: BattleRoyalRankedRules
+): number {
   if (typeof participant.rankedEntryCost === 'number' && Number.isFinite(participant.rankedEntryCost)) {
     return Math.max(0, Math.floor(participant.rankedEntryCost));
   }
-  return getBattleRoyalEntryCost(user);
-}
-
-function getBattleRoyalPositiveCap(humanParticipants: number): number {
-  if (humanParticipants <= 1) return 35;
-  if (humanParticipants <= 5) return 60;
-  if (humanParticipants <= 15) return 90;
-  return 125;
+  return getBattleRoyalEntryCost(user, rules);
 }
 
 function calculateBattleRoyalRankedRatingUpdates(input: {
@@ -288,7 +328,11 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
   humanParticipants?: number;
   botParticipants?: number;
   activeTeamCount?: number;
+  battleRoyalRulesVersion?: RankedBattleRoyalRulesVersion;
 }): RankedRatingUpdate[] {
+  const rules = input.battleRoyalRulesVersion === 'ranked_br_v1'
+    ? BATTLE_ROYAL_RANKED_RULES.ranked_br_v1
+    : BATTLE_ROYAL_RANKED_RULES.ranked_br_v2;
   const usersById = new Map(input.users.map((user) => [user.id, user]));
   const participants = input.participants.filter((participant) => usersById.has(participant.userId));
   const humanParticipants = Math.max(1, Math.floor(input.humanParticipants ?? participants.length));
@@ -302,7 +346,7 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
     1,
     Math.floor(input.activeTeamCount ?? Math.max(...participants.map((participant) => participant.activeTeamCount ?? 0), 0, 1))
   );
-  const positiveCap = getBattleRoyalPositiveCap(humanParticipants);
+  const positiveCap = rules.getPositiveCap(humanParticipants);
 
   return participants.map((participant) => {
     const user = usersById.get(participant.userId);
@@ -313,7 +357,7 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
     const ratingBefore = user.competitiveRating;
     const activeTeamCount = Math.max(1, Math.floor(participant.activeTeamCount ?? defaultActiveTeamCount));
     const placement = clamp(Math.floor(participant.placement ?? activeTeamCount), 1, activeTeamCount);
-    const placementResult = getBattleRoyalPlacementPoints(placement, activeTeamCount);
+    const placementResult = getBattleRoyalPlacementPoints(placement, activeTeamCount, rules);
     const placementMultiplier = getBattleRoyalPlacementMultiplier(placementResult.normalizedPlacement);
     const humanKills = Math.max(0, Math.floor(participant.humanKills ?? participant.kills));
     const botKills = Math.max(0, Math.floor(participant.botKills ?? 0));
@@ -321,7 +365,7 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
     const botAssists = Math.max(0, Math.floor(participant.botAssists ?? 0));
     const rawCombatPoints = humanKills * 14 + humanAssists * 7 + botKills * 5 + botAssists * 2;
     const combatPoints = Math.min(BATTLE_ROYAL_COMBAT_RP_CAP, Math.round(rawCombatPoints * placementMultiplier));
-    const entryCost = getBattleRoyalParticipantEntryCost(participant, user);
+    const entryCost = getBattleRoyalParticipantEntryCost(participant, user, rules);
     const grossPoints = Math.round((placementResult.points + combatPoints) * qualityMultiplier);
     const teamFinishedAt = participant.teamEliminatedAt ?? input.endedAt;
     const earlyLeaver = Boolean(
@@ -330,10 +374,10 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
     );
     let ratingDelta = grossPoints - entryCost;
     if (earlyLeaver) {
-      const leaverPenalty = -Math.min(Math.abs(BATTLE_ROYAL_MATCH_DELTA_MIN), entryCost + 25);
+      const leaverPenalty = -Math.min(Math.abs(rules.matchDeltaMin), entryCost + 25);
       ratingDelta = Math.min(0, ratingDelta, leaverPenalty);
     }
-    ratingDelta = clamp(ratingDelta, BATTLE_ROYAL_MATCH_DELTA_MIN, positiveCap);
+    ratingDelta = clamp(ratingDelta, rules.matchDeltaMin, positiveCap);
 
     const ratingAfter = Math.max(0, ratingBefore + ratingDelta);
     const rankedGamesAfter = user.rankedGames + 1;
@@ -341,7 +385,7 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
     const visibleRankAfter = getRankFromRating(ratingAfter, rankedGamesAfter).label;
     const rankedPlacementsRemainingAfter = Math.max(0, user.rankedPlacementsRemaining - 1);
     const rankedBreakdown: RankedBattleRoyalBreakdown = {
-      rulesVersion: RANKED_BATTLE_ROYAL_RULES_VERSION,
+      rulesVersion: rules.version,
       placement,
       activeTeamCount,
       normalizedPlacement: placementResult.normalizedPlacement,
@@ -380,7 +424,7 @@ function calculateBattleRoyalRankedRatingUpdates(input: {
       rankedCombatPoints: combatPoints,
       rankedEntryCost: entryCost,
       rankedQualityMultiplier: qualityMultiplier,
-      rankedRulesVersion: RANKED_BATTLE_ROYAL_RULES_VERSION,
+      rankedRulesVersion: rules.version,
       rankedBreakdown,
     };
   });
@@ -396,6 +440,7 @@ export function calculateRankedRatingUpdates(input: {
   humanParticipants?: number;
   botParticipants?: number;
   activeTeamCount?: number;
+  battleRoyalRulesVersion?: RankedBattleRoyalRulesVersion;
 }): RankedRatingUpdate[] {
   if (input.gameplayMode === BATTLE_ROYAL_GAMEPLAY_MODE) {
     return calculateBattleRoyalRankedRatingUpdates(input);

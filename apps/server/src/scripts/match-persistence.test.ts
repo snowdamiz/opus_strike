@@ -497,11 +497,11 @@ async function runPersistenceWriteTests() {
   assert.equal(heldBattleRoyalParticipant.rankedCombatPoints, undefined);
   const heldBattleRoyalBreakdown = heldBattleRoyalParticipant.rankedBreakdown;
   assert.ok(heldBattleRoyalBreakdown);
-  assert.equal(heldBattleRoyalBreakdown.rulesVersion, 'ranked_br_v1');
+  assert.equal(heldBattleRoyalBreakdown.rulesVersion, 'ranked_br_v2');
   assert.equal(heldBattleRoyalBreakdown.placement, 1);
   assert.equal(heldBattleRoyalBreakdown.activeTeamCount, fullBattleRoyalTeamCount);
   assert.equal(heldBattleRoyalBreakdown.normalizedPlacement, 1);
-  assert.equal(heldBattleRoyalBreakdown.placementPoints, 125);
+  assert.equal(heldBattleRoyalBreakdown.placementPoints, 110);
   assert.equal(heldBattleRoyalBreakdown.humanKills, 1);
   assert.equal(heldBattleRoyalBreakdown.botKills, 1);
   assert.equal(heldBattleRoyalBreakdown.humanAssists, 1);

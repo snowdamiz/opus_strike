@@ -4,6 +4,7 @@ import {
   getRankFromRating,
   getRankTheme,
   type PublicRankSnapshot,
+  type RankedMatchSummaryBreakdown,
   type RankTheme,
   type RankSummary,
 } from '@voxel-strike/shared';
@@ -11,6 +12,34 @@ import type { UserStats } from '../../store/types';
 import { RANK_BADGE_COLORS } from '../../styles/colorTokens';
 
 type RankLike = PublicRankSnapshot | RankSummary | null | undefined;
+type RankedBreakdownTone = 'positive' | 'negative' | 'neutral';
+
+export interface RankedBreakdownRow {
+  label: string;
+  value: string;
+  tone: RankedBreakdownTone;
+}
+
+function signedRankPoints(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value}`;
+}
+
+export function getRankedBreakdownRows(breakdown: RankedMatchSummaryBreakdown): RankedBreakdownRow[] {
+  const rows: RankedBreakdownRow[] = [
+    { label: 'Placement', value: `#${breakdown.placement}`, tone: 'neutral' },
+    { label: 'Placement RP', value: signedRankPoints(breakdown.placementPoints), tone: 'positive' },
+    { label: 'Combat RP', value: signedRankPoints(breakdown.combatPoints), tone: 'positive' },
+    { label: 'Lobby quality', value: `${Math.round(breakdown.qualityMultiplier * 100)}%`, tone: 'neutral' },
+    { label: 'Earned RP', value: signedRankPoints(breakdown.grossPoints), tone: 'positive' },
+    { label: 'Entry cost', value: `-${breakdown.entryCost}`, tone: 'negative' },
+  ];
+
+  if (breakdown.earlyLeaver) {
+    rows.push({ label: 'Early leave', value: 'Penalty', tone: 'negative' });
+  }
+
+  return rows;
+}
 
 function rankLabel(rank: RankLike): string {
   return rank?.label ?? 'Unranked';
@@ -384,10 +413,12 @@ export function RankChangeSummary({
   delta,
   before,
   after,
+  breakdown,
 }: {
   delta?: number | null;
   before?: PublicRankSnapshot | null;
   after?: PublicRankSnapshot | null;
+  breakdown?: RankedMatchSummaryBreakdown | null;
 }) {
   if (typeof delta !== 'number') {
     return (
@@ -399,6 +430,7 @@ export function RankChangeSummary({
   }
 
   const tone = delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-white/70';
+  const breakdownRows = breakdown ? getRankedBreakdownRows(breakdown) : [];
 
   return (
     <div className="border border-white/10 bg-black/35 p-4">
@@ -413,6 +445,24 @@ export function RankChangeSummary({
       </div>
       {before && after && before.label !== after.label ? (
         <p className="mt-3 font-body text-xs text-white/45">{before.label} to {after.label}</p>
+      ) : null}
+      {breakdownRows.length > 0 ? (
+        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-white/10 pt-3">
+          {breakdownRows.map((row) => (
+            <div key={row.label} className="contents">
+              <dt className="font-body text-[10px] uppercase tracking-wider text-white/35">{row.label}</dt>
+              <dd className={`text-right font-mono text-xs ${
+                row.tone === 'positive'
+                  ? 'text-emerald-300'
+                  : row.tone === 'negative'
+                    ? 'text-red-300'
+                    : 'text-white/65'
+              }`}>
+                {row.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
       ) : null}
     </div>
   );
