@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   BATTLE_ROYAL_MATCH_DELTA_MIN,
+  BATTLE_ROYAL_MATCH_DELTA_MAX,
   RANKED_BATTLE_ROYAL_RULES_VERSION,
   calculateRankedRatingUpdates,
   MATCH_DELTA_MAX,
@@ -117,7 +118,7 @@ assert.ok(leaver.ratingDelta <= 0);
 const topTierUpdates = calculateRankedRatingUpdates({
   endedAt,
   winningTeam: 'red',
-  users: [user('top', 1700, 70), user('challenger', 1700, 70)],
+  users: [user('top', 2500, 70), user('challenger', 2500, 70)],
   participants: [
     participant('top', 'red', 'win', 1400),
     participant('challenger', 'blue', 'loss', 800),
@@ -157,12 +158,12 @@ const singleHumanBattleRoyalWin = calculateRankedRatingUpdates({
   activeTeamCount: fullBattleRoyalTeamCount,
 });
 assert.equal(singleHumanBattleRoyalWin.length, 1);
-assert.equal(singleHumanBattleRoyalWin[0].ratingDelta, 35);
+assert.equal(singleHumanBattleRoyalWin[0].ratingDelta, 57);
 assert.equal(singleHumanBattleRoyalWin[0].rankedRulesVersion, RANKED_BATTLE_ROYAL_RULES_VERSION);
-assert.equal(singleHumanBattleRoyalWin[0].rankedPlacementPoints, 125);
+assert.equal(singleHumanBattleRoyalWin[0].rankedPlacementPoints, 110);
 assert.equal(singleHumanBattleRoyalWin[0].rankedCombatPoints, 75);
-assert.equal(singleHumanBattleRoyalWin[0].rankedEntryCost, 6);
-assert.equal(singleHumanBattleRoyalWin[0].rankedBreakdown?.positiveCap, 35);
+assert.equal(singleHumanBattleRoyalWin[0].rankedEntryCost, 30);
+assert.equal(singleHumanBattleRoyalWin[0].rankedBreakdown?.positiveCap, 75);
 assert.ok(Math.abs((singleHumanBattleRoyalWin[0].rankedQualityMultiplier ?? 0) - (0.45 + (1 / fullBattleRoyalPlayerCount) * 0.55)) < 0.000001);
 
 const normalizedSmallLobby = calculateRankedRatingUpdates({
@@ -183,15 +184,119 @@ const normalizedSmallLobby = calculateRankedRatingUpdates({
   activeTeamCount: 3,
 });
 assert.equal(normalizedSmallLobby[0].rankedBreakdown?.normalizedPlacement, 9);
-assert.equal(normalizedSmallLobby[0].rankedPlacementPoints, -15);
+assert.equal(normalizedSmallLobby[0].rankedPlacementPoints, 0);
+
+const bottomHalfBattleRoyalFinish = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('bottom-half', 800, 20)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'bottom-half',
+      placement: 6,
+      activeTeamCount: fullBattleRoyalTeamCount,
+    }),
+  ],
+  humanParticipants: fullBattleRoyalPlayerCount,
+  totalParticipants: fullBattleRoyalPlayerCount,
+  activeTeamCount: fullBattleRoyalTeamCount,
+});
+assert.ok(bottomHalfBattleRoyalFinish[0].ratingDelta < 0);
+
+const bronzePlacementDeltas = Array.from({ length: fullBattleRoyalTeamCount }, (_, index) => {
+  const placement = index + 1;
+  return calculateRankedRatingUpdates({
+    gameplayMode: 'battle_royal',
+    endedAt,
+    winningTeam: 'br_01',
+    users: [user(`bronze-placement-${placement}`, 800, 20)],
+    participants: [
+      battleRoyalParticipant({
+        userId: `bronze-placement-${placement}`,
+        placement,
+        activeTeamCount: fullBattleRoyalTeamCount,
+      }),
+    ],
+    humanParticipants: fullBattleRoyalPlayerCount,
+    totalParticipants: fullBattleRoyalPlayerCount,
+    activeTeamCount: fullBattleRoyalTeamCount,
+  })[0].ratingDelta;
+});
+assert.deepEqual(bronzePlacementDeltas, [75, 50, 30, 15, 0, -15, -30, -30, -30]);
+assert.ok(bronzePlacementDeltas.slice(5).every((delta) => delta < 0));
+assert.ok(bronzePlacementDeltas.reduce((sum, delta) => sum + delta, 0) / bronzePlacementDeltas.length < 8);
+
+const fullHumanLastPlaceDelta = bronzePlacementDeltas.at(-1);
+const botHeavyLastPlace = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('bot-heavy-last', 800, 20)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'bot-heavy-last',
+      placement: fullBattleRoyalTeamCount,
+      activeTeamCount: fullBattleRoyalTeamCount,
+    }),
+  ],
+  humanParticipants: 1,
+  botParticipants: fullBattleRoyalPlayerCount - 1,
+  totalParticipants: fullBattleRoyalPlayerCount,
+  activeTeamCount: fullBattleRoyalTeamCount,
+})[0];
+assert.equal(botHeavyLastPlace.ratingDelta, fullHumanLastPlaceDelta);
+assert.equal(botHeavyLastPlace.visibleRankBefore, 'Bronze 1');
+assert.equal(botHeavyLastPlace.visibleRankAfter, 'Plastic 4');
+
+const historicalV1BattleRoyalFinish = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  battleRoyalRulesVersion: 'ranked_br_v1',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('historical-v1', 800, 20)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'historical-v1',
+      placement: 7,
+      activeTeamCount: fullBattleRoyalTeamCount,
+    }),
+  ],
+  humanParticipants: 1,
+  totalParticipants: 1,
+  activeTeamCount: fullBattleRoyalTeamCount,
+});
+assert.equal(historicalV1BattleRoyalFinish[0].rankedRulesVersion, 'ranked_br_v1');
+assert.equal(historicalV1BattleRoyalFinish[0].ratingDelta, -6);
+
+const cappedPromotion = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('capped-promotion', 849, 20)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'capped-promotion',
+      outcome: 'win',
+      placement: 1,
+      activeTeamCount: fullBattleRoyalTeamCount,
+    }),
+  ],
+  humanParticipants: fullBattleRoyalPlayerCount,
+  totalParticipants: fullBattleRoyalPlayerCount,
+  activeTeamCount: fullBattleRoyalTeamCount,
+});
+assert.equal(cappedPromotion[0].ratingDelta, BATTLE_ROYAL_MATCH_DELTA_MAX);
+assert.equal(cappedPromotion[0].visibleRankBefore, 'Bronze 1');
+assert.equal(cappedPromotion[0].visibleRankAfter, 'Bronze 2');
 
 const entryCostCases: Array<[string, number, number]> = [
-  ['plastic', 600, 0],
-  ['bronze', 800, 6],
-  ['silver', 1000, 14],
-  ['gold', 1200, 26],
-  ['diamond', 1400, 40],
-  ['unemployed', 1600, 58],
+  ['plastic', 400, 0],
+  ['bronze', 800, 30],
+  ['silver', 1200, 40],
+  ['gold', 1600, 50],
+  ['diamond', 2000, 60],
+  ['unemployed', 2400, 75],
 ];
 for (const [id, rating, entryCost] of entryCostCases) {
   const [update] = calculateRankedRatingUpdates({
@@ -218,7 +323,7 @@ const battleRoyalLeaver = calculateRankedRatingUpdates({
   gameplayMode: 'battle_royal',
   endedAt,
   winningTeam: 'br_01',
-  users: [user('early-leaver', 1600, 20)],
+  users: [user('early-leaver', 2400, 20)],
   participants: [
     battleRoyalParticipant({
       userId: 'early-leaver',

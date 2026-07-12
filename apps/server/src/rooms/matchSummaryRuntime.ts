@@ -226,6 +226,18 @@ export class MatchSummaryRuntime {
       player.ratingDelta = update.ratingDelta;
       player.rankBefore = toPublicRankSnapshot(getRankFromRating(update.ratingBefore, user.rankedGames));
       player.rankAfter = toPublicRankSnapshot(getRankFromRating(update.ratingAfter, update.rankedGamesAfter));
+      player.rankedBreakdown = update.rankedBreakdown
+        ? {
+          rulesVersion: update.rankedBreakdown.rulesVersion,
+          placement: update.rankedBreakdown.placement,
+          placementPoints: update.rankedBreakdown.placementPoints,
+          combatPoints: update.rankedBreakdown.combatPoints,
+          entryCost: update.rankedBreakdown.entryCost,
+          qualityMultiplier: update.rankedBreakdown.qualityMultiplier,
+          grossPoints: update.rankedBreakdown.grossPoints,
+          earlyLeaver: update.rankedBreakdown.earlyLeaver,
+        }
+        : null;
     }
 
     return updates.length > 0;

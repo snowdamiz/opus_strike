@@ -293,6 +293,57 @@ const runtime = new MatchSummaryRuntime({
 {
   durableUsers.clear();
   npcIds.clear();
+  durableUsers.set('solo', 'user-solo');
+
+  const event = runtime.buildGameEndEvent({
+    matchMode: 'ranked',
+    gameplayMode: 'battle_royal',
+    matchPerspective: 'first_person',
+    winningTeam: 'br_01',
+    finalScore: { red: 0, blue: 0 },
+    matchId: 'match-ranked-br',
+    startedAt: 0,
+    endedAt: 120000,
+    players: playersMap([
+      player({ id: 'solo', team: 'br_01', kills: 2, assists: 1 }),
+    ]),
+    mapThemeId: 'forest',
+    goldenBiomeRewardLamports: '0',
+    rankedPreview: {
+      participants: [
+        participant({
+          userId: 'user-solo',
+          playerSessionId: 'solo',
+          team: 'br_01',
+          placement: 1,
+          activeTeamCount: 9,
+          humanKills: 2,
+          humanAssists: 1,
+        }),
+      ],
+      rankedUserStates: buildRankedUserStatesFromAuthContexts([
+        authContext({ userId: 'user-solo', competitiveRating: 800, rankedGames: 20 }),
+      ]),
+      rankedEligible: true,
+      rankedHoldRequired: false,
+      gameplayMode: 'battle_royal',
+      totalParticipants: 27,
+      humanParticipants: 1,
+      botParticipants: 26,
+      activeTeamCount: 9,
+    },
+  });
+
+  const solo = event.players.find((summary) => summary.playerId === 'solo');
+  assert.equal(solo?.rankedBreakdown?.rulesVersion, 'ranked_br_v2');
+  assert.equal(solo?.rankedBreakdown?.placementPoints, 110);
+  assert.equal(solo?.rankedBreakdown?.entryCost, 30);
+  assert.equal(typeof solo?.rankedBreakdown?.combatPoints, 'number');
+}
+
+{
+  durableUsers.clear();
+  npcIds.clear();
   durableUsers.set('red', 'user-red');
   durableUsers.set('blue', 'user-blue');
 

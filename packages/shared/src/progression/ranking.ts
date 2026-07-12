@@ -77,7 +77,7 @@ export const RANK_DEFINITIONS: readonly RankDefinition[] = [
     id: 'plastic',
     label: 'Plastic',
     iconKey: 'plastic-plate',
-    divisionThresholds: [600, 650, 700, 750],
+    divisionThresholds: [400, 500, 600, 700],
     theme: {
       primary: '#d9e2ec',
       secondary: '#7d8896',
@@ -90,7 +90,7 @@ export const RANK_DEFINITIONS: readonly RankDefinition[] = [
     id: 'bronze',
     label: 'Bronze',
     iconKey: 'bronze-shield',
-    divisionThresholds: [800, 850, 900, 950],
+    divisionThresholds: [800, 900, 1000, 1100],
     theme: {
       primary: '#c9793d',
       secondary: '#7a3f21',
@@ -103,7 +103,7 @@ export const RANK_DEFINITIONS: readonly RankDefinition[] = [
     id: 'silver',
     label: 'Silver',
     iconKey: 'silver-crest',
-    divisionThresholds: [1000, 1050, 1100, 1150],
+    divisionThresholds: [1200, 1300, 1400, 1500],
     theme: {
       primary: '#d6e4f0',
       secondary: '#6b8aa6',
@@ -116,7 +116,7 @@ export const RANK_DEFINITIONS: readonly RankDefinition[] = [
     id: 'gold',
     label: 'Gold',
     iconKey: 'gold-crown',
-    divisionThresholds: [1200, 1250, 1300, 1350],
+    divisionThresholds: [1600, 1700, 1800, 1900],
     theme: {
       primary: '#f5c542',
       secondary: '#9a6b16',
@@ -129,7 +129,7 @@ export const RANK_DEFINITIONS: readonly RankDefinition[] = [
     id: 'diamond',
     label: 'Diamond',
     iconKey: 'diamond-crystal',
-    divisionThresholds: [1400, 1450, 1500, 1550],
+    divisionThresholds: [2000, 2100, 2200, 2300],
     theme: {
       primary: '#67e8f9',
       secondary: '#0e7490',
@@ -142,7 +142,7 @@ export const RANK_DEFINITIONS: readonly RankDefinition[] = [
     id: 'unemployed',
     label: 'Unemployed',
     iconKey: 'unemployed-briefcase',
-    divisionThresholds: [1600, 1650, 1700, 1750],
+    divisionThresholds: [2400, 2500, 2600, 2700],
     theme: {
       primary: '#c084fc',
       secondary: '#4c1d95',

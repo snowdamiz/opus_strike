@@ -11,30 +11,30 @@ import {
 } from '../dist/index.js';
 
 const expected = [
-  ['Plastic 1', 600],
-  ['Plastic 2', 650],
-  ['Plastic 3', 700],
-  ['Plastic 4', 750],
+  ['Plastic 1', 400],
+  ['Plastic 2', 500],
+  ['Plastic 3', 600],
+  ['Plastic 4', 700],
   ['Bronze 1', 800],
-  ['Bronze 2', 850],
-  ['Bronze 3', 900],
-  ['Bronze 4', 950],
-  ['Silver 1', 1000],
-  ['Silver 2', 1050],
-  ['Silver 3', 1100],
-  ['Silver 4', 1150],
-  ['Gold 1', 1200],
-  ['Gold 2', 1250],
-  ['Gold 3', 1300],
-  ['Gold 4', 1350],
-  ['Diamond 1', 1400],
-  ['Diamond 2', 1450],
-  ['Diamond 3', 1500],
-  ['Diamond 4', 1550],
-  ['Unemployed 1', 1600],
-  ['Unemployed 2', 1650],
-  ['Unemployed 3', 1700],
-  ['Unemployed 4', 1750],
+  ['Bronze 2', 900],
+  ['Bronze 3', 1000],
+  ['Bronze 4', 1100],
+  ['Silver 1', 1200],
+  ['Silver 2', 1300],
+  ['Silver 3', 1400],
+  ['Silver 4', 1500],
+  ['Gold 1', 1600],
+  ['Gold 2', 1700],
+  ['Gold 3', 1800],
+  ['Gold 4', 1900],
+  ['Diamond 1', 2000],
+  ['Diamond 2', 2100],
+  ['Diamond 3', 2200],
+  ['Diamond 4', 2300],
+  ['Unemployed 1', 2400],
+  ['Unemployed 2', 2500],
+  ['Unemployed 3', 2600],
+  ['Unemployed 4', 2700],
 ];
 
 assert.equal(RANK_DEFINITIONS.length, 6);
@@ -49,35 +49,39 @@ for (const [index, [label, rating]] of expected.entries()) {
   assert.equal(getRankFromDivisionIndex(index).label, label);
 }
 
-assert.equal(getRankFromRating(599, RANK_PLACEMENT_MATCHES).label, 'Plastic 1');
-assert.equal(getRankFromRating(600, RANK_PLACEMENT_MATCHES).label, 'Plastic 1');
-assert.equal(getRankFromRating(649, RANK_PLACEMENT_MATCHES).label, 'Plastic 1');
-assert.equal(getRankFromRating(650, RANK_PLACEMENT_MATCHES).label, 'Plastic 2');
-assert.equal(getRankFromRating(1749, RANK_PLACEMENT_MATCHES).label, 'Unemployed 3');
-assert.equal(getRankFromRating(1750, RANK_PLACEMENT_MATCHES).label, 'Unemployed 4');
-assert.equal(getRankFromRating(2200, RANK_PLACEMENT_MATCHES).label, 'Unemployed 4');
+for (let index = 1; index < expected.length; index++) {
+  assert.equal(expected[index][1] - expected[index - 1][1], 100);
+}
+
+assert.equal(getRankFromRating(399, RANK_PLACEMENT_MATCHES).label, 'Plastic 1');
+assert.equal(getRankFromRating(400, RANK_PLACEMENT_MATCHES).label, 'Plastic 1');
+assert.equal(getRankFromRating(499, RANK_PLACEMENT_MATCHES).label, 'Plastic 1');
+assert.equal(getRankFromRating(500, RANK_PLACEMENT_MATCHES).label, 'Plastic 2');
+assert.equal(getRankFromRating(2699, RANK_PLACEMENT_MATCHES).label, 'Unemployed 3');
+assert.equal(getRankFromRating(2700, RANK_PLACEMENT_MATCHES).label, 'Unemployed 4');
+assert.equal(getRankFromRating(3500, RANK_PLACEMENT_MATCHES).label, 'Unemployed 4');
 
 const starterRank = getRankFromRating(DEFAULT_COMPETITIVE_RATING, 0);
 assert.equal(starterRank.label, 'Bronze 1');
 assert.equal(starterRank.isRanked, true);
 assert.equal(starterRank.placementRemaining, 0);
 
-const zeroGameRank = getRankFromRating(1300, 0);
+const zeroGameRank = getRankFromRating(1800, 0);
 assert.equal(zeroGameRank.label, 'Gold 3');
 assert.equal(zeroGameRank.isRanked, true);
 assert.equal(zeroGameRank.placementRemaining, 0);
-assert.equal(getRankDivisionIndex(1300), 14);
+assert.equal(getRankDivisionIndex(1800), 14);
 
-const progress = getRankProgress(1225);
-assert.equal(progress.currentDivisionFloor, 1200);
-assert.equal(progress.nextDivisionFloor, 1250);
+const progress = getRankProgress(1650);
+assert.equal(progress.currentDivisionFloor, 1600);
+assert.equal(progress.nextDivisionFloor, 1700);
 assert.equal(progress.progress, 0.5);
 
-const topProgress = getRankProgress(1810);
-assert.equal(topProgress.currentDivisionFloor, 1750);
+const topProgress = getRankProgress(2810);
+assert.equal(topProgress.currentDivisionFloor, 2700);
 assert.equal(topProgress.nextDivisionFloor, null);
 assert.equal(topProgress.progress, 1);
-assert.equal(topProgress.excessRating, 60);
+assert.equal(topProgress.excessRating, 110);
 
 assert.equal(getRankTheme('unranked').primary, '#94a3b8');
 assert.equal(getRankTheme('gold').primary, '#f5c542');

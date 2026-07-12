@@ -168,6 +168,7 @@ export function MatchSummaryScreen() {
                   delta={localPlayer?.ratingDelta}
                   before={localPlayer?.rankBefore}
                   after={localPlayer?.rankAfter ?? localPlayer?.rank}
+                  breakdown={localPlayer?.rankedBreakdown}
                 />
               )}
 

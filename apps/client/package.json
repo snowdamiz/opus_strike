@@ -10,6 +10,7 @@
     "analyze": "ANALYZE=true vite build",
     "lint": "pnpm lint:tokens",
     "lint:tokens": "node scripts/lint-design-tokens.mjs",
+    "test:rank": "tsx src/components/ui/RankBadge.test.ts",
     "test:voice": "tsx src/store/voiceStore.test.ts && tsx src/components/ui/VoiceHud.test.ts && tsx src/contexts/VoiceContext.test.ts",
     "test:combat-feedback": "tsx src/store/combatFeedbackStore.test.ts",
     "test:offline-combat": "tsx src/utils/tutorialOfflineCombatRuntime.test.ts",
