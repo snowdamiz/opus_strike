@@ -60,8 +60,16 @@ export const PHANTOM_VOID_ZONE_DAMAGE = 12;
 export const PHANTOM_VOID_ZONE_DURATION_SECONDS = 4;
 export const PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS = 500;
 export const PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS = 1;
+export const PHANTOM_UMBRAL_DECOY_COOLDOWN_SECONDS = 12;
+export const PHANTOM_UMBRAL_DECOY_DURATION_SECONDS = 3;
+export const PHANTOM_UMBRAL_DECOY_CLOAK_DURATION_SECONDS = 1.5;
+export const PHANTOM_UMBRAL_DECOY_SPEED = 5.4;
 export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
 export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
+export const PHANTOM_NIGHTREIGN_DURATION_SECONDS = 7;
+export const PHANTOM_NIGHTREIGN_LIFESTEAL_RATIO = 0.5;
+export const PHANTOM_NIGHTREIGN_BLINK_REDUCTION_SECONDS = 1;
+export const PHANTOM_NIGHTREIGN_KILL_EXTENSION_SECONDS = 2;
 
 export const HOOKSHOT_CHAIN_HOOKS_DAMAGE = 16;
 export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS = 475;
@@ -218,8 +226,17 @@ export const ABILITY_CARD_STATS = {
   phantom_personal_shield: [
     { value: PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS, label: 'hit', prefix: 'absorbs ' },
   ],
+  phantom_umbral_decoy: [
+    { value: PHANTOM_UMBRAL_DECOY_DURATION_SECONDS, label: 'decoy', format: 'seconds' },
+    { value: PHANTOM_UMBRAL_DECOY_CLOAK_DURATION_SECONDS, label: 'cloak', format: 'seconds' },
+  ],
   phantom_veil: [
     { value: PHANTOM_VEIL_SPEED_BONUS_PERCENT, label: 'speed', prefix: '+', suffix: '%' },
+  ],
+  phantom_nightreign: [
+    { value: PHANTOM_NIGHTREIGN_LIFESTEAL_RATIO * 100, label: 'lifesteal', suffix: '%' },
+    { value: PHANTOM_NIGHTREIGN_BLINK_REDUCTION_SECONDS, label: 'Blink reduction', format: 'seconds' },
+    { value: PHANTOM_NIGHTREIGN_KILL_EXTENSION_SECONDS, label: 'kill extension', format: 'seconds' },
   ],
   hookshot_basic_attack: [
     { value: HOOKSHOT_CHAIN_HOOKS_DAMAGE, label: 'dmg' },
@@ -408,6 +425,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 10,
     description: 'Surround yourself with a protective shadow bubble that absorbs one hit or lasts 10 seconds.',
   },
+  phantom_umbral_decoy: {
+    id: 'phantom_umbral_decoy',
+    name: 'Umbral Decoy',
+    type: 'defensive',
+    targeting: 'direction',
+    cooldown: PHANTOM_UMBRAL_DECOY_COOLDOWN_SECONDS,
+    duration: PHANTOM_UMBRAL_DECOY_DURATION_SECONDS,
+    description: 'Send a deceptive clone weaving forward and faking Phantom casts for 3 seconds while cloaking for 1.5 seconds.',
+  },
   phantom_veil: {
     id: 'phantom_veil',
     name: 'Phantom Veil',
@@ -417,6 +443,16 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 6,
     resourceCost: 100,
     description: 'Become invisible and move 30% faster for 6 seconds. Attacking breaks invisibility.',
+  },
+  phantom_nightreign: {
+    id: 'phantom_nightreign',
+    name: 'Nightreign',
+    type: 'ultimate',
+    targeting: 'self',
+    cooldown: 0,
+    duration: PHANTOM_NIGHTREIGN_DURATION_SECONDS,
+    resourceCost: 100,
+    description: 'Enter wraith form. Dire Ball hits lifesteal and reduce Blink cooldown; kills extend the duration.',
   },
 
   // Hookshot Abilities

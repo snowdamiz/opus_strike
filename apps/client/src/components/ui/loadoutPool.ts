@@ -164,18 +164,20 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
     },
     ability: {
       key: 'umbraldecoy',
+      abilityId: 'phantom_umbral_decoy',
       iconType: 'umbraldecoy',
       input: 'E',
       cooldown: 12,
       duration: 3,
       name: 'Umbral Decoy',
-      tagline: 'Spawn a shadow clone that draws fire while you cloak.',
+      tagline: 'Spawn a convincing shadow clone that moves, casts, and draws fire while you cloak.',
       description:
-        'Deploy a shadow clone that runs forward drawing fire while you briefly turn invisible — misdirection and escape in place of Shadow Bubble’s flat hit-absorb.',
-      meta: ['decoy draws fire', '1.5s cloak'],
+        'Deploy a copy of your current Phantom and skin. It weaves toward your aim, fakes harmless attacks and abilities, and draws enemy and bot fire while you briefly turn invisible.',
+      meta: ['random movement', 'fake casts', '1.5s cloak'],
     },
     ultimate: {
       key: 'nightreign',
+      abilityId: 'phantom_nightreign',
       iconType: 'nightreign',
       input: 'F',
       duration: 7,
@@ -388,7 +390,9 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     rarity: 'epic',
     ownership: (heroId === 'phantom' && (
       (slot.key === 'primaryFire' && def.key === 'soulrend') ||
-      (slot.key === 'secondaryFire' && def.key === 'riftbolt')
+      (slot.key === 'secondaryFire' && def.key === 'riftbolt') ||
+      (slot.key === 'ability1' && def.key === 'umbraldecoy') ||
+      (slot.key === 'ultimate' && def.key === 'nightreign')
     )) ||
       (heroId === 'blaze' && (
       (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
@@ -438,6 +442,8 @@ export function defaultOptionId(heroId: HeroId, slot: LoadoutSlotKey): string {
 export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
 export const PHANTOM_SOULREND_OPTION_ID = 'phantom-primaryFire-soulrend';
 export const PHANTOM_RIFT_BOLT_OPTION_ID = 'phantom-secondaryFire-riftbolt';
+export const PHANTOM_UMBRAL_DECOY_OPTION_ID = 'phantom-ability1-umbraldecoy';
+export const PHANTOM_NIGHTREIGN_OPTION_ID = 'phantom-ultimate-nightreign';
 export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
 export const BLAZE_AFTERBURNER_OPTION_ID = 'blaze-ability1-afterburner';
 export const BLAZE_PHOENIX_DIVE_OPTION_ID = 'blaze-ultimate-phoenixdive';

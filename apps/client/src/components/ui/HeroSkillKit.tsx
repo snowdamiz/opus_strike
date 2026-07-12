@@ -7,12 +7,13 @@ import {
   DEFAULT_BLAZE_ULTIMATE_SKILL,
   DEFAULT_PHANTOM_PRIMARY_SKILL,
   DEFAULT_PHANTOM_SECONDARY_SKILL,
+  DEFAULT_PHANTOM_ULTIMATE_SKILL,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
-import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, HeroId, PhantomPrimarySkill, PhantomSecondarySkill } from '@voxel-strike/shared';
+import type { AbilityCardStat, BlazePrimarySkill, BlazeSecondarySkill, BlazeUltimateSkill, HeroId, PhantomPrimarySkill, PhantomSecondarySkill, PhantomUltimateSkill } from '@voxel-strike/shared';
 import {
   DRAG_HOOK_COOLDOWN,
   HOOKSHOT_FIRE_INTERVAL,
@@ -259,6 +260,20 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   ],
 };
 
+export const PHANTOM_UMBRAL_DECOY_SKILL: HeroSkillItem = fromAbility(
+  'E',
+  'phantom_umbral_decoy',
+  undefined,
+  { iconType: 'umbraldecoy', rarity: 'epic' },
+);
+
+export const PHANTOM_NIGHTREIGN_SKILL: HeroSkillItem = fromAbility(
+  'F',
+  'phantom_nightreign',
+  'ultimate',
+  { iconType: 'nightreign', rarity: 'epic' },
+);
+
 // The skill list is static per hero, so cache it once per heroId. This keeps the
 // returned array (and its item objects) referentially stable across renders, which
 // lets memoized HUD leaf components (e.g. HUDSkillSlot) skip re-renders.
@@ -272,6 +287,7 @@ export function getHeroSkillItems(
   blazeUltimateSkill: BlazeUltimateSkill = DEFAULT_BLAZE_ULTIMATE_SKILL,
   phantomPrimarySkill: PhantomPrimarySkill = DEFAULT_PHANTOM_PRIMARY_SKILL,
   phantomSecondarySkill: PhantomSecondarySkill = DEFAULT_PHANTOM_SECONDARY_SKILL,
+  phantomUltimateSkill: PhantomUltimateSkill = DEFAULT_PHANTOM_ULTIMATE_SKILL,
 ): HeroSkillItem[] {
   const cacheKey = [
     heroId,
@@ -282,6 +298,7 @@ export function getHeroSkillItems(
     abilityBindings.ability2,
     heroId === 'phantom' ? phantomPrimarySkill : DEFAULT_PHANTOM_PRIMARY_SKILL,
     heroId === 'phantom' ? phantomSecondarySkill : DEFAULT_PHANTOM_SECONDARY_SKILL,
+    heroId === 'phantom' ? phantomUltimateSkill : DEFAULT_PHANTOM_ULTIMATE_SKILL,
   ].join(':');
   const cached = heroSkillItemsCache.get(cacheKey);
   if (cached) return cached;
@@ -303,6 +320,8 @@ export function getHeroSkillItems(
   );
   if (heroId === 'blaze') {
     stockAbilityById.set('blaze_afterburner', BLAZE_AFTERBURNER_SKILL);
+  } else if (heroId === 'phantom') {
+    stockAbilityById.set('phantom_umbral_decoy', PHANTOM_UMBRAL_DECOY_SKILL);
   }
   const slottedAbilitySkills: HeroSkillItem[] = [
     {
@@ -315,7 +334,9 @@ export function getHeroSkillItems(
     },
     heroId === 'blaze' && blazeUltimateSkill === 'phoenix_dive'
       ? BLAZE_PHOENIX_DIVE_SKILL
-      : stockAbilitySkills[2],
+      : heroId === 'phantom' && phantomUltimateSkill === 'nightreign'
+        ? PHANTOM_NIGHTREIGN_SKILL
+        : stockAbilitySkills[2],
   ];
 
   const items: HeroSkillItem[] = [

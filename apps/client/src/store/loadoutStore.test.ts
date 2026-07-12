@@ -14,6 +14,7 @@ const {
   LOADOUT_STORAGE_KEY,
   loadStoredLoadout,
   resolveHeroAbilityBindings,
+  resolveRuntimeHeroAbilityBindings,
   useLoadoutStore,
 } = await import('./loadoutStore');
 const {
@@ -31,6 +32,7 @@ assert.ok(PHANTOM_SOULREND_SPEED > PHANTOM_DIRE_BALL_SPEED);
 
 assert.equal(loadStoredLoadout().phantomPrimarySkill, 'dire_ball');
 assert.equal(loadStoredLoadout().phantomSecondarySkill, 'void_ray');
+assert.equal(loadStoredLoadout().phantomUltimateSkill, 'phantom_veil');
 assert.equal(loadStoredLoadout().blazePrimarySkill, 'fireball_rockets');
 assert.equal(loadStoredLoadout().blazeSecondarySkill, 'meteor_strike');
 assert.equal(loadStoredLoadout().blazeUltimateSkill, 'infernal_gearstorm');
@@ -39,6 +41,7 @@ assert.deepEqual(loadStoredLoadout().heroAbilityBindings, {});
 localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
   phantomPrimarySkill: 'soulrend_daggers',
   phantomSecondarySkill: 'rift_bolt',
+  phantomUltimateSkill: 'nightreign',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
   blazeUltimateSkill: 'phoenix_dive',
@@ -52,6 +55,7 @@ localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
 const storedLoadout = loadStoredLoadout();
 assert.equal(storedLoadout.phantomPrimarySkill, 'soulrend_daggers');
 assert.equal(storedLoadout.phantomSecondarySkill, 'rift_bolt');
+assert.equal(storedLoadout.phantomUltimateSkill, 'nightreign');
 assert.equal(storedLoadout.blazePrimarySkill, 'scrapshot');
 assert.equal(storedLoadout.blazeSecondarySkill, 'phosphor_flare');
 assert.equal(storedLoadout.blazeUltimateSkill, 'phoenix_dive');
@@ -63,6 +67,7 @@ assert.deepEqual(storedLoadout.heroAbilityBindings.phantom, {
 localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
   phantomPrimarySkill: 'invalid',
   phantomSecondarySkill: 'invalid',
+  phantomUltimateSkill: 'invalid',
   blazePrimarySkill: 'invalid',
   blazeSecondarySkill: 'invalid',
   blazeUltimateSkill: 'invalid',
@@ -73,6 +78,7 @@ localStorage.setItem(LOADOUT_STORAGE_KEY, JSON.stringify({
 const invalidLoadout = loadStoredLoadout();
 assert.equal(invalidLoadout.phantomPrimarySkill, 'dire_ball');
 assert.equal(invalidLoadout.phantomSecondarySkill, 'void_ray');
+assert.equal(invalidLoadout.phantomUltimateSkill, 'phantom_veil');
 assert.equal(invalidLoadout.blazePrimarySkill, 'fireball_rockets');
 assert.equal(invalidLoadout.blazeSecondarySkill, 'meteor_strike');
 assert.equal(invalidLoadout.blazeUltimateSkill, 'infernal_gearstorm');
@@ -84,11 +90,15 @@ assert.equal(useLoadoutStore.getState().phantomPrimarySkill, 'soulrend_daggers')
 useLoadoutStore.getState().setPhantomSecondarySkill('rift_bolt');
 assert.equal(useLoadoutStore.getState().phantomSecondarySkill, 'rift_bolt');
 
+useLoadoutStore.getState().setPhantomUltimateSkill('nightreign');
+assert.equal(useLoadoutStore.getState().phantomUltimateSkill, 'nightreign');
+
 useLoadoutStore.getState().setBlazePrimarySkill('scrapshot');
 assert.equal(useLoadoutStore.getState().blazePrimarySkill, 'scrapshot');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
   phantomPrimarySkill: 'soulrend_daggers',
   phantomSecondarySkill: 'rift_bolt',
+  phantomUltimateSkill: 'nightreign',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'meteor_strike',
   blazeUltimateSkill: 'infernal_gearstorm',
@@ -100,6 +110,7 @@ assert.equal(useLoadoutStore.getState().blazeSecondarySkill, 'phosphor_flare');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
   phantomPrimarySkill: 'soulrend_daggers',
   phantomSecondarySkill: 'rift_bolt',
+  phantomUltimateSkill: 'nightreign',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
   blazeUltimateSkill: 'infernal_gearstorm',
@@ -111,6 +122,7 @@ assert.equal(useLoadoutStore.getState().blazeUltimateSkill, 'phoenix_dive');
 assert.deepEqual(JSON.parse(localStorage.getItem(LOADOUT_STORAGE_KEY) ?? '{}'), {
   phantomPrimarySkill: 'soulrend_daggers',
   phantomSecondarySkill: 'rift_bolt',
+  phantomUltimateSkill: 'nightreign',
   blazePrimarySkill: 'scrapshot',
   blazeSecondarySkill: 'phosphor_flare',
   blazeUltimateSkill: 'phoenix_dive',
@@ -177,6 +189,8 @@ const {
   BLAZE_PHOENIX_DIVE_OPTION_ID,
   PHANTOM_RIFT_BOLT_OPTION_ID,
   PHANTOM_SOULREND_OPTION_ID,
+  PHANTOM_UMBRAL_DECOY_OPTION_ID,
+  PHANTOM_NIGHTREIGN_OPTION_ID,
   HERO_LOADOUT_POOL,
 } = await import('../components/ui/loadoutPool');
 const blazeLoadoutOptions = Object.values(HERO_LOADOUT_POOL.blaze).flat();
@@ -203,6 +217,16 @@ const riftBoltOption = HERO_LOADOUT_POOL.phantom.secondaryFire.find((option) => 
 assert.equal(riftBoltOption?.abilityId, 'phantom_rift_bolt');
 assert.equal(riftBoltOption?.ownership, 'owned');
 assert.ok(riftBoltOption?.meta?.includes('22 dmg'));
+const umbralDecoyOption = HERO_LOADOUT_POOL.phantom.ability1.find((option) => (
+  option.id === PHANTOM_UMBRAL_DECOY_OPTION_ID
+));
+assert.equal(umbralDecoyOption?.abilityId, 'phantom_umbral_decoy');
+assert.equal(umbralDecoyOption?.ownership, 'owned');
+const nightreignOption = HERO_LOADOUT_POOL.phantom.ultimate.find((option) => (
+  option.id === PHANTOM_NIGHTREIGN_OPTION_ID
+));
+assert.equal(nightreignOption?.abilityId, 'phantom_nightreign');
+assert.equal(nightreignOption?.ownership, 'owned');
 const phosphorFlareOption = HERO_LOADOUT_POOL.blaze.secondaryFire.find((option) => (
   option.id === BLAZE_PHOSPHOR_FLARE_OPTION_ID
 ));
@@ -236,6 +260,38 @@ assert.equal(
 const phantomSkills = getHeroSkillItems('phantom', 'fireball_rockets', phantomBindings);
 assert.equal(phantomSkills.find((skill) => skill.input === 'E')?.abilityId, 'phantom_personal_shield');
 assert.equal(phantomSkills.find((skill) => skill.input === 'Q')?.abilityId, 'phantom_blink');
+assert.equal(
+  getHeroSkillItems(
+    'phantom',
+    'fireball_rockets',
+    phantomBindings,
+    'meteor_strike',
+    'infernal_gearstorm',
+    'dire_ball',
+    'void_ray',
+    'nightreign',
+  ).find((skill) => skill.input === 'F')?.abilityId,
+  'phantom_nightreign',
+);
+useLoadoutStore.getState().assignHeroAbility('phantom', 'ability1', 'phantom_umbral_decoy');
+const umbralBindings = resolveRuntimeHeroAbilityBindings(
+  'phantom',
+  useLoadoutStore.getState().heroAbilityBindings,
+);
+assert.deepEqual(umbralBindings, {
+  ability1: 'phantom_umbral_decoy',
+  ability2: 'phantom_blink',
+});
+assert.equal(
+  applyHeroAbilityBindings(physicalEInput, 'phantom', useLoadoutStore.getState().heroAbilityBindings),
+  physicalEInput,
+  'Umbral Decoy loadouts keep physical E/Q slots for server-side ability resolution',
+);
+assert.equal(
+  getHeroSkillItems('phantom', 'fireball_rockets', umbralBindings)
+    .find((skill) => skill.input === 'E')?.name,
+  'Umbral Decoy',
+);
 assert.equal(
   getHeroSkillItems(
     'phantom',

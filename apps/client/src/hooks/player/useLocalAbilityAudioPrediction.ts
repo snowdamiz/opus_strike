@@ -13,6 +13,7 @@ import {
   getBlazePrimaryAbilityId,
   getBlazeUltimateAbilityId,
   getPhantomPrimaryAbilityId,
+  getPhantomUltimateAbilityId,
   type PhantomPrimarySkill,
   type PhantomSecondarySkill,
 } from '@voxel-strike/shared';
@@ -329,6 +330,9 @@ export function useLocalAbilityAudioPrediction() {
     const blazeRuntimeBindings = heroId === 'blaze'
       ? resolveRuntimeHeroAbilityBindings('blaze', useLoadoutStore.getState().heroAbilityBindings)
       : null;
+    const phantomRuntimeBindings = heroId === 'phantom'
+      ? resolveRuntimeHeroAbilityBindings('phantom', useLoadoutStore.getState().heroAbilityBindings)
+      : null;
     const playPredictedBlazeMovementAbility = (abilityId: string | undefined): void => {
       if (
         (abilityId !== 'blaze_rocketjump' && abilityId !== 'blaze_afterburner') ||
@@ -340,6 +344,18 @@ export function useLocalAbilityAudioPrediction() {
       void playSharedSound('blazeRocketJump', abilityId === 'blaze_afterburner'
         ? { pitch: 1.28, volume: 0.72 }
         : undefined);
+    };
+    const playPredictedPhantomAbility = (abilityId: string | undefined): void => {
+      if (
+        (abilityId !== 'phantom_blink' && abilityId !== 'phantom_umbral_decoy') ||
+        !canReservePredictedSkillSound(abilityId)
+      ) {
+        return;
+      }
+      markPredictedLocalAbilitySound(abilityId, now);
+      void playSharedSound('phantomBlink', abilityId === 'phantom_umbral_decoy'
+        ? { volume: 0.82, pitch: 0.88 }
+        : { durationMs: 900, volume: 1.1 });
     };
 
     const primaryPressed = inputState.primaryFire;
@@ -442,9 +458,8 @@ export function useLocalAbilityAudioPrediction() {
     if (inputState.ability1 && !previousInput.ability1) {
       if (heroId === 'blaze') {
         playPredictedBlazeMovementAbility(blazeRuntimeBindings?.ability1);
-      } else if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_blink')) {
-        markPredictedLocalAbilitySound('phantom_blink', now);
-        void playSharedSound('phantomBlink', { durationMs: 900, volume: 1.1 });
+      } else if (heroId === 'phantom') {
+        playPredictedPhantomAbility(phantomRuntimeBindings?.ability1);
       } else if (
         heroId === 'hookshot' &&
         (canUseHookshotGrapple?.() ?? false) &&
@@ -465,15 +480,20 @@ export function useLocalAbilityAudioPrediction() {
     if (inputState.ability2 && !previousInput.ability2) {
       if (heroId === 'blaze') {
         playPredictedBlazeMovementAbility(blazeRuntimeBindings?.ability2);
+      } else if (heroId === 'phantom') {
+        playPredictedPhantomAbility(phantomRuntimeBindings?.ability2);
       } else if (heroId === 'chronos' && canReservePredictedSkillSound('chronos_timebreak')) {
         playPredictedChronosTimebreak(now);
       }
     }
 
     if (inputState.ultimate && !previousInput.ultimate) {
-      if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_veil', true)) {
-        markPredictedLocalAbilitySound('phantom_veil', now);
-        void playSharedSound('phantomVeil');
+      if (heroId === 'phantom') {
+        const abilityId = getPhantomUltimateAbilityId(useLoadoutStore.getState().phantomUltimateSkill);
+        if (canReservePredictedSkillSound(abilityId, true)) {
+          markPredictedLocalAbilitySound(abilityId, now);
+          void playSharedSound('phantomVeil');
+        }
       } else if (heroId === 'blaze') {
         const abilityId = getBlazeUltimateAbilityId(useLoadoutStore.getState().blazeUltimateSkill);
         if (canReservePredictedSkillSound(abilityId, true)) {

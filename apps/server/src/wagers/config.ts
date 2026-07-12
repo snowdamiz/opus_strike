@@ -115,11 +115,18 @@ export function assertWagerPaymentsConfigured(config = getWagerRuntimeConfig()):
   if (!config.enabled) {
     throw new Error('SOL wagers are not enabled');
   }
+  assertRewardTreasuryConfigured(config, 'wagers');
+}
+
+export function assertRewardTreasuryConfigured(
+  config = getWagerRuntimeConfig(),
+  featureName = 'player rewards'
+): void {
   if (!config.rpcUrl) {
-    throw new Error('SOLANA_RPC_URL is required for wagers');
+    throw new Error(`SOLANA_RPC_URL is required for ${featureName}`);
   }
   if (!config.treasuryWallet) {
-    throw new Error('WAGER_TREASURY_WALLET is required for wagers');
+    throw new Error(`WAGER_TREASURY_WALLET is required for ${featureName}`);
   }
 }
 

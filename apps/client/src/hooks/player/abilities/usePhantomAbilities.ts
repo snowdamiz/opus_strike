@@ -93,12 +93,7 @@ export interface UsePhantomAbilitiesReturn {
     startClientCooldown: (id: string) => void,
     updateLocalPlayer: (data: any) => void
   ) => boolean;
-  executePhantomVeil: (
-    ctx: AbilityContext,
-    sounds: PlayerSounds,
-    updateLocalPlayer: (data: any) => void,
-    setAbilityActive: (id: string, active: boolean) => void
-  ) => boolean;
+  executePhantomUltimate: (abilityId: string, ctx: AbilityContext) => boolean;
 }
 
 export function usePhantomAbilities(
@@ -440,18 +435,17 @@ export function usePhantomAbilities(
     return true;
   }, []);
 
-  // Phantom Veil is requested through input and confirmed by the server.
-  const executePhantomVeil = useCallback((
+  // Phantom ultimates are requested through input and confirmed by the server.
+  const executePhantomUltimate = useCallback((
+    abilityId: string,
     ctx: AbilityContext,
-    _sounds: PlayerSounds,
-    _updateLocalPlayer: (data: any) => void,
-    _setAbilityActive: (id: string, active: boolean) => void
   ) => {
+    if (abilityId !== 'phantom_veil' && abilityId !== 'phantom_nightreign') return false;
     const now = ctx.viewmodelNowMs ?? Date.now();
-    const durationMs = (ABILITY_DEFINITIONS.phantom_veil?.duration ?? 0) * 1000;
+    const durationMs = (ABILITY_DEFINITIONS[abilityId]?.duration ?? 0) * 1000;
     const effectEndTime = now + durationMs;
     triggerPhantomVeilCastPose(now);
-    useGameStore.getState().setUltimateEffect(true, 'phantom_veil', effectEndTime);
+    useGameStore.getState().setUltimateEffect(true, abilityId, effectEndTime);
     return true;
   }, []);
 
@@ -471,6 +465,6 @@ export function usePhantomAbilities(
     handleSecondaryFire,
     executeBlink,
     executePersonalShield,
-    executePhantomVeil,
+    executePhantomUltimate,
   };
 }

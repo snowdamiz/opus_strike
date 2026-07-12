@@ -378,6 +378,8 @@ assert.equal(phoenixPracticeAbilities.blaze_phoenix_dive?.abilityId, 'blaze_phoe
 assert.equal(phoenixPracticeAbilities.blaze_airstrike, undefined);
 assert.equal(resolveEquippedUltimateAbilityId('blaze', 'phoenix_dive'), 'blaze_phoenix_dive');
 assert.equal(resolveEquippedUltimateAbilityId('blaze', 'infernal_gearstorm'), 'blaze_airstrike');
+assert.equal(resolveEquippedUltimateAbilityId('phantom', 'infernal_gearstorm', 'nightreign'), 'phantom_nightreign');
+assert.equal(resolveEquippedUltimateAbilityId('phantom', 'infernal_gearstorm', 'phantom_veil'), 'phantom_veil');
 
 const staleGroundedBlaze = makePlayer('blaze');
 staleGroundedBlaze.position = { x: 2, y: 1, z: 3 };

@@ -9,7 +9,14 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import type { Player, PlayerMovementState, Team, Vec3, VoxelMapTheme } from '@voxel-strike/shared';
+import {
+  isPhantomUmbralDecoyCloaked,
+  type Player,
+  type PlayerMovementState,
+  type Team,
+  type Vec3,
+  type VoxelMapTheme,
+} from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQuality';
@@ -181,6 +188,7 @@ const REMOTE_SAMPLE_SNAP_DISTANCE_SQ = REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMP
 const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
 const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
+const PHANTOM_UMBRAL_DECOY_ABILITY_ID = 'phantom_umbral_decoy';
 const PHANTOM_VEIL_BODY_OPACITY = 0.12;
 const PHANTOM_VEIL_OPACITY_DAMP_RATE = 12;
 const BATTLE_ROYAL_TEAMMATE_NAMEPLATE_MIN_DISTANCE = 180;
@@ -264,7 +272,9 @@ function getPlayerMovementPose(
 function hasActivePhantomVeil(player: Player): boolean {
   if (player.state !== 'alive' || player.heroId !== 'phantom') return false;
   const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
-  return Boolean(veil?.isActive);
+  if (veil?.isActive) return true;
+  const decoy = player.abilities?.[PHANTOM_UMBRAL_DECOY_ABILITY_ID];
+  return isPhantomUmbralDecoyCloaked(decoy, Date.now());
 }
 
 function distanceSquared(a: Pick<Vec3, 'x' | 'y' | 'z'>, b: Pick<Vec3, 'x' | 'y' | 'z'>): number {

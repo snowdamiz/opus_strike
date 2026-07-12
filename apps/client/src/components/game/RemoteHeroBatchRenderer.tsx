@@ -3,6 +3,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  isPhantomUmbralDecoyCloaked,
   HERO_DEFINITIONS,
   type HeroId,
   type HeroSkinId,
@@ -270,6 +271,7 @@ const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
 const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
 const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
+const PHANTOM_UMBRAL_DECOY_ABILITY_ID = 'phantom_umbral_decoy';
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
 const INSTANCE_EMISSIVE_ATTRIBUTE = 'instanceEmissiveBoost';
@@ -503,7 +505,9 @@ function getPlayerMovementPose(
 function hasActivePhantomVeil(player: Player): boolean {
   if (player.state !== 'alive' || player.heroId !== 'phantom') return false;
   const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
-  return Boolean(veil?.isActive);
+  if (veil?.isActive) return true;
+  const decoy = player.abilities?.[PHANTOM_UMBRAL_DECOY_ABILITY_ID];
+  return isPhantomUmbralDecoyCloaked(decoy, Date.now());
 }
 
 function hasActiveChronosAscendant(player: Player, frameNowMs: number): boolean {

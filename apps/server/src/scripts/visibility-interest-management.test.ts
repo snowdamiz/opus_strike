@@ -330,6 +330,31 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
 }
 
 {
+  const manager = new VisibilityInterestManager({ proximityRevealMeters: 1 });
+  const decoyCaster = makePlayer('blue-decoy', 'blue', 12, 0, {
+    abilities: [{
+      abilityId: 'phantom_umbral_decoy',
+      isActive: true,
+      activatedAt: 1_000,
+    }],
+  });
+  const cloaked = manager.getRecipientInterest(self, decoyCaster, makeContext({
+    now: 2_499,
+    hasLineOfSight: () => true,
+  }));
+  assert.equal(cloaked.state, 'hidden');
+  assert.equal(cloaked.reason, 'stealth');
+
+  manager.clearAll();
+  const revealed = manager.getRecipientInterest(self, decoyCaster, makeContext({
+    now: 2_500,
+    hasLineOfSight: () => true,
+  }));
+  assert.equal(revealed.state, 'visible');
+  assert.equal(revealed.reason, 'line_of_sight');
+}
+
+{
   let losChecks = 0;
   const manager = new VisibilityInterestManager({
     proximityRevealMeters: 1,
