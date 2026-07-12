@@ -153,6 +153,7 @@ import {
   createEmptyInputState,
   getHeroStats,
   getBlazeUltimateAbilityId,
+  getPhantomUltimateAbilityId,
   calculateBlazePhoenixDiveLaunchVelocity,
   createBlazePhoenixDiveHoverMotion,
   getBlazePhoenixDiveHoverVelocity,
@@ -165,6 +166,7 @@ import {
   type AbilityCastOriginHint,
   type BattleRoyalDropPlayerSnapshot,
   type BlazeUltimateSkill,
+  type PhantomUltimateSkill,
   type InputState,
   type MovementCommand,
   type Player,
@@ -668,10 +670,11 @@ function pushUniqueTraceAbilityId(target: string[], abilityId: string | undefine
 export function resolveEquippedUltimateAbilityId(
   heroId: HeroId,
   blazeUltimateSkill: BlazeUltimateSkill = useLoadoutStore.getState().blazeUltimateSkill,
+  phantomUltimateSkill: PhantomUltimateSkill = useLoadoutStore.getState().phantomUltimateSkill,
 ): string {
-  return heroId === 'blaze'
-    ? getBlazeUltimateAbilityId(blazeUltimateSkill)
-    : HERO_DEFINITIONS[heroId].ultimate.abilityId;
+  if (heroId === 'blaze') return getBlazeUltimateAbilityId(blazeUltimateSkill);
+  if (heroId === 'phantom') return getPhantomUltimateAbilityId(phantomUltimateSkill);
+  return HERO_DEFINITIONS[heroId].ultimate.abilityId;
 }
 
 function getInitialPracticeCooldownSeconds(
@@ -4138,7 +4141,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
         } else if (abilitySystem.canUseAbility(ultimateAbilityId, true)) {
           if (heroId === 'phantom') {
             if (isPracticeMode) {
-              const abilityId = heroDef.ultimate.abilityId;
+              const abilityId = ultimateAbilityId;
               const abilityDef = ABILITY_DEFINITIONS[abilityId];
               const durationMs = (abilityDef?.duration ?? 0) * 1000;
               const effectEndTime = now + durationMs;
@@ -4154,7 +4157,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
               });
               useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
-            } else if (phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive)) {
+            } else if (phantomAbilities.executePhantomUltimate(ultimateAbilityId, abilityCtx)) {
               useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
             }

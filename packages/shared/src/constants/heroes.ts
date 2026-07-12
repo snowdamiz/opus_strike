@@ -66,6 +66,10 @@ export const PHANTOM_UMBRAL_DECOY_CLOAK_DURATION_SECONDS = 1.5;
 export const PHANTOM_UMBRAL_DECOY_SPEED = 5.4;
 export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
 export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
+export const PHANTOM_NIGHTREIGN_DURATION_SECONDS = 7;
+export const PHANTOM_NIGHTREIGN_LIFESTEAL_RATIO = 0.5;
+export const PHANTOM_NIGHTREIGN_BLINK_REDUCTION_SECONDS = 1;
+export const PHANTOM_NIGHTREIGN_KILL_EXTENSION_SECONDS = 2;
 
 export const HOOKSHOT_CHAIN_HOOKS_DAMAGE = 16;
 export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS = 475;
@@ -228,6 +232,11 @@ export const ABILITY_CARD_STATS = {
   ],
   phantom_veil: [
     { value: PHANTOM_VEIL_SPEED_BONUS_PERCENT, label: 'speed', prefix: '+', suffix: '%' },
+  ],
+  phantom_nightreign: [
+    { value: PHANTOM_NIGHTREIGN_LIFESTEAL_RATIO * 100, label: 'lifesteal', suffix: '%' },
+    { value: PHANTOM_NIGHTREIGN_BLINK_REDUCTION_SECONDS, label: 'Blink reduction', format: 'seconds' },
+    { value: PHANTOM_NIGHTREIGN_KILL_EXTENSION_SECONDS, label: 'kill extension', format: 'seconds' },
   ],
   hookshot_basic_attack: [
     { value: HOOKSHOT_CHAIN_HOOKS_DAMAGE, label: 'dmg' },
@@ -434,6 +443,16 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 6,
     resourceCost: 100,
     description: 'Become invisible and move 30% faster for 6 seconds. Attacking breaks invisibility.',
+  },
+  phantom_nightreign: {
+    id: 'phantom_nightreign',
+    name: 'Nightreign',
+    type: 'ultimate',
+    targeting: 'self',
+    cooldown: 0,
+    duration: PHANTOM_NIGHTREIGN_DURATION_SECONDS,
+    resourceCost: 100,
+    description: 'Enter wraith form. Dire Ball hits lifesteal and reduce Blink cooldown; kills extend the duration.',
   },
 
   // Hookshot Abilities

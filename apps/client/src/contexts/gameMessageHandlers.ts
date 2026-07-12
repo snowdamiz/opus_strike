@@ -2156,12 +2156,12 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
   if (isLocalPlayer) {
     store.updateLocalPlayer({
       abilities,
-      ultimateCharge: data.abilityId === 'phantom_veil' ? 0 : player.ultimateCharge,
+      ultimateCharge: abilityDef.type === 'ultimate' ? 0 : player.ultimateCharge,
     });
-    if (data.abilityId === 'phantom_veil') {
+    if (abilityDef.type === 'ultimate') {
       const durationMs = (abilityDef.duration ?? 0) * 1000;
       const effectEndTime = Date.now() + durationMs;
-      store.setUltimateEffect(true, 'phantom_veil', effectEndTime);
+      store.setUltimateEffect(true, data.abilityId, effectEndTime);
     }
     return;
   }
@@ -2535,6 +2535,13 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     case 'phantom_veil':
       applyConfirmedPhantomActiveAbility(data);
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_veil')) {
+        playPhantomWorldSound('phantomVeil', position);
+      }
+      return true;
+
+    case 'phantom_nightreign':
+      applyConfirmedPhantomActiveAbility(data);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_nightreign')) {
         playPhantomWorldSound('phantomVeil', position);
       }
       return true;
@@ -3635,22 +3642,17 @@ function handlePlayerHealedMessage(data: PlayerHealedEvent): void {
   if (isChronosLifeline) {
     stopObservedAbilityCastEffects(data.sourceId, 'chronos_lifeline_conduit');
   }
-  const sourceOrigin = isChronosLifeline
-    ? resolveAbilitySocketOrigin({
-      ownerScope: isRemoteSource ? 'remoteBody' : 'localViewmodel',
-      playerId: isRemoteSource ? data.sourceId : undefined,
-      abilityId: 'chronos_lifeline_conduit',
-    })
-    : null;
-  const sourcePosition = isChronosLifeline
-    ? offsetChronosOrbVisualPlainPosition(
-      sourceOrigin ? toPlainPosition(sourceOrigin.position) : data.sourcePosition,
-      resolvePlayerFlatForward(data.sourceId),
-      'chronos_lifeline_conduit'
-    )
-    : sourceOrigin
-      ? toPlainPosition(sourceOrigin.position)
-      : data.sourcePosition;
+  if (!isChronosLifeline) return;
+  const sourceOrigin = resolveAbilitySocketOrigin({
+    ownerScope: isRemoteSource ? 'remoteBody' : 'localViewmodel',
+    playerId: isRemoteSource ? data.sourceId : undefined,
+    abilityId: 'chronos_lifeline_conduit',
+  });
+  const sourcePosition = offsetChronosOrbVisualPlainPosition(
+    sourceOrigin ? toPlainPosition(sourceOrigin.position) : data.sourcePosition,
+    resolvePlayerFlatForward(data.sourceId),
+    'chronos_lifeline_conduit'
+  );
 
   if (selfHealTarget) {
     addChronosSelfHealPulseEffect(

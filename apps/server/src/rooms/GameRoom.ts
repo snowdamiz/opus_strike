@@ -424,8 +424,11 @@ import {
   isBlazePrimarySkill,
   isPhantomPrimarySkill,
   isPhantomSecondarySkill,
+  isPhantomUltimateSkill,
   isPhantomAbilityBindings,
   hasPhantomUmbralDecoy,
+  getPhantomUltimateAbilityId,
+  applyPhantomNightreignHit,
   isBlazeSecondarySkill,
   isBlazeUltimateSkill,
   getBlazeUltimateAbilityId,
@@ -453,6 +456,7 @@ import type {
   BlazeAbilityBindings,
   PhantomPrimarySkill,
   PhantomSecondarySkill,
+  PhantomUltimateSkill,
   PhantomAbilityBindings,
   BotDifficulty,
   PlayerCombatHitResult,
@@ -1220,6 +1224,7 @@ export class GameRoom extends Room<GameState> {
   });
   private readonly phantomPrimarySkills = new Map<string, PhantomPrimarySkill>();
   private readonly phantomSecondarySkills = new Map<string, PhantomSecondarySkill>();
+  private readonly phantomUltimateSkills = new Map<string, PhantomUltimateSkill>();
   private readonly phantomAbilityBindings = new Map<string, PhantomAbilityBindings>();
   private readonly phantomUmbralDecoys = new Map<string, {
     startPosition: PlainVec3;
@@ -1446,6 +1451,7 @@ export class GameRoom extends Room<GameState> {
     recordRankedBrCombatReward: (input) => this.recordRankedBrCombatReward(input),
     broadcastPhantomShieldBroken: (target, source, payload) => this.broadcastPhantomShieldBroken(target, source, payload),
     broadcastPlayerDamaged: (target, source, payload) => this.broadcastPlayerDamaged(target, source, payload),
+    onDamageApplied: (input) => this.applyPhantomNightreignDamageEffects(input),
     shouldDownLethalDamage: (target) => (
       this.isBattleRoyalActiveCombatPhase() &&
       target.state === 'alive'
@@ -2001,6 +2007,11 @@ export class GameRoom extends Room<GameState> {
       this.handleSetPhantomSecondarySkill(client, data.skill);
     });
 
+    this.onRateLimitedMessage('setPhantomUltimateSkill', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
+      if (!isRecord(data) || !isPhantomUltimateSkill(data.skill)) return;
+      this.handleSetPhantomUltimateSkill(client, data.skill);
+    });
+
     this.onRateLimitedMessage('setPhantomAbilityBindings', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       if (!isPhantomAbilityBindings(data)) return;
       this.handleSetPhantomAbilityBindings(client, data);
@@ -2122,6 +2133,16 @@ export class GameRoom extends Room<GameState> {
     this.phantomRiftBolts.clear(player.id);
   }
 
+  private handleSetPhantomUltimateSkill(client: Client, skill: PhantomUltimateSkill): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || this.phantomUltimateSkills.has(player.id)) return;
+
+    this.phantomUltimateSkills.set(player.id, skill);
+    if (player.heroId === 'phantom') {
+      reconcilePlayerAbilities(player, 'phantom', this.getPhantomAbilitySelection(player.id));
+    }
+  }
+
   private handleSetPhantomAbilityBindings(client: Client, bindings: PhantomAbilityBindings): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.isBot || this.phantomAbilityBindings.has(player.id)) return;
@@ -2129,7 +2150,7 @@ export class GameRoom extends Room<GameState> {
 
     this.phantomAbilityBindings.set(player.id, { ...bindings });
     if (player.heroId === 'phantom') {
-      reconcilePlayerAbilities(player, 'phantom', bindings);
+      reconcilePlayerAbilities(player, 'phantom', this.getPhantomAbilitySelection(player.id));
     }
   }
 
@@ -2540,6 +2561,7 @@ export class GameRoom extends Room<GameState> {
     this.phantomSoulrendPrimaryMagazines.clear(playerId);
     this.phantomPrimarySkills.delete(playerId);
     this.phantomSecondarySkills.delete(playerId);
+    this.phantomUltimateSkills.delete(playerId);
     this.phantomAbilityBindings.delete(playerId);
     this.phantomUmbralDecoys.delete(playerId);
     this.blazePrimaryMagazines.clear(playerId);
@@ -8461,6 +8483,17 @@ export class GameRoom extends Room<GameState> {
     return this.phantomAbilityBindings.get(playerId) ?? null;
   }
 
+  private getPhantomAbilitySelection(playerId: string): HeroAbilitySelection {
+    const bindings = this.getPhantomRuntimeAbilityBindings(playerId) ?? {
+      ability1: HERO_DEFINITIONS.phantom.ability1.abilityId,
+      ability2: HERO_DEFINITIONS.phantom.ability2.abilityId,
+    };
+    return {
+      ...bindings,
+      ultimate: getPhantomUltimateAbilityId(this.getPhantomUltimateSkill(playerId)),
+    };
+  }
+
   private getBlazeAbilitySelection(playerId: string): HeroAbilitySelection {
     const bindings = this.getBlazeRuntimeAbilityBindings(playerId) ?? {
       ability1: HERO_DEFINITIONS.blaze.ability1.abilityId,
@@ -8477,8 +8510,7 @@ export class GameRoom extends Room<GameState> {
     slot: 'ability1' | 'ability2' | 'ultimate'
   ): string | undefined {
     if (player.heroId === 'phantom') {
-      const selection = this.getPhantomRuntimeAbilityBindings(player.id);
-      if (selection && slot !== 'ultimate') return selection[slot];
+      return this.getPhantomAbilitySelection(player.id)[slot];
     }
     if (player.heroId === 'blaze') {
       const selection = this.getBlazeAbilitySelection(player.id);
@@ -8906,6 +8938,10 @@ export class GameRoom extends Room<GameState> {
 
   private getPhantomSecondarySkill(playerId: string): PhantomSecondarySkill {
     return this.phantomSecondarySkills.get(playerId) ?? 'void_ray';
+  }
+
+  private getPhantomUltimateSkill(playerId: string): PhantomUltimateSkill {
+    return this.phantomUltimateSkills.get(playerId) ?? 'phantom_veil';
   }
 
   private getBlazeSecondarySkill(playerId: string): BlazeSecondarySkill {
@@ -9824,6 +9860,40 @@ export class GameRoom extends Room<GameState> {
     if (this.isBattleRoyalDeploymentPhase()) return false;
 
     return this.damageRuntime.applyPlayerDamage(target, rawDamage, sourceId, damageType, context);
+  }
+
+  private applyPhantomNightreignDamageEffects(input: {
+    source: Player | null;
+    appliedDamage: number;
+    killed: boolean;
+    damageType: string;
+    now: number;
+  }): void {
+    const source = input.source;
+    if (!source || source.heroId !== 'phantom' || input.damageType !== 'dire_ball') return;
+
+    const result = applyPhantomNightreignHit({
+      source,
+      nightreign: source.abilities.get('phantom_nightreign'),
+      blink: source.abilities.get('phantom_blink'),
+      appliedDamage: input.appliedDamage,
+      killed: input.killed,
+      now: input.now,
+    });
+    if (!result.applied || result.healed <= 0) return;
+
+    this.broadcastPlayerHealed(source, {
+      sourceId: source.id,
+      abilityId: 'phantom_nightreign',
+      sourcePosition: vec3SchemaToPlain(source.position),
+      targets: [{
+        targetId: source.id,
+        amount: result.healed,
+        newHealth: source.health,
+        position: vec3SchemaToPlain(source.position),
+      }],
+      timestamp: input.now,
+    });
   }
 
   private startHookshotDragPull(target: Player, source: Player, distance: number, now: number): void {
@@ -12110,7 +12180,7 @@ export class GameRoom extends Room<GameState> {
       heroId === 'blaze'
         ? this.getBlazeAbilitySelection(player.id)
         : heroId === 'phantom'
-          ? this.getPhantomRuntimeAbilityBindings(player.id) ?? undefined
+          ? this.getPhantomAbilitySelection(player.id)
           : undefined
     );
     this.syncMatchParticipant(player);

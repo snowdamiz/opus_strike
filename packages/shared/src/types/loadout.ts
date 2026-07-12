@@ -49,6 +49,22 @@ export function hasPhantomUmbralDecoy(bindings: PhantomAbilityBindings): boolean
   return bindings.ability1 === 'phantom_umbral_decoy' || bindings.ability2 === 'phantom_umbral_decoy';
 }
 
+export const PHANTOM_ULTIMATE_SKILLS = ['phantom_veil', 'nightreign'] as const;
+
+export type PhantomUltimateSkill = (typeof PHANTOM_ULTIMATE_SKILLS)[number];
+
+export const DEFAULT_PHANTOM_ULTIMATE_SKILL: PhantomUltimateSkill = 'phantom_veil';
+
+export function isPhantomUltimateSkill(value: unknown): value is PhantomUltimateSkill {
+  return typeof value === 'string' && PHANTOM_ULTIMATE_SKILLS.includes(value as PhantomUltimateSkill);
+}
+
+export function getPhantomUltimateAbilityId(
+  skill: PhantomUltimateSkill
+): 'phantom_veil' | 'phantom_nightreign' {
+  return skill === 'nightreign' ? 'phantom_nightreign' : 'phantom_veil';
+}
+
 export const BLAZE_PRIMARY_SKILLS = ['fireball_rockets', 'scrapshot'] as const;
 
 export type BlazePrimarySkill = (typeof BLAZE_PRIMARY_SKILLS)[number];

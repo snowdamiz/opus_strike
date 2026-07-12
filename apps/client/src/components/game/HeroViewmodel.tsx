@@ -629,7 +629,10 @@ function getPhantomVoidRayChargePose(nowMs: number, elapsedSeconds: number): Pha
 
 function getPhantomVeilArmGlowOpacity(nowMs: number, elapsedSeconds: number): number {
   const store = useGameStore.getState();
-  const veilEffectActive = store.ultimateEffectActive && store.ultimateEffectType === 'phantom_veil';
+  const veilEffectActive = store.ultimateEffectActive && (
+    store.ultimateEffectType === 'phantom_veil' ||
+    store.ultimateEffectType === 'phantom_nightreign'
+  );
   const castPose = getPhantomVeilCastPose(nowMs);
   if (!veilEffectActive && !castPose.active) return 0;
 

@@ -13,6 +13,7 @@ import {
   getBlazePrimaryAbilityId,
   getBlazeUltimateAbilityId,
   getPhantomPrimaryAbilityId,
+  getPhantomUltimateAbilityId,
   type PhantomPrimarySkill,
   type PhantomSecondarySkill,
 } from '@voxel-strike/shared';
@@ -487,9 +488,12 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ultimate && !previousInput.ultimate) {
-      if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_veil', true)) {
-        markPredictedLocalAbilitySound('phantom_veil', now);
-        void playSharedSound('phantomVeil');
+      if (heroId === 'phantom') {
+        const abilityId = getPhantomUltimateAbilityId(useLoadoutStore.getState().phantomUltimateSkill);
+        if (canReservePredictedSkillSound(abilityId, true)) {
+          markPredictedLocalAbilitySound(abilityId, now);
+          void playSharedSound('phantomVeil');
+        }
       } else if (heroId === 'blaze') {
         const abilityId = getBlazeUltimateAbilityId(useLoadoutStore.getState().blazeUltimateSkill);
         if (canReservePredictedSkillSound(abilityId, true)) {

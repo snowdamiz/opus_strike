@@ -7,6 +7,11 @@ import {
   type WagerRosterPlayer,
 } from '../wagers/math';
 import { createWagerMemo, verifyParsedSolPayment } from '../wagers/solana';
+import {
+  assertRewardTreasuryConfigured,
+  assertWagerPaymentsConfigured,
+  getWagerRuntimeConfig,
+} from '../wagers/config';
 import { buildWagerUserStatIncrements, WagerService } from '../wagers/service';
 import { extractTokenAccountMintDelta } from '../wagers/tokenConversion';
 
@@ -171,6 +176,65 @@ function runRefundMathTests(): void {
   assert.equal(calculateNetRefundLamports(1_000_000n, 5_000n), 995_000n);
   assert.throws(() => calculateNetRefundLamports(5_000n, 5_000n), /manual review/);
   assert.throws(() => calculateNetRefundLamports(5_000n, 6_000n), /manual review/);
+}
+
+function runRewardTreasuryConfigGuardTests(): void {
+  const configuredTreasury = {
+    ...getWagerRuntimeConfig(),
+    enabled: false,
+    rpcUrl: 'http://127.0.0.1:8899',
+    treasuryWallet: Keypair.generate().publicKey.toBase58(),
+  };
+
+  assert.doesNotThrow(() => assertRewardTreasuryConfigured(configuredTreasury));
+  assert.throws(
+    () => assertWagerPaymentsConfigured(configuredTreasury),
+    /SOL wagers are not enabled/
+  );
+  assert.throws(
+    () => assertRewardTreasuryConfigured({ ...configuredTreasury, rpcUrl: '' }),
+    /SOLANA_RPC_URL is required for player rewards/
+  );
+  assert.throws(
+    () => assertRewardTreasuryConfigured({ ...configuredTreasury, treasuryWallet: '' }),
+    /WAGER_TREASURY_WALLET is required for player rewards/
+  );
+}
+
+async function runRewardTreasuryServiceGuardTests(): Promise<void> {
+  const previous = {
+    SOLANA_RPC_URL: process.env.SOLANA_RPC_URL,
+    WAGER_SOL_ENABLED: process.env.WAGER_SOL_ENABLED,
+    WAGER_TREASURY_WALLET: process.env.WAGER_TREASURY_WALLET,
+  };
+  const rpcUrl = 'http://127.0.0.1:8899';
+  const service = new WagerService();
+
+  try {
+    process.env.WAGER_SOL_ENABLED = 'false';
+    process.env.SOLANA_RPC_URL = rpcUrl;
+    process.env.WAGER_TREASURY_WALLET = Keypair.generate().publicKey.toBase58();
+    (service as unknown as {
+      connection: { rpcEndpoint: string; getBalance: () => Promise<number> };
+    }).connection = {
+      rpcEndpoint: rpcUrl,
+      getBalance: async () => 123_456_789,
+    };
+
+    assert.equal(await service.getRewardTreasuryBalanceLamports(), 123_456_789n);
+    await assert.rejects(
+      () => service.getTreasuryBalanceLamports(),
+      /SOL wagers are not enabled/
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 function runTokenConversionAccountingTests(): void {
@@ -379,6 +443,8 @@ async function runSettlementConfigGuardTests(): Promise<void> {
 async function main(): Promise<void> {
   runPayoutMathTests();
   runRefundMathTests();
+  runRewardTreasuryConfigGuardTests();
+  await runRewardTreasuryServiceGuardTests();
   runStartGateTests();
   runTransactionParserTests();
   runTokenConversionAccountingTests();

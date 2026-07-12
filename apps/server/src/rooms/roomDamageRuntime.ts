@@ -78,6 +78,15 @@ export interface RoomDamageRuntimeDeps {
     payload: { playerId: string; position: PlainVec3; direction: PlainVec3; serverTime: number }
   ): void;
   broadcastPlayerDamaged(target: Player, source: Player | null, payload: PlayerDamagedEvent): void;
+  onDamageApplied?(input: {
+    target: Player;
+    source: Player | null;
+    appliedDamage: number;
+    killed: boolean;
+    damageType: string;
+    abilityId?: string;
+    now: number;
+  }): void;
   broadcastPlayerKilled(target: Player, killer: Player | null, payload: PlayerDeathEvent): void;
   shouldDownLethalDamage(target: Player): boolean;
   shouldDamageDownedPlayers(): boolean;
@@ -455,6 +464,16 @@ export class RoomDamageRuntime {
       sourceHeroId: source?.heroId || null,
       targetHeroId: target.heroId || null,
       rankedBrSolRewardLamports: rankedBrReward?.amountLamports,
+    });
+
+    this.deps.onDamageApplied?.({
+      target,
+      source: source ?? null,
+      appliedDamage: result.appliedDamage,
+      killed: Boolean(result.death),
+      damageType: result.damageType,
+      abilityId: context.abilityId,
+      now,
     });
 
     if (result.downed) {

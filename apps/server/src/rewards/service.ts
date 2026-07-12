@@ -1855,11 +1855,11 @@ export class PlayerRewardService {
   private async getTreasuryAvailableBudgetLamports(config?: PlayerRewardRuntimeConfig): Promise<bigint> {
     const rewardConfig = config ?? await this.getConfig();
     const wagerConfig = wagerService.getConfig();
-    if (!wagerConfig.enabled || !wagerConfig.rpcUrl || !wagerConfig.treasuryWallet) {
+    if (!wagerConfig.rpcUrl || !wagerConfig.treasuryWallet) {
       return 0n;
     }
 
-    const balanceLamports = await wagerService.getTreasuryBalanceLamports();
+    const balanceLamports = await wagerService.getRewardTreasuryBalanceLamports();
     if (balanceLamports <= rewardConfig.treasuryReserveLamports) return 0n;
     return balanceLamports - rewardConfig.treasuryReserveLamports;
   }

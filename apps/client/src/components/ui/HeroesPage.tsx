@@ -27,6 +27,7 @@ interface HeroesPageProps {
 export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
   const phantomPrimarySkill = useLoadoutStore((state) => state.phantomPrimarySkill);
   const phantomSecondarySkill = useLoadoutStore((state) => state.phantomSecondarySkill);
+  const phantomUltimateSkill = useLoadoutStore((state) => state.phantomUltimateSkill);
   const blazePrimarySkill = useLoadoutStore((state) => state.blazePrimarySkill);
   const blazeSecondarySkill = useLoadoutStore((state) => state.blazeSecondarySkill);
   const blazeUltimateSkill = useLoadoutStore((state) => state.blazeUltimateSkill);
@@ -41,6 +42,7 @@ export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
     blazeUltimateSkill,
     phantomPrimarySkill,
     phantomSecondarySkill,
+    phantomUltimateSkill,
   );
 
   return (

@@ -325,6 +325,12 @@ export function executeAbility(
       break;
     }
 
+    case 'phantom_nightreign': {
+      abilityState.isActive = true;
+      abilityState.activatedAt = now;
+      break;
+    }
+
     // ===== HOOKSHOT ABILITIES =====
     case 'hookshot_grapple': {
       abilityState.activatedAt = now;

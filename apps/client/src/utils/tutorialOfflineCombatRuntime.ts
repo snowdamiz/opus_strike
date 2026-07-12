@@ -6,6 +6,7 @@ import {
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   applyDamage as resolveSharedDamage,
+  applyPhantomNightreignHit,
   calculateFalloffDamage,
   calculateBlazeScrapshotPelletDamage,
   getAimConeHitAgainstPlayerCombatHitbox,
@@ -435,6 +436,17 @@ export function applyTutorialOfflineTrainingDamage(input: TutorialOfflineTrainin
     clearTargetDamageRuntime(target.id);
   }
 
+  const nightreignResult = source?.heroId === 'phantom' && input.damageType === 'dire_ball'
+    ? applyPhantomNightreignHit({
+      source,
+      nightreign: source.abilities.phantom_nightreign,
+      blink: source.abilities.phantom_blink,
+      appliedDamage: result.appliedDamage,
+      killed: result.killed,
+      now,
+    })
+    : null;
+
   applyDrafts(drafts, now);
 
   useCombatFeedbackStore.getState().addCombatTextEvent({
@@ -444,6 +456,15 @@ export function applyTutorialOfflineTrainingDamage(input: TutorialOfflineTrainin
     targetId: current.id,
     position: input.hitPosition,
   });
+
+  if (nightreignResult?.healed) {
+    useCombatFeedbackStore.getState().addCombatTextEvent({
+      kind: 'heal',
+      amount: nightreignResult.healed,
+      targetId: source?.id,
+      position: source?.position ?? input.hitPosition,
+    });
+  }
 
   if (result.death) {
     useCombatFeedbackStore.getState().addKillFeedEvent({

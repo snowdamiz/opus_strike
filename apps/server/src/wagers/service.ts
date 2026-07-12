@@ -25,6 +25,7 @@ import { getColyseusRuntimeConfig } from '../config/colyseus';
 import { getSharedRedisClient } from '../config/redis';
 import {
   assertPublicKey,
+  assertRewardTreasuryConfigured,
   assertWagerPaymentsConfigured,
   getSettlementKeypair,
   getWagerRuntimeConfig,
@@ -686,13 +687,23 @@ export class WagerService extends EventEmitter {
     };
   }
 
-  private getConnection(): Connection {
-    const config = this.getConfig();
-    assertWagerPaymentsConfigured(config);
+  private getConnectionForConfig(config: WagerRuntimeConfig): Connection {
     if (!this.connection || this.connection.rpcEndpoint !== config.rpcUrl) {
       this.connection = new Connection(config.rpcUrl, 'confirmed');
     }
     return this.connection;
+  }
+
+  private getConnection(): Connection {
+    const config = this.getConfig();
+    assertWagerPaymentsConfigured(config);
+    return this.getConnectionForConfig(config);
+  }
+
+  private getRewardTreasuryConnection(): Connection {
+    const config = this.getConfig();
+    assertRewardTreasuryConfigured(config);
+    return this.getConnectionForConfig(config);
   }
 
   private getBackgroundConnection(): Connection {
@@ -748,13 +759,22 @@ export class WagerService extends EventEmitter {
     return BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
   }
 
+  async getRewardTreasuryBalanceLamports(): Promise<bigint> {
+    const config = this.getConfig();
+    assertRewardTreasuryConfigured(config);
+    return BigInt(await this.getRewardTreasuryConnection().getBalance(
+      new PublicKey(config.treasuryWallet),
+      'confirmed'
+    ));
+  }
+
   async sendTreasuryRewardTransfer(input: {
     recipientWallet: string;
     amountLamports: bigint;
     existingSignature?: string | null;
     onSubmitted: (signature: string) => Promise<void>;
   }): Promise<TreasuryTransferResult> {
-    return this.sendTreasuryTransfer(input);
+    return this.sendTreasuryTransfer(input, { requireWagersEnabled: false });
   }
 
   async shouldRollGoldenBiome(seed: number, salt = 0): Promise<boolean> {
@@ -3122,13 +3142,15 @@ export class WagerService extends EventEmitter {
     amountLamports: bigint;
     existingSignature?: string | null;
     onSubmitted: (signature: string) => Promise<void>;
-  }): Promise<TreasuryTransferResult> {
+  }, options: { requireWagersEnabled?: boolean } = {}): Promise<TreasuryTransferResult> {
     if (input.amountLamports <= 0n) {
       return { signature: null, confirmedAt: new Date() };
     }
     assertPublicKey(input.recipientWallet, 'recipientWallet');
     const config = this.getConfig();
-    assertWagerPaymentsConfigured(config);
+    const connection = options.requireWagersEnabled === false
+      ? this.getRewardTreasuryConnection()
+      : this.getConnection();
 
     if (input.recipientWallet === config.treasuryWallet) {
       return { signature: null, confirmedAt: new Date() };
@@ -3139,7 +3161,6 @@ export class WagerService extends EventEmitter {
 
     const signer = this.getTreasurySettlementSigner(config);
 
-    const connection = this.getConnection();
     if (input.existingSignature) {
       const existing = await connection.getSignatureStatuses([input.existingSignature], { searchTransactionHistory: true });
       const status = existing.value[0];

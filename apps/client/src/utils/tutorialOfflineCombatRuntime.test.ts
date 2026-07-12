@@ -3,6 +3,7 @@ import type { Player, PlayerMovementState } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import {
   DEV_OFFLINE_TRAINING_HERO_ID_PREFIX,
+  applyTutorialOfflineTrainingDamage,
   applyTutorialOfflineTrainingTrailDamage,
 } from './tutorialOfflineCombatRuntime';
 
@@ -132,6 +133,51 @@ try {
   now += 600;
   assert.equal(applyTutorialOfflineTrainingTrailDamage(trail), 0);
   assert.equal(useGameStore.getState().players.get(target.id)?.health, 88);
+
+  const nightreignSource: Player = {
+    ...source,
+    heroId: 'phantom',
+    health: 100,
+    maxHealth: 180,
+    abilities: {
+      phantom_nightreign: {
+        abilityId: 'phantom_nightreign',
+        cooldownRemaining: 0,
+        charges: 1,
+        isActive: true,
+        activatedAt: now,
+      },
+      phantom_blink: {
+        abilityId: 'phantom_blink',
+        cooldownRemaining: 5,
+        charges: 0,
+        isActive: false,
+        activatedAt: 0,
+      },
+    },
+  };
+  const nightreignTarget: Player = { ...target, health: 18, maxHealth: 100, state: 'alive' };
+  useGameStore.setState({
+    isPracticeMode: true,
+    localPlayer: nightreignSource,
+    players: new Map([
+      [nightreignSource.id, nightreignSource],
+      [nightreignTarget.id, nightreignTarget],
+    ]),
+  });
+  const nightreignHit = applyTutorialOfflineTrainingDamage({
+    target: nightreignTarget,
+    damage: 18,
+    damageType: 'dire_ball',
+    hitPosition: nightreignTarget.position,
+    sourceId: nightreignSource.id,
+    sourceTeam: nightreignSource.team,
+    abilityId: 'phantom_dire_ball',
+  });
+  assert.equal(nightreignHit.killed, true);
+  assert.equal(useGameStore.getState().localPlayer?.health, 109);
+  assert.equal(useGameStore.getState().localPlayer?.abilities.phantom_blink?.cooldownRemaining, 4);
+  assert.equal(useGameStore.getState().localPlayer?.abilities.phantom_nightreign?.activatedAt, now + 2_000);
 } finally {
   Date.now = originalDateNow;
   if (originalWindow) {

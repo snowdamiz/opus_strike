@@ -279,6 +279,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     phantom_blink: 'blink',
     phantom_personal_shield: 'shield',
     phantom_veil: 'veil',
+    phantom_nightreign: 'nightreign',
     hookshot_grapple: 'grapple',
     hookshot_anchor_wall: 'anchorwall',
     hookshot_ground_hooks: 'anchorwall',

@@ -177,6 +177,7 @@ const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
     },
     ultimate: {
       key: 'nightreign',
+      abilityId: 'phantom_nightreign',
       iconType: 'nightreign',
       input: 'F',
       duration: 7,
@@ -390,7 +391,8 @@ function buildEpicOption(heroId: HeroId, slot: LoadoutSlotDef, def: NewEpicSkill
     ownership: (heroId === 'phantom' && (
       (slot.key === 'primaryFire' && def.key === 'soulrend') ||
       (slot.key === 'secondaryFire' && def.key === 'riftbolt') ||
-      (slot.key === 'ability1' && def.key === 'umbraldecoy')
+      (slot.key === 'ability1' && def.key === 'umbraldecoy') ||
+      (slot.key === 'ultimate' && def.key === 'nightreign')
     )) ||
       (heroId === 'blaze' && (
       (slot.key === 'primaryFire' && def.key === 'scrapshot') ||
@@ -441,6 +443,7 @@ export const BLAZE_SCRAPSHOT_OPTION_ID = 'blaze-primaryFire-scrapshot';
 export const PHANTOM_SOULREND_OPTION_ID = 'phantom-primaryFire-soulrend';
 export const PHANTOM_RIFT_BOLT_OPTION_ID = 'phantom-secondaryFire-riftbolt';
 export const PHANTOM_UMBRAL_DECOY_OPTION_ID = 'phantom-ability1-umbraldecoy';
+export const PHANTOM_NIGHTREIGN_OPTION_ID = 'phantom-ultimate-nightreign';
 export const BLAZE_PHOSPHOR_FLARE_OPTION_ID = 'blaze-secondaryFire-phosphorflare';
 export const BLAZE_AFTERBURNER_OPTION_ID = 'blaze-ability1-afterburner';
 export const BLAZE_PHOENIX_DIVE_OPTION_ID = 'blaze-ultimate-phoenixdive';
