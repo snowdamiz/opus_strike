@@ -134,18 +134,21 @@ export function useVoxelFarMaterial(
   theme: VoxelMapTheme,
   fogBlend: number
 ): THREE.Material {
+  const fogColor = useMemo(() => new THREE.Color(theme.fogColor), [theme]);
   const material = useMemo(() => {
-    const color = new THREE.Color(theme.ground.side).lerp(
-      new THREE.Color(theme.fogColor),
-      THREE.MathUtils.clamp(fogBlend, 0, 1)
-    );
     const farMaterial = new THREE.MeshBasicMaterial({
-      color,
+      color: theme.ground.side,
       fog: true,
     });
     farMaterial.name = 'procedural-voxel-far-unlit-terrain-material';
     return farMaterial;
-  }, [fogBlend, theme]);
+  }, [theme]);
+
+  useEffect(() => {
+    material.color
+      .set(theme.ground.side)
+      .lerp(fogColor, THREE.MathUtils.clamp(fogBlend, 0, 1));
+  }, [fogBlend, fogColor, material, theme.ground.side]);
 
   useEffect(() => () => material.dispose(), [material]);
 

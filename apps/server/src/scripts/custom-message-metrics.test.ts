@@ -73,6 +73,8 @@ roomMetrics.recordTickDuration(18);
 assert.equal(roomMetrics.getTickDurationPercentile(0), 0);
 assert.equal(roomMetrics.getTickDurationPercentile(0.5), 18);
 assert.equal(roomMetrics.getTickDurationPercentile(1), 30);
+roomMetrics.recordTickDuration(1);
+assert.equal(roomMetrics.getTickDurationPercentile(0), 1);
 
 roomMetrics.recordCustomMessage('playerTransformsV2', singleTransform, 2);
 roomMetrics.recordCustomMessage('playerVitals', { players: [{ playerId: 'a' }], removedPlayerIds: [] }, 1);

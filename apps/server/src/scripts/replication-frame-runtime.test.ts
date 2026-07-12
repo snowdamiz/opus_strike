@@ -13,6 +13,7 @@ import {
   isPhasedIntervalDue,
 } from '../rooms/replicationFrameRuntime';
 import { VisibilityInterestManager } from '../rooms/visibilityInterest';
+import type { VisibilityInterestPlayer } from '../rooms/visibilityInterest';
 
 function player(input: {
   id: string;
@@ -42,6 +43,7 @@ function transform(id: string): PackedPlayerTransform {
 function createRuntime(options: {
   collisionRevision?: number;
   hasLineOfSight?: (from: Vec3, to: Vec3) => boolean;
+  getLineOfSightPoints?: (player: VisibilityInterestPlayer) => readonly Vec3[];
   getRecentCombatRevealUntil?: (recipientId: string, targetId: string) => number;
   isFullRateTransform?: (id: string, player: Player, now: number) => boolean;
 } = {}): ReplicationFrameRuntime {
@@ -49,6 +51,7 @@ function createRuntime(options: {
     visibilityInterest: new VisibilityInterestManager(),
     getMovementCollisionRevision: () => options.collisionRevision ?? 0,
     hasLineOfSight: options.hasLineOfSight ?? (() => true),
+    getLineOfSightPoints: options.getLineOfSightPoints,
     getRecentCombatRevealUntil: options.getRecentCombatRevealUntil ?? (() => 0),
     buildPackedTransform: (id) => transform(id),
     isFullRateTransform: options.isFullRateTransform,
@@ -214,6 +217,29 @@ function createRuntime(options: {
   const checksAfterFirstDecision = lineOfSightChecks;
   assert.equal(runtime.getRecipientInterest(recipient, target, 2_000, frame), decision);
   assert.equal(lineOfSightChecks, checksAfterFirstDecision);
+}
+
+{
+  let samplePointBuilds = 0;
+  const runtime = createRuntime({
+    hasLineOfSight: () => false,
+    getLineOfSightPoints: (target) => {
+      samplePointBuilds++;
+      return [{ x: target.position.x, y: target.position.y, z: target.position.z }];
+    },
+  });
+  const redA = player({ id: 'red-a', x: 0, z: 0 });
+  const redB = player({ id: 'red-b', x: 0, z: 4 });
+  const target = player({ id: 'blue-shared-target', team: 'blue', x: 20, z: 2 });
+  const frame = runtime.buildFrameContext(new Map([
+    [redA.id, redA],
+    [redB.id, redB],
+    [target.id, target],
+  ]), 2_500);
+
+  runtime.getRecipientInterest(redA, target, 2_500, frame);
+  runtime.getRecipientInterest(redB, target, 2_500, frame);
+  assert.equal(samplePointBuilds, 1, 'LOS sample points should be built once per target per replication frame');
 }
 
 {

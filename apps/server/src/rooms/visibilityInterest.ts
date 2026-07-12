@@ -225,19 +225,16 @@ export class VisibilityInterestManager {
 
   private pruneLineOfSightCache(now: number): void {
     if (this.lineOfSightCache.size < this.maxLineOfSightCacheEntries) return;
+    const targetSize = Math.max(0, this.maxLineOfSightCacheEntries - LINE_OF_SIGHT_CACHE_EVICT_BATCH);
 
     for (const [key, cached] of this.lineOfSightCache) {
       if (cached.expiresAt <= now) this.lineOfSightCache.delete(key);
     }
-    if (this.lineOfSightCache.size < this.maxLineOfSightCacheEntries) return;
+    if (this.lineOfSightCache.size <= targetSize) return;
 
-    let evicted = 0;
     for (const key of this.lineOfSightCache.keys()) {
       this.lineOfSightCache.delete(key);
-      evicted++;
-      if (evicted >= LINE_OF_SIGHT_CACHE_EVICT_BATCH || this.lineOfSightCache.size < this.maxLineOfSightCacheEntries) {
-        break;
-      }
+      if (this.lineOfSightCache.size <= targetSize) break;
     }
   }
 

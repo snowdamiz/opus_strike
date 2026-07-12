@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -18,6 +18,7 @@ import {
   writeBattleRoyalDropPlayerSnapshotPosition,
   writeBattleRoyalDropShipPosition,
 } from './battleRoyalDropView';
+import { BudgetedPointLight } from './systems/DynamicLightBudget';
 
 const SHIP_SCALE = 1.38;
 const POD_SCALE = 1.05;
@@ -135,6 +136,8 @@ const DropShipVisual = memo(function DropShipVisual({
   const yaw = useMemo(() => getBattleRoyalDropShipYaw(drop), [drop]);
   const noseGeometry = useMemo(createDropShipNoseGeometry, []);
 
+  useEffect(() => () => noseGeometry.dispose(), [noseGeometry]);
+
   useFrame(({ clock }) => {
     const group = groupRef.current;
     if (!group) return;
@@ -165,14 +168,14 @@ const DropShipVisual = memo(function DropShipVisual({
 
   return (
     <group ref={groupRef} scale={SHIP_SCALE}>
-      <mesh position={[0, 0, -0.35]} castShadow receiveShadow>
+      <mesh position={[0, 0, -0.35]}>
         <boxGeometry args={[5.8, 2.15, 15.6]} />
         <meshStandardMaterial color="#16263b" metalness={0.68} roughness={0.28} />
       </mesh>
-      <mesh geometry={noseGeometry} castShadow receiveShadow>
+      <mesh geometry={noseGeometry}>
         <meshStandardMaterial color="#324a63" metalness={0.62} roughness={0.24} />
       </mesh>
-      <mesh position={[0, 0.46, 8.62]} rotation={[-0.16, 0, 0]} castShadow>
+      <mesh position={[0, 0.46, 8.62]} rotation={[-0.16, 0, 0]}>
         <boxGeometry args={[1.6, 0.24, 2.35]} />
         <meshStandardMaterial
           color="#7dd3fc"
@@ -182,11 +185,11 @@ const DropShipVisual = memo(function DropShipVisual({
           roughness={0.14}
         />
       </mesh>
-      <mesh position={[0, 0.72, -0.6]} castShadow receiveShadow>
+      <mesh position={[0, 0.72, -0.6]}>
         <boxGeometry args={[3.45, 0.62, 12.6]} />
         <meshStandardMaterial color="#263e5d" metalness={0.6} roughness={0.3} />
       </mesh>
-      <mesh position={[0, 1.2, 2.55]} castShadow>
+      <mesh position={[0, 1.2, 2.55]}>
         <boxGeometry args={[2.35, 0.58, 3.45]} />
         <meshStandardMaterial
           color="#284866"
@@ -204,15 +207,15 @@ const DropShipVisual = memo(function DropShipVisual({
         <boxGeometry args={[0.08, 0.18, 1.65]} />
         <meshBasicMaterial color="#67e8f9" transparent opacity={0.78} depthWrite={false} />
       </mesh>
-      <mesh position={[0, 1.78, -2.95]} castShadow>
+      <mesh position={[0, 1.78, -2.95]}>
         <boxGeometry args={[1.25, 0.46, 8.2]} />
         <meshStandardMaterial color="#0d1728" metalness={0.74} roughness={0.24} />
       </mesh>
-      <mesh position={[0, 1.64, -6.55]} castShadow receiveShadow>
+      <mesh position={[0, 1.64, -6.55]}>
         <boxGeometry args={[1.55, 2.35, 2.9]} />
         <meshStandardMaterial color="#101d31" metalness={0.62} roughness={0.27} />
       </mesh>
-      <mesh position={[0, -1.0, -1.55]} castShadow receiveShadow>
+      <mesh position={[0, -1.0, -1.55]}>
         <boxGeometry args={[2.95, 0.58, 9.4]} />
         <meshStandardMaterial color="#0b1423" metalness={0.58} roughness={0.32} />
       </mesh>
@@ -220,27 +223,27 @@ const DropShipVisual = memo(function DropShipVisual({
         <boxGeometry args={[2.25, 0.08, 5.7]} />
         <meshBasicMaterial color="#fb923c" transparent opacity={0.34} depthWrite={false} />
       </mesh>
-      <mesh position={[-4.95, -0.18, -1.35]} rotation={[0.05, -0.34, -0.08]} castShadow receiveShadow>
+      <mesh position={[-4.95, -0.18, -1.35]} rotation={[0.05, -0.34, -0.08]}>
         <boxGeometry args={[7.8, 0.38, 5.35]} />
         <meshStandardMaterial color="#284869" metalness={0.56} roughness={0.32} />
       </mesh>
-      <mesh position={[4.95, -0.18, -1.35]} rotation={[0.05, 0.34, 0.08]} castShadow receiveShadow>
+      <mesh position={[4.95, -0.18, -1.35]} rotation={[0.05, 0.34, 0.08]}>
         <boxGeometry args={[7.8, 0.38, 5.35]} />
         <meshStandardMaterial color="#284869" metalness={0.56} roughness={0.32} />
       </mesh>
-      <mesh position={[-8.25, -0.22, -2.95]} rotation={[0.02, -0.48, -0.13]} castShadow receiveShadow>
+      <mesh position={[-8.25, -0.22, -2.95]} rotation={[0.02, -0.48, -0.13]}>
         <boxGeometry args={[3.6, 0.28, 3.15]} />
         <meshStandardMaterial color="#122138" metalness={0.64} roughness={0.3} />
       </mesh>
-      <mesh position={[8.25, -0.22, -2.95]} rotation={[0.02, 0.48, 0.13]} castShadow receiveShadow>
+      <mesh position={[8.25, -0.22, -2.95]} rotation={[0.02, 0.48, 0.13]}>
         <boxGeometry args={[3.6, 0.28, 3.15]} />
         <meshStandardMaterial color="#122138" metalness={0.64} roughness={0.3} />
       </mesh>
-      <mesh position={[-6.25, 0.1, -5.55]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
+      <mesh position={[-6.25, 0.1, -5.55]} rotation={[Math.PI / 2, 0, 0]}>
         <cylinderGeometry args={[0.78, 0.98, 3.45, 18]} />
         <meshStandardMaterial color="#101b2d" metalness={0.76} roughness={0.22} />
       </mesh>
-      <mesh position={[6.25, 0.1, -5.55]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
+      <mesh position={[6.25, 0.1, -5.55]} rotation={[Math.PI / 2, 0, 0]}>
         <cylinderGeometry args={[0.78, 0.98, 3.45, 18]} />
         <meshStandardMaterial color="#101b2d" metalness={0.76} roughness={0.22} />
       </mesh>
@@ -254,7 +257,7 @@ const DropShipVisual = memo(function DropShipVisual({
       </mesh>
       {SHIP_ENGINE_X_OFFSETS.map((x, index) => (
         <group key={`drop-ship-engine-${x}`} position={[x, -0.22, -7.8]}>
-          <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
             <cylinderGeometry args={[0.6, 0.84, 2.05, 18]} />
             <meshStandardMaterial color="#07111f" metalness={0.82} roughness={0.2} />
           </mesh>
@@ -262,7 +265,9 @@ const DropShipVisual = memo(function DropShipVisual({
             <torusGeometry args={[0.68, 0.07, 8, 20]} />
             <meshBasicMaterial color="#f59e0b" transparent opacity={0.8} depthWrite={false} />
           </mesh>
-          <pointLight
+          <BudgetedPointLight
+            budgetPriority={1.2}
+            budgetRadius={18}
             ref={(light) => {
               engineLightRefs.current[index] = light;
             }}
@@ -287,8 +292,8 @@ const DropShipVisual = memo(function DropShipVisual({
           </mesh>
         </group>
       ))}
-      <pointLight position={[-6.25, 0.1, -7.75]} color="#67e8f9" intensity={22} distance={15} decay={2} />
-      <pointLight position={[6.25, 0.1, -7.75]} color="#67e8f9" intensity={22} distance={15} decay={2} />
+      <BudgetedPointLight budgetPriority={0.8} budgetRadius={15} position={[-6.25, 0.1, -7.75]} color="#67e8f9" intensity={22} distance={15} decay={2} />
+      <BudgetedPointLight budgetPriority={0.8} budgetRadius={15} position={[6.25, 0.1, -7.75]} color="#67e8f9" intensity={22} distance={15} decay={2} />
       <mesh position={[-6.25, 0.1, -8.55]} rotation={[-Math.PI / 2, 0, 0]}>
         <coneGeometry args={[0.62, 3.4, 18]} />
         <meshBasicMaterial color="#67e8f9" transparent opacity={0.32} depthWrite={false} blending={THREE.AdditiveBlending} />
@@ -329,7 +334,7 @@ const DropShipVisual = memo(function DropShipVisual({
       ))}
       {SHIP_WING_TIP_LIGHTS.map((light) => (
         <group key={`drop-ship-wing-tip-${light.x}`} position={[light.x, 0.05, -3.9]}>
-          <pointLight color={light.color} intensity={10} distance={10} decay={2} />
+          <BudgetedPointLight budgetPriority={0.35} budgetRadius={10} color={light.color} intensity={10} distance={10} decay={2} />
           <mesh>
             <sphereGeometry args={[0.16, 10, 10]} />
             <meshBasicMaterial color={light.color} />
@@ -421,11 +426,11 @@ const DropPodVisual = memo(function DropPodVisual({
       position={[snapshot.position.x, snapshot.position.y, snapshot.position.z]}
       scale={POD_SCALE}
     >
-      <mesh position={[0, 0.18, 0]} castShadow receiveShadow>
+      <mesh position={[0, 0.18, 0]}>
         <cylinderGeometry args={[1.08, 0.58, 2.08, 28]} />
         <meshStandardMaterial color="#d7e3ee" metalness={0.5} roughness={0.27} />
       </mesh>
-      <mesh position={[0, 1.34, 0]} castShadow receiveShadow>
+      <mesh position={[0, 1.34, 0]}>
         <cylinderGeometry args={[1.16, 1.04, 0.28, 28]} />
         <meshStandardMaterial color="#1c2634" metalness={0.64} roughness={0.32} />
       </mesh>
@@ -433,11 +438,11 @@ const DropPodVisual = memo(function DropPodVisual({
         <cylinderGeometry args={[0.86, 0.98, 0.06, 28]} />
         <meshBasicMaterial color="#fb923c" transparent opacity={0.52} depthWrite={false} />
       </mesh>
-      <mesh position={[0, -0.94, 0]} castShadow receiveShadow>
+      <mesh position={[0, -0.94, 0]}>
         <cylinderGeometry args={[0.58, 0.74, 0.72, 24]} />
         <meshStandardMaterial color="#28384f" metalness={0.62} roughness={0.28} />
       </mesh>
-      <mesh position={[0, -1.38, 0]} rotation={[Math.PI, 0, 0]} castShadow>
+      <mesh position={[0, -1.38, 0]} rotation={[Math.PI, 0, 0]}>
         <coneGeometry args={[0.54, 0.62, 24]} />
         <meshStandardMaterial color="#111827" metalness={0.78} roughness={0.2} />
       </mesh>
@@ -445,7 +450,7 @@ const DropPodVisual = memo(function DropPodVisual({
         <torusGeometry args={[0.64, 0.055, 8, 24]} />
         <meshBasicMaterial color="#67e8f9" transparent opacity={0.54} depthWrite={false} />
       </mesh>
-      <mesh position={[0, 0.3, -1.02]} castShadow>
+      <mesh position={[0, 0.3, -1.02]}>
         <boxGeometry args={[1.28, 0.72, 0.08]} />
         <meshStandardMaterial color="#26384c" metalness={0.46} roughness={0.24} />
       </mesh>
@@ -467,7 +472,7 @@ const DropPodVisual = memo(function DropPodVisual({
       ))}
       {POD_RCS_PORTS.map((port) => (
         <group key={`drop-pod-rcs-${port.key}`} position={port.position} rotation={port.rotation}>
-          <mesh castShadow>
+          <mesh>
             <cylinderGeometry args={[0.1, 0.14, 0.22, 12]} />
             <meshStandardMaterial color="#111827" metalness={0.68} roughness={0.24} />
           </mesh>
@@ -477,25 +482,33 @@ const DropPodVisual = memo(function DropPodVisual({
           </mesh>
         </group>
       ))}
-      <mesh position={[0.72, -0.72, 0]} rotation={[0, 0, 0.46]} castShadow>
+      <mesh position={[0.72, -0.72, 0]} rotation={[0, 0, 0.46]}>
         <boxGeometry args={[0.24, 0.86, 0.12]} />
         <meshStandardMaterial color="#7b8798" metalness={0.5} roughness={0.38} />
       </mesh>
-      <mesh position={[-0.72, -0.72, 0]} rotation={[0, 0, -0.46]} castShadow>
+      <mesh position={[-0.72, -0.72, 0]} rotation={[0, 0, -0.46]}>
         <boxGeometry args={[0.24, 0.86, 0.12]} />
         <meshStandardMaterial color="#7b8798" metalness={0.5} roughness={0.38} />
       </mesh>
-      <mesh position={[0, -0.72, 0.72]} rotation={[0.46, 0, 0]} castShadow>
+      <mesh position={[0, -0.72, 0.72]} rotation={[0.46, 0, 0]}>
         <boxGeometry args={[0.12, 0.86, 0.24]} />
         <meshStandardMaterial color="#7b8798" metalness={0.5} roughness={0.38} />
       </mesh>
-      <mesh position={[0, -0.72, -0.72]} rotation={[-0.46, 0, 0]} castShadow>
+      <mesh position={[0, -0.72, -0.72]} rotation={[-0.46, 0, 0]}>
         <boxGeometry args={[0.12, 0.86, 0.24]} />
         <meshStandardMaterial color="#7b8798" metalness={0.5} roughness={0.38} />
       </mesh>
       {snapshot.status === 'dropping' ? (
         <>
-          <pointLight position={[0, -1.78, 0]} color="#ffb347" intensity={30} distance={12} decay={2} />
+          <BudgetedPointLight
+            budgetPriority={isLocal ? 1.5 : 0.7}
+            budgetRadius={12}
+            position={[0, -1.78, 0]}
+            color="#ffb347"
+            intensity={30}
+            distance={12}
+            decay={2}
+          />
           <mesh position={[0, -1.74, 0]} rotation={[Math.PI / 2, 0, 0]}>
             <torusGeometry args={[0.34, 0.055, 8, 18]} />
             <meshBasicMaterial color="#f97316" transparent opacity={0.78} depthWrite={false} />

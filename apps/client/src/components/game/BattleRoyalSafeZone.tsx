@@ -1,5 +1,5 @@
 import { useFrame } from '@react-three/fiber';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { GamePhase, SafeZoneSnapshot, Vec3, VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
@@ -15,6 +15,13 @@ const SAFE_ZONE_WALL_HEIGHT = 42;
 const SAFE_ZONE_VISUAL_Y_OFFSET = 1.4;
 const SAFE_ZONE_FALLBACK_VISUAL_Y_OFFSET = 18;
 const SAFE_ZONE_RING_SAMPLE_COUNT = 96;
+const SAFE_ZONE_RING_SAMPLE_OFFSETS = Array.from(
+  { length: SAFE_ZONE_RING_SAMPLE_COUNT },
+  (_, index) => {
+    const angle = (index / SAFE_ZONE_RING_SAMPLE_COUNT) * Math.PI * 2;
+    return { x: Math.cos(angle), z: Math.sin(angle) };
+  }
+);
 
 const SAFE_ZONE_RING_GEOMETRY = new THREE.RingGeometry(0.965, 1.035, 160);
 const SAFE_ZONE_WALL_GEOMETRY = new THREE.CylinderGeometry(1, 1, 1, 160, 1, true);
@@ -45,10 +52,19 @@ function updateRingMaterial(
   material.opacity = opacity;
 }
 
-function getHeightfieldSurfaceY(manifest: VoxelMapManifest, point: Pick<Vec3, 'x' | 'z'>): number | null {
+interface SafeZoneVisualHeightSample {
+  manifest: VoxelMapManifest | null | undefined;
+  centerX: number;
+  centerY: number;
+  centerZ: number;
+  radius: number;
+  visualY: number;
+}
+
+function getHeightfieldSurfaceY(manifest: VoxelMapManifest, x: number, z: number): number | null {
   const { heightfield } = manifest;
-  const gridX = Math.floor((point.x - heightfield.origin.x) / heightfield.voxelSize.x);
-  const gridZ = Math.floor((point.z - heightfield.origin.z) / heightfield.voxelSize.z);
+  const gridX = Math.floor((x - heightfield.origin.x) / heightfield.voxelSize.x);
+  const gridZ = Math.floor((z - heightfield.origin.z) / heightfield.voxelSize.z);
   if (gridX < 0 || gridZ < 0 || gridX >= heightfield.size.x || gridZ >= heightfield.size.z) return null;
 
   const row = heightfield.topSolidRows[gridX + gridZ * heightfield.size.x] ?? 0;
@@ -62,20 +78,47 @@ export function getBattleRoyalSafeZoneVisualY(
 ): number {
   if (!manifest) return center.y + SAFE_ZONE_FALLBACK_VISUAL_Y_OFFSET;
 
-  let visualY = getHeightfieldSurfaceY(manifest, center) ?? center.y;
+  let visualY = getHeightfieldSurfaceY(manifest, center.x, center.z) ?? center.y;
   const sampleRadius = Math.max(0, radius);
   if (sampleRadius > 0.1) {
-    for (let index = 0; index < SAFE_ZONE_RING_SAMPLE_COUNT; index++) {
-      const angle = (index / SAFE_ZONE_RING_SAMPLE_COUNT) * Math.PI * 2;
-      const sampleY = getHeightfieldSurfaceY(manifest, {
-        x: center.x + Math.cos(angle) * sampleRadius,
-        z: center.z + Math.sin(angle) * sampleRadius,
-      });
+    for (const offset of SAFE_ZONE_RING_SAMPLE_OFFSETS) {
+      const sampleY = getHeightfieldSurfaceY(
+        manifest,
+        center.x + offset.x * sampleRadius,
+        center.z + offset.z * sampleRadius
+      );
       if (sampleY !== null) visualY = Math.max(visualY, sampleY);
     }
   }
 
   return visualY + SAFE_ZONE_VISUAL_Y_OFFSET;
+}
+
+function updateSafeZoneTarget(
+  target: THREE.Vector3,
+  previousSample: SafeZoneVisualHeightSample | null,
+  manifest: VoxelMapManifest | null | undefined,
+  center: Vec3,
+  radius: number
+): SafeZoneVisualHeightSample {
+  const sample = previousSample &&
+    previousSample.manifest === manifest &&
+    previousSample.centerX === center.x &&
+    previousSample.centerY === center.y &&
+    previousSample.centerZ === center.z &&
+    previousSample.radius === radius
+    ? previousSample
+    : {
+        manifest,
+        centerX: center.x,
+        centerY: center.y,
+        centerZ: center.z,
+        radius,
+        visualY: getBattleRoyalSafeZoneVisualY(manifest, center, radius),
+      };
+
+  target.set(center.x, sample.visualY, center.z);
+  return sample;
 }
 
 export function BattleRoyalSafeZone() {
@@ -94,6 +137,8 @@ export function BattleRoyalSafeZone() {
   const nextCenterRef = useRef(new THREE.Vector3());
   const targetCenterRef = useRef(new THREE.Vector3());
   const targetNextCenterRef = useRef(new THREE.Vector3());
+  const currentHeightSampleRef = useRef<SafeZoneVisualHeightSample | null>(null);
+  const nextHeightSampleRef = useRef<SafeZoneVisualHeightSample | null>(null);
   const currentRadiusRef = useRef(0);
   const nextRadiusRef = useRef(0);
   const initializedRef = useRef(false);
@@ -133,6 +178,12 @@ export function BattleRoyalSafeZone() {
     depthTest: true,
     blending: THREE.AdditiveBlending,
   }), []);
+  useEffect(() => () => {
+    currentRingMaterial.dispose();
+    nextRingMaterial.dispose();
+    currentWallMaterial.dispose();
+    nextWallMaterial.dispose();
+  }, [currentRingMaterial, currentWallMaterial, nextRingMaterial, nextWallMaterial]);
   const manifest = useMemo(() => {
     if (gameplayMode !== 'battle_royal') return null;
     return (
@@ -166,15 +217,19 @@ export function BattleRoyalSafeZone() {
     const targetNextCenter = safeZone.nextCenter;
     const targetRadius = Math.max(0.1, safeZone.radius);
     const targetNextRadius = Math.max(0.1, safeZone.nextRadius);
-    targetCenterRef.current.set(
-      targetCenter.x,
-      getBattleRoyalSafeZoneVisualY(manifest, targetCenter, targetRadius),
-      targetCenter.z
+    currentHeightSampleRef.current = updateSafeZoneTarget(
+      targetCenterRef.current,
+      currentHeightSampleRef.current,
+      manifest,
+      targetCenter,
+      targetRadius
     );
-    targetNextCenterRef.current.set(
-      targetNextCenter.x,
-      getBattleRoyalSafeZoneVisualY(manifest, targetNextCenter, targetNextRadius),
-      targetNextCenter.z
+    nextHeightSampleRef.current = updateSafeZoneTarget(
+      targetNextCenterRef.current,
+      nextHeightSampleRef.current,
+      manifest,
+      targetNextCenter,
+      targetNextRadius
     );
 
     if (!initializedRef.current) {

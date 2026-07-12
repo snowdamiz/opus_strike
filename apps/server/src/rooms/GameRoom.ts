@@ -576,6 +576,7 @@ import {
   buildRoomSecurityEvent,
   buildSecurityAuthorityEvent,
   getSecurityEventLogLevel,
+  isExpectedMovementAuthorityBarrier,
   type RoomSecurityEventInput,
   type SecurityEvent,
 } from './securityEventLogging';
@@ -1311,7 +1312,7 @@ export class GameRoom extends Room<GameState> {
   private readonly replicationFrames = new ReplicationFrameRuntime({
     visibilityInterest: this.visibilityInterest,
     getMovementCollisionRevision: (now) => this.getMovementCollisionRevision(now),
-    hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
+    hasLineOfSight: (from, to) => this.traceLineOfSight(from, to),
     getRecentCombatRevealUntil: (recipientId, targetId) => (
       this.replicationState.getRecentCombatInterestUntil(recipientId, targetId)
     ),
@@ -1350,6 +1351,7 @@ export class GameRoom extends Room<GameState> {
   private readonly botsWithReusedInputThisTick = new Set<string>();
   private readonly botPerceptionCandidatesScratch: Player[] = [];
   private readonly botPerceptionCandidateIdsScratch = new Set<string>();
+  private readonly botPerceptionDecoyPositionsScratch = new Map<string, PlainVec3>();
   private readonly botPerceptionLosCandidatePlayersScratch: Player[] = [];
   private readonly botPerceptionLosCandidateScoresScratch: number[] = [];
   private readonly botMovementLodEnemyHumanScratch: Player[] = [];
@@ -1403,6 +1405,9 @@ export class GameRoom extends Room<GameState> {
   private eventLoopDelay: IntervalHistogram | null = null;
   private lastTickDelayLoggedAtMs = 0;
   private readonly lineOfSightCache = new LineOfSightCache();
+  private readonly isLineOfSightBlockedAtPosition = (samplePoint: PlainVec3): boolean => (
+    isCollisionBlock(this.getBlockAtWorld(samplePoint))
+  );
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly participantRegistry = new RoomParticipantRegistry();
   private readonly antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
@@ -3113,6 +3118,10 @@ export class GameRoom extends Room<GameState> {
 
   private forceTransformFullSync(): void {
     this.replicationState.forceTransformFullSync();
+  }
+
+  private invalidatePlayerTransform(playerId: string): void {
+    this.replicationState.invalidatePlayerTransform(playerId);
   }
 
   private clearPlayerReplicationState(playerId: string): void {
@@ -5563,10 +5572,12 @@ export class GameRoom extends Room<GameState> {
       serverTime: this.state.serverTime || Date.now(),
     });
     const player = this.state.players.get(event.playerId);
-    this.antiCheat?.recordAuthorityEvent(buildSecurityAuthorityEvent(fullEvent, {
-      team: player?.team ?? null,
-      heroId: isHeroId(player?.heroId) ? player.heroId : null,
-    }));
+    if (!isExpectedMovementAuthorityBarrier(fullEvent)) {
+      this.antiCheat?.recordAuthorityEvent(buildSecurityAuthorityEvent(fullEvent, {
+        team: player?.team ?? null,
+        heroId: isHeroId(player?.heroId) ? player.heroId : null,
+      }));
+    }
     this.logSecurityEvent(fullEvent);
   }
 
@@ -5804,7 +5815,7 @@ export class GameRoom extends Room<GameState> {
     this.movementAuthorities.replacePendingCommands(authority, preservedCommands.slice(-MOVEMENT_MAX_SERVER_QUEUE));
     authority.metrics.queueLength = authority.pendingCommands.length;
     authority.correctionReason = reason;
-    this.forceTransformFullSync();
+    this.invalidatePlayerTransform(playerId);
     const player = this.state.players.get(playerId);
     if (player) {
       this.updateLastSafeMovement(player, authority.lastProcessedSeq);
@@ -5821,7 +5832,12 @@ export class GameRoom extends Room<GameState> {
         queueLength: authority.pendingCommands.length,
       },
     });
-    this.suppressObjectives(playerId, reason);
+    this.suppressObjectives(playerId, reason, Date.now(), {
+      recordSecurityEvent: !isExpectedMovementAuthorityBarrier({
+        type: 'movement_authority_barrier',
+        reason,
+      }),
+    });
     this.clearHookshotGrapple(playerId);
     this.clearHookshotDragPull(playerId);
   }
@@ -11073,10 +11089,12 @@ export class GameRoom extends Room<GameState> {
     losCandidateScores.length = 0;
     let budgetedLosCandidateCount = 0;
     const perceptionNow = this.state.serverTime || Date.now();
-    const candidates = this.getBotPerceptionCandidates(bot, frameContext);
+    const candidates = this.getBotPerceptionCandidates(bot, frameContext, perceptionNow);
     for (const enemy of candidates) {
       this.tickProfiler.recordCounter('bot_perception_candidates');
-      const decoyPosition = this.getActivePhantomUmbralDecoyPosition(enemy.id, perceptionNow);
+      const decoyPosition = isBattleRoyalMode(this.gameplayMode)
+        ? this.botPerceptionDecoyPositionsScratch.get(enemy.id) ?? null
+        : this.getActivePhantomUmbralDecoyPosition(enemy.id, perceptionNow);
       const distance = distance3D(bot.position, decoyPosition ?? enemy.position);
       if (distance > awarenessRange && !enemy.hasFlag) continue;
 
@@ -11239,11 +11257,33 @@ export class GameRoom extends Room<GameState> {
     scores[worstIndex] = score;
   }
 
-  private getBotPerceptionCandidates(bot: Player, frameContext: BotFrameContext): readonly Player[] {
+  private getBotPerceptionCandidates(
+    bot: Player,
+    frameContext: BotFrameContext,
+    perceptionNow = this.state.serverTime || Date.now()
+  ): readonly Player[] {
     const candidates = this.botPerceptionCandidatesScratch;
     const candidateIds = this.botPerceptionCandidateIdsScratch;
+    const decoyPositions = this.botPerceptionDecoyPositionsScratch;
     candidates.length = 0;
     candidateIds.clear();
+    decoyPositions.clear();
+
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      const awarenessRange = resolveBotAwarenessRange(this.gameplayMode);
+      const awarenessRangeSq = awarenessRange * awarenessRange;
+      for (const enemy of this.getEnemyPlayers(bot.team)) {
+        const decoyPosition = this.getActivePhantomUmbralDecoyPosition(enemy.id, perceptionNow);
+        if (decoyPosition) decoyPositions.set(enemy.id, decoyPosition);
+        const perceivedPosition = decoyPosition ?? enemy.position;
+        const dx = perceivedPosition.x - bot.position.x;
+        const dy = perceivedPosition.y - bot.position.y;
+        const dz = perceivedPosition.z - bot.position.z;
+        if (!enemy.hasFlag && dx * dx + dy * dy + dz * dz > awarenessRangeSq) continue;
+        candidates.push(enemy);
+      }
+      return candidates;
+    }
 
     if (!isCaptureTheFlagMode(this.gameplayMode) || !isTeam(bot.team)) {
       for (const snapshot of frameContext.snapshots) {
@@ -11884,6 +11924,10 @@ export class GameRoom extends Room<GameState> {
     return this.hasLineOfSight(this.getPlayerEyePosition(source), this.getPlayerBodyAimPosition(target));
   }
 
+  private traceLineOfSight(start: PlainVec3, end: PlainVec3): boolean {
+    return this.lineOfSightCache.traceLineOfSight(start, end, this.isLineOfSightBlockedAtPosition);
+  }
+
   private hasLineOfSight(start: PlainVec3, end: PlainVec3): boolean {
     const now = this.state.serverTime || Date.now();
     const collisionRevision = this.getMovementCollisionRevision(now);
@@ -11892,7 +11936,7 @@ export class GameRoom extends Room<GameState> {
       end,
       now,
       collisionRevision,
-      (samplePoint) => isCollisionBlock(this.getBlockAtWorld(samplePoint))
+      this.isLineOfSightBlockedAtPosition
     );
   }
 
@@ -13706,9 +13750,6 @@ export class GameRoom extends Room<GameState> {
     });
     this.syncBattleRoyalDropPlayers(now);
     this.activateLandedBattleRoyalDropPlayers(now);
-    this.state.players.forEach((player) => {
-      this.markMovementBarrier(player.id, 'spawn');
-    });
     loggers.room.info('Battle Royal deployment finished', {
       roomId: this.getRoomIdForDiagnostics(),
       lobbyId: this.lobbyId,

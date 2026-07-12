@@ -50,6 +50,15 @@ export class PlayerReplicationStateTracker {
     this.transformRecipientStates.clear();
   }
 
+  invalidatePlayerTransform(playerId: string): void {
+    this.globalTransformState.signatures.delete(playerId);
+    this.globalTransformState.heartbeatAt.delete(playerId);
+    for (const state of this.transformRecipientStates.values()) {
+      state.signatures.delete(playerId);
+      state.heartbeatAt.delete(playerId);
+    }
+  }
+
   markKnownPlayer(playerId: string): void {
     this.knownPlayerIds.add(playerId);
   }
@@ -80,13 +89,8 @@ export class PlayerReplicationStateTracker {
       signatures.delete(playerId);
     }
 
-    this.globalTransformState.signatures.delete(playerId);
-    this.globalTransformState.heartbeatAt.delete(playerId);
+    this.invalidatePlayerTransform(playerId);
     this.transformRecipientStates.delete(playerId);
-    for (const state of this.transformRecipientStates.values()) {
-      state.signatures.delete(playerId);
-      state.heartbeatAt.delete(playerId);
-    }
 
     this.recentCombatTransformUntil.delete(playerId);
     this.recentCombatInterestUntil.delete(playerId);

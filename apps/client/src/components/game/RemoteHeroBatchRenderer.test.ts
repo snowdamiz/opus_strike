@@ -202,4 +202,53 @@ assert.equal(mixedTeamStats.groups, 2, 'same-hero players on different teams sho
 assert.equal(mixedTeamStats.bodyPlayers, 0, 'mixed team far bodies should remain LOD culled');
 assert.equal(mixedTeamStats.outlinePlayers, 2, 'mixed team players should both render team-color silhouettes');
 
+const battleRoyalMixedTeamStats = runMultiPlayerFrame([
+  makePlayer({
+    id: 'br-red-hookshot',
+    team: 'red',
+    heroId: 'hookshot',
+    position: vec3(0.25, 1, 0),
+  }),
+  makePlayer({
+    id: 'br-blue-hookshot',
+    team: 'blue',
+    heroId: 'hookshot',
+    position: vec3(0.5, 1, 0),
+  }),
+], 'red', true);
+assert.equal(
+  battleRoyalMixedTeamStats.groups,
+  1,
+  'BR same-model players should share one instanced body group across teams'
+);
+assert.equal(battleRoyalMixedTeamStats.consideredPlayers, 2);
+assert.equal(battleRoyalMixedTeamStats.outlineBatches, 0);
+
+clearVisualState();
+const prewarmedBattleRoyalRunner = createRemoteHeroBatchBenchmarkRunner({
+  players: [],
+  resourcePlayers: [makePlayer({
+    id: 'dropping-br-phantom',
+    team: 'red',
+    position: vec3(0, 20, 0),
+  })],
+  isBattleRoyal: true,
+  localPlayerId: 'local-player',
+  localPlayerTeam: 'red',
+  config: OUTLINES_DISABLED_CONFIG,
+  cameraPosition: vec3(0, 1, 0),
+});
+try {
+  const prewarmedStats = prewarmedBattleRoyalRunner.runFrame({
+    deltaSeconds: 1 / 60,
+    elapsedSeconds: 1,
+    nowMs: 1000,
+  });
+  assert.equal(prewarmedStats.groups, 1, 'resource-only BR models should keep their batch group mounted');
+  assert.equal(prewarmedStats.emptyGroups, 1);
+  assert.ok(prewarmedStats.mountedInstancedMeshes > 0);
+} finally {
+  prewarmedBattleRoyalRunner.dispose();
+}
+
 console.log('remote hero batch renderer tests passed');

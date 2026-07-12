@@ -847,24 +847,6 @@ export const sampleRemoteTransformInto = (
   );
 };
 
-export const sampleRemoteTransform = (
-  playerId: string,
-  nowMs = Date.now()
-): SampledRemoteTransform | null => {
-  const sampled: SampledRemoteTransform = {
-    position: { x: 0, y: 0, z: 0 },
-    velocity: { x: 0, y: 0, z: 0 },
-    lookYaw: 0,
-    lookPitch: 0,
-    movementBits: 0,
-    wallRunSide: 0,
-    movementEpoch: 0,
-    extrapolatedMs: 0,
-    stale: false,
-  };
-  return sampleRemoteTransformInto(playerId, sampled, nowMs) ? sampled : null;
-};
-
 function clearActiveCombatBuckets(cache: CombatVisualFrameCache): void {
   for (let i = 0; i < cache.activeBuckets.length; i++) {
     cache.activeBuckets[i].length = 0;
@@ -1164,16 +1146,6 @@ export const findCombatVisualEnemyPlayerHit = (
   radius,
   'enemy'
 );
-
-export const clearCombatVisualFrameCache = (): void => {
-  const cache = visualStore.getState().combatFrameCache;
-  cache.frameKey = -1;
-  cache.builtAtMs = 0;
-  cache.sourceSize = 0;
-  cache.alivePlayers.length = 0;
-  cache.activeBuckets.length = 0;
-  cache.buckets.clear();
-};
 
 function removeIndexedPlayerId(
   ids: string[],

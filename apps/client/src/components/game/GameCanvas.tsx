@@ -158,9 +158,12 @@ function useSmoothedNumber(target: number, smoothing: number): number {
       const next = Math.abs(current - target) < 0.001
         ? target
         : THREE.MathUtils.lerp(current, target, alpha);
+      const renderedValue = next === target
+        ? target
+        : Math.round(next * 12) / 12;
 
       valueRef.current = next;
-      setValue((previous) => Math.abs(previous - next) < 0.002 ? previous : next);
+      setValue((previous) => previous === renderedValue ? previous : renderedValue);
 
       if (next !== target) {
         rafId = window.requestAnimationFrame(tick);
@@ -1259,7 +1262,7 @@ export function GameCanvas({
         }
         : qualityConfig.environment;
 
-      if (!battleRoyalVisibility) return environmentConfig;
+      if (!isBattleRoyal) return environmentConfig;
 
       return {
         ...environmentConfig,
@@ -1267,14 +1270,14 @@ export function GameCanvas({
         maxParticles: Math.min(environmentConfig.maxParticles, 260),
       };
     },
-    [battleRoyalVisibility, qualityConfig.environment, startupRampActive]
+    [isBattleRoyal, qualityConfig.environment, startupRampActive]
   );
   const effectiveRemotePlayerConfig = useMemo(
     () => {
-      if (!battleRoyalVisibility) return qualityConfig.remotePlayers;
+      if (!isBattleRoyal) return qualityConfig.remotePlayers;
       return scaleBattleRoyalRemotePlayersForCombat(qualityConfig.remotePlayers, battleRoyalCombatScale);
     },
-    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.remotePlayers]
+    [battleRoyalCombatScale, isBattleRoyal, qualityConfig.remotePlayers]
   );
   const effectiveEffectsConfig = useMemo(
     () => {
@@ -1287,19 +1290,29 @@ export function GameCanvas({
         }
         : qualityConfig.effects;
 
-      if (!battleRoyalVisibility) return effectsConfig;
+      if (!isBattleRoyal) return effectsConfig;
 
       const battleRoyalEffectsConfig = {
         ...effectsConfig,
         maxActiveParticles: Math.min(effectsConfig.maxActiveParticles, 220),
         maxActiveTrails: Math.min(effectsConfig.maxActiveTrails, 28),
         maxVisibleRemoteAbilityEffects: Math.min(effectsConfig.maxVisibleRemoteAbilityEffects, 18),
-        maxRemoteMovementEffectDistance: battleRoyalVisibility.remoteMovementEffectDistance,
-        maxTerrainImpactRenderDistance: battleRoyalVisibility.terrainImpactDistance,
+        maxRemoteMovementEffectDistance: battleRoyalVisibility?.remoteMovementEffectDistance ??
+          qualityConfig.battleRoyalVisibility.remoteMovementEffectDistance,
+        maxTerrainImpactRenderDistance: battleRoyalVisibility?.terrainImpactDistance ??
+          qualityConfig.battleRoyalVisibility.terrainImpactDistance,
       };
       return scaleBattleRoyalEffectsForCombat(battleRoyalEffectsConfig, battleRoyalCombatScale);
     },
-    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.effects, startupRampActive]
+    [
+      battleRoyalCombatScale,
+      battleRoyalVisibility?.remoteMovementEffectDistance,
+      battleRoyalVisibility?.terrainImpactDistance,
+      isBattleRoyal,
+      qualityConfig.battleRoyalVisibility,
+      qualityConfig.effects,
+      startupRampActive,
+    ]
   );
   const effectiveDynamicLights = useMemo(
     () => {
@@ -1309,18 +1322,18 @@ export function GameCanvas({
           staticAccentLights: false,
         }
         : qualityConfig.dynamicLights;
-      return battleRoyalVisibility
+      return isBattleRoyal
         ? scaleBattleRoyalDynamicLightsForCombat(dynamicLights, battleRoyalCombatScale)
         : dynamicLights;
     },
-    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.dynamicLights, startupRampActive]
+    [battleRoyalCombatScale, isBattleRoyal, qualityConfig.dynamicLights, startupRampActive]
   );
   const effectiveRagdollConfig = useMemo(
     () => {
-      if (!battleRoyalVisibility) return qualityConfig.ragdolls;
+      if (!isBattleRoyal) return qualityConfig.ragdolls;
       return scaleBattleRoyalRagdollsForCombat(qualityConfig.ragdolls, battleRoyalCombatScale);
     },
-    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.ragdolls]
+    [battleRoyalCombatScale, isBattleRoyal, qualityConfig.ragdolls]
   );
   const effectiveDressingShadows = startupRampActive ? false : qualityConfig.shadows.dressingShadows;
 

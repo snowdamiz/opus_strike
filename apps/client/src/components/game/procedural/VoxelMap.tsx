@@ -39,7 +39,7 @@ import {
   recordTerrainRendererDiagnostics,
 } from '../../../movement/networkDiagnostics';
 
-const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
+const TERRAIN_CULL_ACTIVE_UPDATE_INTERVAL_MS = 50;
 const TERRAIN_CULL_HYSTERESIS = 18;
 const TERRAIN_CULL_CAMERA_MOVE_EPSILON_SQ = 0.45 * 0.45;
 const TERRAIN_CULL_CAMERA_ROTATE_EPSILON = 0.00008;
@@ -399,7 +399,7 @@ export function VoxelMap({
     () => (
       activeBattleRoyalVisibility?.terrainLodEnabled
         ? getBattleRoyalStartupRegions(preparedMap, {
-          battleRoyalFullDetailDistance: activeBattleRoyalVisibility.terrainPrebuildFullDistance,
+          battleRoyalFullDetailDistance: activeBattleRoyalTerrainPrebuildFullDistance,
         })
         : renderableRegions
     ),
@@ -572,6 +572,13 @@ export function VoxelMap({
     regionGroupsRef.current.set(regionId, group);
     applyRegionGroupVisibility(regionId);
   }, [applyRegionGroupVisibility]);
+  const regionGroupRefs = useMemo(() => {
+    const refs = new Map<string, (group: THREE.Group | null) => void>();
+    for (const region of renderableRegions) {
+      refs.set(region.id, (group) => setRegionGroupNode(region.id, group));
+    }
+    return refs;
+  }, [renderableRegions, setRegionGroupNode]);
 
   useEffect(() => {
     regionRevealBudgetRef.current = Math.max(1, performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
@@ -627,10 +634,10 @@ export function VoxelMap({
     const prebuild = async () => {
       if (activeBattleRoyalVisibility) {
         const startupRegions = getBattleRoyalStartupRegions(preparedMap, {
-          battleRoyalFullDetailDistance: activeBattleRoyalVisibility.terrainPrebuildFullDistance,
+          battleRoyalFullDetailDistance: activeBattleRoyalTerrainPrebuildFullDistance,
         });
         const fullDetailRegions = getBattleRoyalStartupFullDetailRegions(preparedMap, {
-          battleRoyalFullDetailDistance: activeBattleRoyalVisibility.terrainPrebuildFullDistance,
+          battleRoyalFullDetailDistance: activeBattleRoyalTerrainPrebuildFullDistance,
         });
         await prebuildVoxelRegionGeometries(
           manifest,
@@ -774,6 +781,13 @@ export function VoxelMap({
       refreshMacroHiddenRegions(tile.regions);
     }
   }, [handleRegionGeometryReady, refreshMacroHiddenRegions]);
+  const macroTileGeometryReadyCallbacks = useMemo(() => {
+    const callbacks = new Map<string, () => void>();
+    for (const tile of macroTerrainTiles) {
+      callbacks.set(tile.id, () => handleMacroTileGeometryReady(tile));
+    }
+    return callbacks;
+  }, [handleMacroTileGeometryReady, macroTerrainTiles]);
 
   useEffect(() => {
     if (readyRegionManifestIdRef.current === manifest.id) return;
@@ -869,16 +883,10 @@ export function VoxelMap({
       TERRAIN_CULL_CAMERA_ROTATE_EPSILON;
 
     terrainCullAccumulatorRef.current += delta * 1000;
-    if (
-      !terrainCullNeedsRefreshRef.current &&
-      !cameraMoved &&
-      !cameraRotated &&
-      terrainCullAccumulatorRef.current < TERRAIN_CULL_UPDATE_INTERVAL_MS
-    ) {
-      return;
+    if (!terrainCullNeedsRefreshRef.current) {
+      if (!cameraMoved && !cameraRotated) return;
+      if (terrainCullAccumulatorRef.current < TERRAIN_CULL_ACTIVE_UPDATE_INTERVAL_MS) return;
     }
-
-    if (!terrainCullNeedsRefreshRef.current && !cameraMoved && !cameraRotated) return;
     terrainCullAccumulatorRef.current = 0;
     terrainCullNeedsRefreshRef.current = false;
     lastCameraPosition.copy(camera.position);
@@ -1201,7 +1209,7 @@ export function VoxelMap({
           shadowsEnabled={false}
           buildMode={meshBuildMode}
           detail="ultraCoarse"
-          onGeometryReady={() => handleMacroTileGeometryReady(tile)}
+          onGeometryReady={macroTileGeometryReadyCallbacks.get(tile.id)}
         />
       ))}
       {visibleRegions.map((region) => {
@@ -1211,7 +1219,7 @@ export function VoxelMap({
         return (
           <group
             key={`${manifest.id}:${region.id}`}
-            ref={(group) => setRegionGroupNode(region.id, group)}
+            ref={regionGroupRefs.get(region.id)}
           >
             <VoxelRegionMesh
               region={region}

@@ -443,4 +443,24 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
   assert.ok(metrics.losChecks < 60 * players.length * players.length);
 }
 
+{
+  const manager = new VisibilityInterestManager({
+    proximityRevealMeters: 1,
+    maxPerceptionMeters: 40,
+    maxLineOfSightCacheEntries: 8,
+  });
+  for (let index = 0; index < 9; index++) {
+    const recipient = makePlayer(`capacity-red-${index}`, 'red', 0, index);
+    const target = makePlayer(`capacity-blue-${index}`, 'blue', 12 + index, index);
+    manager.getRecipientInterest(recipient, target, makeContext({
+      now: 20_000,
+      hasLineOfSight: () => true,
+    }));
+  }
+  const cacheSize = (
+    manager as unknown as { lineOfSightCache: Map<number, unknown> }
+  ).lineOfSightCache.size;
+  assert.equal(cacheSize, 1, 'small LOS caches should evict a batch before refilling');
+}
+
 console.log('visibility interest management tests passed');

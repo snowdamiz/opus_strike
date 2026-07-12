@@ -12,11 +12,14 @@ import {
   type MovementCollisionWorld,
 } from '@voxel-strike/physics';
 import {
+  BOT_BATTLE_ROYAL_AWARENESS_RANGE,
   createInitialBotBrain,
   getBotSkillProfile,
   type BotBrain,
+  type BotPlayerSnapshot,
   type BotSteeringChoice,
   type PlainVec2,
+  type PlainVec3,
 } from '../rooms/bot-ai';
 import { SERVER_OWNED_MOVEMENT_STEP_SECONDS } from '../rooms/movementCommandDrain';
 import { GameRoom } from '../rooms/GameRoom';
@@ -53,6 +56,12 @@ type BotMovementLodRoom = {
     aliveBotCount: number,
     simulationTier: 'critical' | 'near' | 'background'
   ): number;
+  getBotPerceptionCandidates(
+    bot: Player,
+    frameContext: { snapshots: BotPlayerSnapshot[] },
+    perceptionNow?: number
+  ): readonly Player[];
+  getEnemyPlayers(team: Team): Player[];
   getBotLineOfSightFrameBudget(aliveBotCount: number): number;
   getBotSteeringProbeFrameBudget(aliveBotCount: number): number;
   consumeBotLineOfSightFrameBudget(frameContext: { lineOfSightChecksRemaining: number }): boolean;
@@ -102,6 +111,16 @@ type BotMovementLodRoom = {
   botsWithReusedInputThisTick: Set<string>;
   playerPressStates: PlayerPressStateTracker;
   botSimulationHumanScratch: Player[];
+  botPerceptionCandidatesScratch: Player[];
+  botPerceptionCandidateIdsScratch: Set<string>;
+  botPerceptionDecoyPositionsScratch: Map<string, PlainVec3>;
+  phantomUmbralDecoys: Map<string, {
+    startPosition: PlainVec3;
+    direction: PlainVec3;
+    startedAt: number;
+    expiresAt: number;
+    seed: number;
+  }>;
   botSimulationTierTick: number;
   botSimulationTierById: Map<string, 'critical' | 'near' | 'background'>;
   botNearBattleRoyalEnemyById: Map<string, boolean>;
@@ -145,6 +164,10 @@ function createRoom(): BotMovementLodRoom {
   room.botsWithReusedInputThisTick = new Set();
   room.playerPressStates = new PlayerPressStateTracker();
   room.botSimulationHumanScratch = [];
+  room.botPerceptionCandidatesScratch = [];
+  room.botPerceptionCandidateIdsScratch = new Set();
+  room.botPerceptionDecoyPositionsScratch = new Map();
+  room.phantomUmbralDecoys = new Map();
   room.botSimulationTierTick = -1;
   room.botSimulationTierById = new Map();
   room.botNearBattleRoyalEnemyById = new Map();
@@ -180,6 +203,9 @@ function createRoom(): BotMovementLodRoom {
       }
     }
   };
+  room.getEnemyPlayers = (team) => Array.from(room.state.players.values()).filter((player) => (
+    player.team !== team && player.state === 'alive'
+  ));
   return room;
 }
 
@@ -504,6 +530,71 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame, true), true);
   assert.equal(steeringFrame.steeringProbePriorityChecksRemaining, 0);
   assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame, true), false);
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const now = room.state.serverTime;
+  const bot = createBot(room, { id: 'perception-bot', team: 'br_01', x: 0, y: 1, z: 0 });
+  createBot(room, { id: 'squadmate', team: 'br_01', x: 2, y: 1, z: 0 });
+  createBot(room, {
+    id: 'nearby-enemy',
+    team: 'br_02',
+    x: BOT_BATTLE_ROYAL_AWARENESS_RANGE,
+    y: 1,
+    z: 0,
+  });
+  createBot(room, {
+    id: 'outside-enemy',
+    team: 'br_03',
+    x: BOT_BATTLE_ROYAL_AWARENESS_RANGE + 0.01,
+    y: 1,
+    z: 0,
+  });
+  const nearDecoyOwner = createBot(room, {
+    id: 'near-decoy-owner',
+    team: 'br_04',
+    x: BOT_BATTLE_ROYAL_AWARENESS_RANGE + 80,
+    y: 1,
+    z: 0,
+  });
+  const farDecoyOwner = createBot(room, {
+    id: 'far-decoy-owner',
+    team: 'br_05',
+    x: 4,
+    y: 1,
+    z: 0,
+  });
+  const flagCarrier = createBot(room, {
+    id: 'flag-carrier',
+    team: 'br_06',
+    x: BOT_BATTLE_ROYAL_AWARENESS_RANGE + 120,
+    y: 1,
+    z: 0,
+  });
+  flagCarrier.hasFlag = true;
+
+  room.phantomUmbralDecoys.set(nearDecoyOwner.id, {
+    startPosition: { x: 8, y: 1, z: 0 },
+    direction: { x: 1, y: 0, z: 0 },
+    startedAt: now,
+    expiresAt: now + 5_000,
+    seed: 11,
+  });
+  room.phantomUmbralDecoys.set(farDecoyOwner.id, {
+    startPosition: { x: BOT_BATTLE_ROYAL_AWARENESS_RANGE + 40, y: 1, z: 0 },
+    direction: { x: 1, y: 0, z: 0 },
+    startedAt: now,
+    expiresAt: now + 5_000,
+    seed: 17,
+  });
+
+  const candidateIds = room.getBotPerceptionCandidates(bot, { snapshots: [] }, now)
+    .map((candidate) => candidate.id);
+  assert.deepEqual(candidateIds, ['nearby-enemy', 'near-decoy-owner', 'flag-carrier']);
+  assert.equal(room.botPerceptionDecoyPositionsScratch.has(nearDecoyOwner.id), true);
+  assert.equal(room.botPerceptionDecoyPositionsScratch.has(farDecoyOwner.id), true);
 }
 
 {
