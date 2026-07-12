@@ -16,27 +16,32 @@ export interface RoomCustomMessageTotals {
 export class RoomMetrics {
   private readonly customMessageMetrics = new Map<string, RoomCustomMessageMetric>();
   private readonly tickDurationSamplesMs: Float64Array;
+  private readonly sortedTickDurationSamplesMs: Float64Array;
   private tickDurationSampleIndex = 0;
   private tickDurationSampleCount = 0;
+  private tickDurationSamplesSorted = true;
 
   constructor(sampleCount = DEFAULT_ROOM_LOAD_SAMPLE_COUNT) {
     this.tickDurationSamplesMs = new Float64Array(Math.max(1, Math.floor(sampleCount)));
+    this.sortedTickDurationSamplesMs = new Float64Array(this.tickDurationSamplesMs.length);
   }
 
   recordTickDuration(durationMs: number): void {
     this.tickDurationSamplesMs[this.tickDurationSampleIndex] = Math.max(0, durationMs);
     this.tickDurationSampleIndex = (this.tickDurationSampleIndex + 1) % this.tickDurationSamplesMs.length;
     this.tickDurationSampleCount = Math.min(this.tickDurationSamplesMs.length, this.tickDurationSampleCount + 1);
+    this.tickDurationSamplesSorted = false;
   }
 
   getTickDurationPercentile(percentile: number): number {
     if (this.tickDurationSampleCount === 0) return 0;
 
-    const samples: number[] = [];
-    for (let index = 0; index < this.tickDurationSampleCount; index++) {
-      samples.push(this.tickDurationSamplesMs[index]);
+    const samples = this.sortedTickDurationSamplesMs.subarray(0, this.tickDurationSampleCount);
+    if (!this.tickDurationSamplesSorted) {
+      samples.set(this.tickDurationSamplesMs.subarray(0, this.tickDurationSampleCount));
+      samples.sort();
+      this.tickDurationSamplesSorted = true;
     }
-    samples.sort((a, b) => a - b);
 
     const normalizedPercentile = Number.isFinite(percentile)
       ? Math.max(0, Math.min(1, percentile))

@@ -45,4 +45,32 @@ const end = { x: 12, y: 0, z: 0 };
   assert.ok(checks > checksAfterFirstLookup, 'expired LOS cache entries should recompute');
 }
 
+{
+  const cache = new LineOfSightCache();
+  assert.equal(cache.hasLineOfSight(start, end, 1_000, 1, () => false), true);
+
+  let rawChecks = 0;
+  assert.equal(cache.traceLineOfSight(start, end, () => {
+    rawChecks++;
+    return true;
+  }), false);
+  assert.ok(rawChecks > 0, 'raw LOS traces should bypass a matching cached result');
+}
+
+{
+  const cache = new LineOfSightCache();
+  const alwaysClear = () => false;
+  for (let index = 0; index <= 1_500; index++) {
+    cache.hasLineOfSight(
+      { x: index, y: 0, z: 0 },
+      { x: index + 0.1, y: 0, z: 0 },
+      1_000,
+      1,
+      alwaysClear
+    );
+  }
+  const cacheSize = (cache as unknown as { cache: Map<number, unknown> }).cache.size;
+  assert.ok(cacheSize <= 1_351, `capacity pruning should create batch headroom, received ${cacheSize}`);
+}
+
 console.log('line-of-sight-cache tests passed');

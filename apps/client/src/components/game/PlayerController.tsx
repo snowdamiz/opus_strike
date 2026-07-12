@@ -195,6 +195,7 @@ import {
   predictLocalPhantomBlink,
   predictLocalRiftBoltTeleport,
   stepLocalMovementPrediction,
+  stripClientMovementState,
   suppressDownedMovementInput,
 } from '../../movement/localPrediction';
 import {
@@ -2713,8 +2714,9 @@ function runBattleRoyalDeploymentFrame(
       clientTimeMs: now,
     });
     recordMovementCommandGenerated();
+    // Drop movement is server-owned; only buttons and look angles are consumed.
     refs.pendingMovementCommandsRef.current.push(
-      predictedDropState ? attachClientMovementState(command, predictedDropState) : command
+      stripClientMovementState(command)
     );
     refs.movementCommandAccumulatorRef.current -= MOVEMENT_SUBSTEP_SECONDS;
     refs.tickRef.current = command.seq;

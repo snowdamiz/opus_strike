@@ -57,6 +57,7 @@ export interface ReplicationFrameRuntimeOptions {
   visibilityInterest: VisibilityInterestManager;
   getMovementCollisionRevision: (now: number) => number;
   hasLineOfSight: (from: Vec3, to: Vec3) => boolean;
+  getLineOfSightPoints?: (player: VisibilityInterestPlayer) => readonly Vec3[];
   getRecentCombatRevealUntil: (recipientId: string, targetId: string) => number;
   buildPackedTransform: (id: string, player: Player) => PackedPlayerTransform;
   isFullRateTransform?: (id: string, player: Player, now: number) => boolean;
@@ -169,9 +170,17 @@ export class ReplicationFrameRuntime {
   private readonly frameVisibilityContext: VisibilityInterestContext;
   private readonly standaloneVisibilityContext: VisibilityInterestContext;
   private readonly frameContext: ReplicationFrameContext;
+  private readonly frameLineOfSightPoints = new Map<string, readonly Vec3[]>();
 
   constructor(private readonly options: ReplicationFrameRuntimeOptions) {
-    this.frameVisibilityContext = this.createVisibilityContext();
+    this.frameVisibilityContext = this.createVisibilityContext((player) => {
+      let points = this.frameLineOfSightPoints.get(player.id);
+      if (!points) {
+        points = this.getLineOfSightPoints(player);
+        this.frameLineOfSightPoints.set(player.id, points);
+      }
+      return points;
+    });
     this.standaloneVisibilityContext = this.createVisibilityContext();
     this.frameContext = {
       now: 0,
@@ -192,6 +201,7 @@ export class ReplicationFrameRuntime {
     const collisionRevision = this.options.getMovementCollisionRevision(now);
     const frameContext = this.frameContext;
     frameContext.now = now;
+    this.frameLineOfSightPoints.clear();
     this.prepareVisibilityContext(frameContext.visibilityContext, now, collisionRevision);
     frameContext.currentIds.clear();
     frameContext.visibilityPlayers.clear();
@@ -275,12 +285,20 @@ export class ReplicationFrameRuntime {
     );
   }
 
-  private createVisibilityContext(): VisibilityInterestContext {
+  private getLineOfSightPoints(player: VisibilityInterestPlayer): readonly Vec3[] {
+    return this.options.getLineOfSightPoints?.(player) ?? getSharedPlayerLineOfSightSamplePoints(player);
+  }
+
+  private createVisibilityContext(
+    getLineOfSightPoints: (player: VisibilityInterestPlayer) => readonly Vec3[] = (player) => (
+      this.getLineOfSightPoints(player)
+    )
+  ): VisibilityInterestContext {
     return {
       now: 0,
       collisionRevision: 0,
       getEyePosition: (player) => getSharedPlayerEyePosition(player.position),
-      getLineOfSightPoints: getSharedPlayerLineOfSightSamplePoints,
+      getLineOfSightPoints,
       hasLineOfSight: (from, to) => this.options.hasLineOfSight(from, to),
       getRecentCombatRevealUntil: (recipient, target) => (
         this.options.getRecentCombatRevealUntil(recipient.id, target.id)

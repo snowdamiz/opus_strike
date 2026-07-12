@@ -119,6 +119,7 @@
     "test:distributed-runtime": "tsx src/scripts/distributed-runtime.test.ts",
     "test:spatial-index": "tsx src/scripts/player-spatial-index.test.ts",
     "bench:room-load": "tsx src/scripts/performance-room-benchmark.ts",
+    "bench:room-metadata": "tsx src/scripts/room-metadata-benchmark.ts",
     "verify:autoscaler-live": "tsx src/scripts/autoscaler-live-readiness.ts",
     "simulate:autoscaler-demand": "tsx src/scripts/autoscaler-demand-simulator.ts",
     "harness:colyseus-distributed": "tsx src/scripts/colyseus-cross-process-harness.ts",

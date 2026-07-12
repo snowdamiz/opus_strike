@@ -97,8 +97,6 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
       const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
       if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
-      if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
-      if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
 
       const isHiddenFromRemoteRender = player.visibility === 'hidden' ||
         player.visibility === 'last_known' ||
@@ -106,8 +104,13 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
 
       if (isBattleRoyal) {
         nextResourcePlayers.push(player);
+        if (gamePhase === 'countdown' && player.state === 'spawning') continue;
+        if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
         if (!isHiddenFromRemoteRender) nextPlayers.push(player);
-      } else if (!isHiddenFromRemoteRender) {
+      } else if (
+        player.state !== 'dropping' &&
+        !isHiddenFromRemoteRender
+      ) {
         nextPlayers.push(player);
       }
     }
@@ -117,28 +120,6 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
       remoteBatchResourcePlayers: isBattleRoyal ? nextResourcePlayers : nextPlayers,
     };
   }, [gamePhase, hiddenPlayerId, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
-
-  useEffect(() => {
-    for (const player of otherPlayers) {
-      if (player.id === playerId || player.id === localPlayerId) continue;
-      const statusPlateMode = getRemoteStatusPlateMode(
-        player,
-        config,
-        isBattleRoyal,
-        localPlayerTeam,
-        nameplateAnchorPosition
-      );
-      if (!statusPlateMode) continue;
-      prewarmStatusPlateTexture(
-        statusPlateMode,
-        player.name,
-        getStatusPlateHealth(player, statusPlateMode),
-        getStatusPlateMaxHealth(player, statusPlateMode),
-        getStatusPlateShield(player, statusPlateMode),
-        getStatusPlateMaxShield(player, statusPlateMode)
-      );
-    }
-  }, [config.showNameplates, config.nameplateDistance, isBattleRoyal, localPlayerId, localPlayerTeam, nameplateAnchorPosition, otherPlayers, playerId]);
 
   return (
     <group>
@@ -998,22 +979,6 @@ function releaseStatusPlateTexture(
   entry.refCount = Math.max(0, entry.refCount - 1);
   entry.lastUsedAt = ++statusPlateTextureUseCounter;
   evictUnusedStatusPlateTextures();
-}
-
-function prewarmStatusPlateTexture(
-  mode: RemoteStatusPlateMode,
-  name: string,
-  health: number,
-  maxHealth: number,
-  shield: number,
-  maxShield: number
-): void {
-  if (typeof document === 'undefined') return;
-  const healthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
-  const shieldPercent = getQuantizedNameplateShieldPercent(shield, maxShield);
-  const texture = acquireStatusPlateTexture(mode, name, healthPercent, shieldPercent);
-  releaseStatusPlateTexture(mode, name, healthPercent, shieldPercent);
-  texture.needsUpdate = true;
 }
 
 const StatusPlate = memo(function StatusPlate({ mode, name, health, maxHealth, shield, maxShield, height }: StatusPlateProps) {

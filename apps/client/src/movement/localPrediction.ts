@@ -282,6 +282,11 @@ export function attachClientMovementState(
   return command;
 }
 
+export function stripClientMovementState(command: MovementCommand): MovementCommand {
+  delete command.clientState;
+  return command;
+}
+
 export function ensureLocalPredictionInitialized(player: Player): void {
   if (localMovementPrediction.hasState() && predictedPlayerId === player.id) return;
   nextCommandSeq = 1;

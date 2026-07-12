@@ -306,7 +306,12 @@ function getIdIndexMap<T extends { id: string }>(items: readonly T[]): Map<strin
 }
 
 function hasId<T extends { id: string }>(items: readonly T[], id: string): boolean {
-  return getIdIndexMap(items).has(id);
+  // Appends replace the array, so building an index for each short, capped
+  // projectile list costs more than a direct scan and creates avoidable GC.
+  for (let index = 0; index < items.length; index++) {
+    if (items[index].id === id) return true;
+  }
+  return false;
 }
 
 function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {

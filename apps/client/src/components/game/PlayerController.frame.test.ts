@@ -627,6 +627,10 @@ const phantomPressCommand = runCommandPhase({
 assert.deepEqual(phantomPressCommand.result.commandScheduleReasons, ['combat_edge']);
 assert.equal(phantomPressCommand.result.substepsThisFrame, 1);
 assert.equal(phantomPressCommand.ctx.__sentPackets.length, 1);
+assert.ok(
+  phantomPressCommand.ctx.__sentPackets[0].commands[0].clientState,
+  'normal gameplay commands must retain the client state used by movement validation',
+);
 assert.equal(
   movementButtonsToInputState(phantomPressCommand.ctx.__sentPackets[0].commands[0].buttons).primaryFire,
   true

@@ -1,7 +1,13 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { HERO_DEFINITIONS, HERO_SKIN_CATALOG, type HeroId, type HeroSkinId } from '@voxel-strike/shared';
+import {
+  ALL_HERO_IDS,
+  DEFAULT_HERO_SKIN_IDS,
+  HERO_DEFINITIONS,
+  type HeroId,
+  type HeroSkinId,
+} from '@voxel-strike/shared';
 import {
   clearExpiredDeathVisuals,
   getActiveDeathVisuals,
@@ -75,6 +81,7 @@ interface RagdollSlotHandle {
   runtime: RagdollRuntime | null;
   appliedOpacity: number;
   hidden: boolean;
+  renderedModelKey: string | null;
 }
 
 const RAGDOLL_BONES: HeroBoneName[] = [
@@ -137,6 +144,7 @@ const SLEEP_AFTER_MS = 720;
 const SLEEP_SPEED_SQ = 0.000018;
 const EXPIRY_SWEEP_INTERVAL_MS = 250;
 const DEFAULT_HERO: HeroId = 'phantom';
+const DEFAULT_SKIN = resolveHeroSkinModel(DEFAULT_HERO).skinId;
 
 const tmpVecA = new THREE.Vector3();
 const tmpVecB = new THREE.Vector3();
@@ -144,11 +152,6 @@ const tmpQuatA = new THREE.Quaternion();
 const tmpEuler = new THREE.Euler();
 const ragdollYawAxis = new THREE.Vector3(0, 1, 0);
 const ragdollRenderResourcesBySkin = new Map<HeroSkinId, RagdollRenderResources>();
-const RAGDOLL_SKIN_ENTRIES = HERO_SKIN_CATALOG.map((skin) => ({
-  heroId: skin.heroId,
-  skinId: skin.id,
-}));
-
 function hash01(value: string): number {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) {
@@ -439,8 +442,11 @@ function createRagdollMaterialInstances(
 }
 
 export function prewarmRagdollRenderResources(): void {
-  for (const entry of RAGDOLL_SKIN_ENTRIES) {
-    getRagdollRenderResources(entry.heroId, entry.skinId);
+  // Default skins cover the ragdoll shader/material variants up front. Other
+  // cosmetic manifests are cheap CPU-only cache misses on their first death;
+  // eagerly hydrating every catalog skin bloats landing-time work and memory.
+  for (const heroId of ALL_HERO_IDS) {
+    getRagdollRenderResources(heroId, DEFAULT_HERO_SKIN_IDS[heroId]);
   }
 }
 
@@ -478,10 +484,10 @@ function getFadeOpacity(snapshot: DeathVisualSnapshot, effectiveExpiresAt: numbe
   return 1 - THREE.MathUtils.clamp((age - fadeStart) / Math.max(1, lifetime - fadeStart), 0, 1);
 }
 
-function createRagdollSlotHandle(heroId: HeroId, skinId: HeroSkinId, poolIndex: number): RagdollSlotHandle {
+function createRagdollSlotHandle(poolIndex: number): RagdollSlotHandle {
   return {
-    heroId,
-    skinId,
+    heroId: DEFAULT_HERO,
+    skinId: DEFAULT_SKIN,
     poolIndex,
     group: null,
     boneRefs: {},
@@ -491,18 +497,13 @@ function createRagdollSlotHandle(heroId: HeroId, skinId: HeroSkinId, poolIndex: 
     runtime: null,
     appliedOpacity: -1,
     hidden: true,
+    renderedModelKey: null,
   };
 }
 
 function createRagdollSlotPool(maxTotal: number): RagdollSlotHandle[] {
   const clampedMax = Math.max(0, maxTotal);
-  const handles: RagdollSlotHandle[] = [];
-  for (const { heroId, skinId } of RAGDOLL_SKIN_ENTRIES) {
-    for (let poolIndex = 0; poolIndex < clampedMax; poolIndex++) {
-      handles.push(createRagdollSlotHandle(heroId, skinId, poolIndex));
-    }
-  }
-  return handles;
+  return Array.from({ length: clampedMax }, (_, poolIndex) => createRagdollSlotHandle(poolIndex));
 }
 
 function clearRagdollSlot(handle: RagdollSlotHandle): void {
@@ -518,30 +519,42 @@ function clearRagdollSlot(handle: RagdollSlotHandle): void {
 
 function findRagdollSlotForSnapshot(
   pool: RagdollSlotHandle[],
-  snapshotId: string,
-  heroId: HeroId,
-  skinId: HeroSkinId
+  snapshotId: string
 ): RagdollSlotHandle | null {
   for (const handle of pool) {
-    if (handle.heroId === heroId && handle.skinId === skinId && handle.assignedSnapshotId === snapshotId) {
+    if (handle.assignedSnapshotId === snapshotId) {
       return handle;
     }
   }
   return null;
 }
 
-function findFreeRagdollSlot(pool: RagdollSlotHandle[], heroId: HeroId, skinId: HeroSkinId): RagdollSlotHandle | null {
+function findFreeRagdollSlot(pool: RagdollSlotHandle[]): RagdollSlotHandle | null {
   for (const handle of pool) {
-    if (handle.heroId === heroId && handle.skinId === skinId && !handle.assignedSnapshotId) {
+    if (!handle.assignedSnapshotId) {
       return handle;
     }
   }
   return null;
 }
 
-function activateRagdollSlot(handle: RagdollSlotHandle, snapshot: DeathVisualSnapshot): void {
-  measureFrameWork('event.ragdoll.activateSlot', () => {
-    const height = HERO_DEFINITIONS[handle.heroId].stats.size.height;
+function activateRagdollSlot(
+  handle: RagdollSlotHandle,
+  snapshot: DeathVisualSnapshot,
+  heroId: HeroId,
+  skinId: HeroSkinId
+): boolean {
+  return measureFrameWork('event.ragdoll.activateSlot', () => {
+    const nextModelKey = `${heroId}:${skinId}`;
+    const modelChanged = handle.renderedModelKey !== nextModelKey;
+    handle.heroId = heroId;
+    handle.skinId = skinId;
+    if (modelChanged) {
+      handle.boneRefs = {};
+      handle.materialList = [];
+      if (handle.group) handle.group.visible = false;
+    }
+    const height = HERO_DEFINITIONS[heroId].stats.size.height;
     handle.assignedSnapshotId = snapshot.id;
     handle.snapshot = snapshot;
     handle.runtime = measureFrameWork('event.ragdoll.createRuntime', () => {
@@ -549,11 +562,12 @@ function activateRagdollSlot(handle: RagdollSlotHandle, snapshot: DeathVisualSna
       return createRagdollRuntime(snapshot, height);
     });
     handle.appliedOpacity = -1;
-    handle.hidden = false;
-    applyRagdollOpacity(handle.materialList, 1);
-    if (handle.group) {
+    handle.hidden = modelChanged;
+    if (!modelChanged) applyRagdollOpacity(handle.materialList, 1);
+    if (!modelChanged && handle.group) {
       handle.group.visible = true;
     }
+    return modelChanged;
   });
 }
 
@@ -562,6 +576,11 @@ function updateRagdollSlot(handle: RagdollSlotHandle, delta: number, nowMs: numb
   const runtime = handle.runtime;
   const root = handle.group;
   if (!snapshot || !runtime || !root) return false;
+
+  // A slot stays active while React swaps its lazily selected hero model.
+  // Removing it from the active list here would leave the newly rendered
+  // model visible but never simulated or faded until another death revision.
+  if (handle.renderedModelKey !== `${handle.heroId}:${handle.skinId}`) return true;
 
   if (!handle.hidden && !root.visible) {
     root.visible = true;
@@ -598,7 +617,8 @@ function updateRagdollSlot(handle: RagdollSlotHandle, delta: number, nowMs: numb
 function syncRagdollSlots(
   pool: RagdollSlotHandle[],
   activeSnapshots: DeathVisualSnapshot[]
-): RagdollSlotHandle[] {
+): { activeHandles: RagdollSlotHandle[]; modelChanged: boolean } {
+  let modelChanged = false;
   const activeIds = new Set<string>();
   for (const snapshot of activeSnapshots) {
     activeIds.add(snapshot.id);
@@ -613,11 +633,11 @@ function syncRagdollSlots(
   for (const snapshot of activeSnapshots) {
     const heroId = snapshot.heroId ?? DEFAULT_HERO;
     const skinId = resolveHeroSkinModel(heroId, snapshot.skinId).skinId;
-    if (findRagdollSlotForSnapshot(pool, snapshot.id, heroId, skinId)) continue;
+    if (findRagdollSlotForSnapshot(pool, snapshot.id)) continue;
 
-    const freeSlot = findFreeRagdollSlot(pool, heroId, skinId);
+    const freeSlot = findFreeRagdollSlot(pool);
     if (freeSlot) {
-      activateRagdollSlot(freeSlot, snapshot);
+      modelChanged = activateRagdollSlot(freeSlot, snapshot, heroId, skinId) || modelChanged;
     }
   }
 
@@ -627,7 +647,7 @@ function syncRagdollSlots(
       activeHandles.push(handle);
     }
   }
-  return activeHandles;
+  return { activeHandles, modelChanged };
 }
 
 function RagdollPartMeshes({
@@ -686,9 +706,11 @@ function RagdollTeamAccentMeshes({
 
 const PooledRagdollSlot = memo(function PooledRagdollSlot({
   handle,
+  modelKey,
   castShadows,
 }: {
   handle: RagdollSlotHandle;
+  modelKey: string;
   castShadows: boolean;
 }) {
   const resolvedHero = handle.heroId;
@@ -705,6 +727,14 @@ const PooledRagdollSlot = memo(function PooledRagdollSlot({
   );
 
   handle.materialList = materialList;
+
+  useLayoutEffect(() => {
+    handle.renderedModelKey = modelKey;
+    if (!handle.assignedSnapshotId) return;
+    handle.hidden = false;
+    applyRagdollOpacity(materialList, 1);
+    if (handle.group) handle.group.visible = true;
+  }, [handle, materialList, modelKey]);
 
   useEffect(() => {
     return () => {
@@ -778,7 +808,17 @@ const PooledRagdollSlot = memo(function PooledRagdollSlot({
 });
 
 export function RagdollManager({ config }: RagdollManagerProps) {
-  const poolHandles = useMemo(() => createRagdollSlotPool(config.maxTotal), [config.maxTotal]);
+  const poolHandlesRef = useRef<RagdollSlotHandle[]>([]);
+  const [, setPoolRevision] = useState(0);
+  if (poolHandlesRef.current.length < config.maxTotal) {
+    const firstNewSlot = poolHandlesRef.current.length;
+    const newSlots = createRagdollSlotPool(config.maxTotal - firstNewSlot);
+    for (let index = 0; index < newSlots.length; index++) {
+      newSlots[index].poolIndex = firstNewSlot + index;
+      poolHandlesRef.current.push(newSlots[index]);
+    }
+  }
+  const poolHandles = poolHandlesRef.current;
   const lastExpirySweepRef = useRef(0);
   const lastSyncedDeathRevisionRef = useRef(-1);
   const activeHandlesRef = useRef<RagdollSlotHandle[]>([]);
@@ -794,10 +834,11 @@ export function RagdollManager({ config }: RagdollManagerProps) {
       });
     }
 
-    return () => {
-      poolHandles.forEach(clearRagdollSlot);
-    };
-  }, [config.maxTotal, poolHandles]);
+  }, [config.maxTotal, poolHandles.length]);
+
+  useEffect(() => () => {
+    poolHandlesRef.current.forEach(clearRagdollSlot);
+  }, []);
 
   useFrame((_, delta) => {
     if (MOVEMENT_DIAGNOSTICS_ENABLED) {
@@ -814,7 +855,9 @@ export function RagdollManager({ config }: RagdollManagerProps) {
           const activeSnapshots = config.maxTotal <= 0
             ? []
             : getActiveDeathVisuals(now).slice(0, config.maxTotal);
-          activeHandlesRef.current = syncRagdollSlots(poolHandles, activeSnapshots);
+          const syncResult = syncRagdollSlots(poolHandles, activeSnapshots);
+          activeHandlesRef.current = syncResult.activeHandles;
+          if (syncResult.modelChanged) setPoolRevision((revision) => revision + 1);
           recordEffectSlotDiagnostics('ragdolls', {
             active: activeSnapshots.length,
             hiddenMounted: Math.max(0, poolHandles.length - activeSnapshots.length),
@@ -835,7 +878,9 @@ export function RagdollManager({ config }: RagdollManagerProps) {
         const activeSnapshots = config.maxTotal <= 0
           ? []
           : getActiveDeathVisuals(now).slice(0, config.maxTotal);
-        activeHandlesRef.current = syncRagdollSlots(poolHandles, activeSnapshots);
+        const syncResult = syncRagdollSlots(poolHandles, activeSnapshots);
+        activeHandlesRef.current = syncResult.activeHandles;
+        if (syncResult.modelChanged) setPoolRevision((revision) => revision + 1);
       }
     }
 
@@ -874,8 +919,9 @@ export function RagdollManager({ config }: RagdollManagerProps) {
     <group>
       {poolHandles.map((handle) => (
         <PooledRagdollSlot
-          key={`${handle.heroId}:${handle.skinId}:${handle.poolIndex}`}
+          key={handle.poolIndex}
           handle={handle}
+          modelKey={`${handle.heroId}:${handle.skinId}`}
           castShadows={config.castShadows && handle.poolIndex < config.maxHighQuality}
         />
       ))}

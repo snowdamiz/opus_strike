@@ -147,7 +147,7 @@ function createEmptyCounterSample(): RoomTickCounterSample {
   };
 }
 
-function percentile(sorted: readonly number[], percentileValue: number): number {
+function percentile(sorted: ArrayLike<number>, percentileValue: number): number {
   if (sorted.length === 0) return 0;
   const normalized = Number.isFinite(percentileValue)
     ? Math.max(0, Math.min(1, percentileValue))
@@ -157,11 +157,15 @@ function percentile(sorted: readonly number[], percentileValue: number): number 
 
 class RingSamples {
   private readonly samples: Float64Array;
+  private readonly sortedSamples: Float64Array;
   private index = 0;
   private count = 0;
+  private total = 0;
+  private samplesSorted = true;
 
   constructor(sampleCount: number) {
     this.samples = new Float64Array(Math.max(1, Math.floor(sampleCount)));
+    this.sortedSamples = new Float64Array(this.samples.length);
   }
 
   get sampleCount(): number {
@@ -169,19 +173,29 @@ class RingSamples {
   }
 
   record(valueMs: number): void {
-    this.samples[this.index] = Math.max(0, Number.isFinite(valueMs) ? valueMs : 0);
+    const value = Math.max(0, Number.isFinite(valueMs) ? valueMs : 0);
+    const replacedValue = this.count === this.samples.length ? this.samples[this.index] ?? 0 : 0;
+    this.samples[this.index] = value;
+    this.total += value - replacedValue;
     this.index = (this.index + 1) % this.samples.length;
     this.count = Math.min(this.samples.length, this.count + 1);
+    this.samplesSorted = false;
+  }
+
+  private getSortedSamples(): Float64Array {
+    const sorted = this.sortedSamples.subarray(0, this.count);
+    if (!this.samplesSorted) {
+      sorted.set(this.samples.subarray(0, this.count));
+      sorted.sort();
+      this.samplesSorted = true;
+    }
+    return sorted;
   }
 
   snapshot(): RoomTickSpanSample {
     if (this.count === 0) return createEmptySpanSample();
 
-    const sorted: number[] = [];
-    for (let index = 0; index < this.count; index++) {
-      sorted.push(this.samples[index]);
-    }
-    sorted.sort((a, b) => a - b);
+    const sorted = this.getSortedSamples();
 
     return {
       p50Ms: percentile(sorted, 0.5),
@@ -194,18 +208,11 @@ class RingSamples {
   counterSnapshot(): RoomTickCounterSample {
     if (this.count === 0) return createEmptyCounterSample();
 
-    const sorted: number[] = [];
-    let total = 0;
-    for (let index = 0; index < this.count; index++) {
-      const value = this.samples[index] ?? 0;
-      sorted.push(value);
-      total += value;
-    }
-    sorted.sort((a, b) => a - b);
+    const sorted = this.getSortedSamples();
 
     return {
-      total,
-      avgPerTick: total / this.count,
+      total: this.total,
+      avgPerTick: this.total / this.count,
       p50: percentile(sorted, 0.5),
       p95: percentile(sorted, 0.95),
       p99: percentile(sorted, 0.99),

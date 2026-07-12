@@ -123,6 +123,7 @@ interface RemotePartDescriptor {
   geometryKey: string;
   materialKey: string;
   playerFilter: PlayerFilter;
+  instanceTeamColor?: boolean;
   paletteKind?: MaterialKind;
   trimEmissiveIntensity?: number;
   fixedEmissiveIntensity?: number;
@@ -135,6 +136,7 @@ interface RemotePartBatch {
   material: THREE.MeshStandardMaterial;
   capacityPerPlayer: number;
   playerFilter: PlayerFilter;
+  instanceTeamColor: boolean;
 }
 
 interface RemoteOutlineBatch {
@@ -151,7 +153,6 @@ interface RemoteOutlineBatch {
 interface RemoteBatchResources {
   heroId: HeroId;
   skinId: HeroSkinId;
-  team: Team;
   batches: RemotePartBatch[];
   outlineBatches: RemoteOutlineBatch[];
   dispose: () => void;
@@ -285,6 +286,7 @@ const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
 // which capacity stays fixed for the rest of the match. Larger buffers only widen
 // allocations; the per-frame active instance count (mesh.count) is unaffected.
 const REMOTE_BATCH_CAPACITY_GRANULARITY = 16;
+const EMPTY_REMOTE_PLAYERS: readonly Player[] = [];
 
 function alignRemoteBatchPlayerCapacity(playerCount: number): number {
   return Math.max(
@@ -350,17 +352,18 @@ function resolveRemoteSkinId(player: Player): HeroSkinId {
   return resolveHeroSkinModel(resolveHeroId(player), player.skinId).skinId;
 }
 
-function getRemoteHeroResourceKey(player: Player): string {
-  return `${resolveHeroId(player)}:${resolveRemoteSkinId(player)}:${player.team as Team}`;
+function getRemoteHeroResourceKey(player: Player, includeOutlines: boolean): string {
+  const modelKey = `${resolveHeroId(player)}:${resolveRemoteSkinId(player)}`;
+  return includeOutlines ? `${modelKey}:${player.team as Team}` : modelKey;
 }
 
 function createRemoteBatchResourcesForKey(key: string, includeOutlines: boolean): RemoteBatchResources {
   const [heroId, skinId, team] = key.split(':') as [HeroId | undefined, HeroSkinId | undefined, Team | undefined];
-  if (!heroId || !skinId || !team) {
+  if (!heroId || !skinId || (includeOutlines && !team)) {
     throw new Error(`Invalid remote hero resource key: ${key}`);
   }
   recordFrameAllocation('remoteHeroBatch.resourceCreated');
-  return createRemoteBatchResources(heroId, skinId, team, includeOutlines);
+  return createRemoteBatchResources(heroId, skinId, team ?? null, includeOutlines);
 }
 
 function getCachedRemoteBatchResources(
@@ -392,13 +395,13 @@ function buildRemoteHeroRenderGroups(
   };
 
   for (const player of resourcePlayers) {
-    const key = getRemoteHeroResourceKey(player);
+    const key = getRemoteHeroResourceKey(player, includeOutlines);
     ensureResourceKey(key);
     resourcePlayerCountsByKey.set(key, resourcePlayerCountsByKey.get(key)! + 1);
   }
 
   for (const player of players) {
-    const key = getRemoteHeroResourceKey(player);
+    const key = getRemoteHeroResourceKey(player, includeOutlines);
     ensureResourceKey(key);
     let groupPlayers = playerGroupsByKey.get(key);
     if (!groupPlayers) {
@@ -411,11 +414,10 @@ function buildRemoteHeroRenderGroups(
     }
   }
 
-  const renderKeys = Array.from(playerGroupsByKey.keys()).sort();
+  const renderKeys = Array.from(resourcePlayerCountsByKey.keys()).sort();
   const groups: RemoteHeroRenderGroup[] = [];
   for (const key of renderKeys) {
-    const groupPlayers = playerGroupsByKey.get(key);
-    if (!groupPlayers) continue;
+    const groupPlayers = playerGroupsByKey.get(key) ?? EMPTY_REMOTE_PLAYERS;
     groups.push({
       key,
       players: groupPlayers,
@@ -1707,7 +1709,11 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
   };
 }
 
-function patchInstancedEmissiveMaterial(material: THREE.MeshStandardMaterial): void {
+function patchInstancedEmissiveMaterial(
+  material: THREE.MeshStandardMaterial,
+  instanceTeamColor: boolean
+): void {
+  const emissiveColorFactor = instanceTeamColor ? ' * vColor' : '';
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -1729,13 +1735,18 @@ varying float vInstanceEmissiveBoost;`
       )
       .replace(
         'vec3 totalEmissiveRadiance = emissive;',
-        'vec3 totalEmissiveRadiance = emissive * vInstanceEmissiveBoost;'
+        `vec3 totalEmissiveRadiance = emissive * vInstanceEmissiveBoost${emissiveColorFactor};`
       );
   };
-  material.customProgramCacheKey = () => 'remote-hero-instanced-emissive-v1';
+  material.customProgramCacheKey = () => (
+    `remote-hero-instanced-emissive-v2:${instanceTeamColor ? 'team' : 'fixed'}`
+  );
 }
 
-function createStandardBatchMaterial(options: RemoteMaterialOptions): THREE.MeshStandardMaterial {
+function createStandardBatchMaterial(
+  options: RemoteMaterialOptions,
+  instanceTeamColor: boolean
+): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     color: options.color,
     emissive: new THREE.Color(options.color),
@@ -1747,7 +1758,7 @@ function createStandardBatchMaterial(options: RemoteMaterialOptions): THREE.Mesh
     depthWrite: options.depthWrite,
     toneMapped: options.toneMapped,
   });
-  patchInstancedEmissiveMaterial(material);
+  patchInstancedEmissiveMaterial(material, instanceTeamColor);
   return material;
 }
 
@@ -1832,6 +1843,7 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
     playerFilter?: PlayerFilter;
     palette?: boolean;
     trim?: boolean;
+    instanceTeamColor?: boolean;
   }
 ): void {
   for (const bone of Object.keys(riggedPartsByBone) as HeroBoneName[]) {
@@ -1852,6 +1864,7 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
       );
       descriptors.push({
         ...base,
+        instanceTeamColor: options.instanceTeamColor,
         paletteKind: options.palette ? part.material : undefined,
         trimEmissiveIntensity: options.trim ? getTrimEmissiveIntensity(part) : undefined,
       });
@@ -1859,12 +1872,13 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
   }
 }
 
-function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: Team): {
+function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: Team | null): {
   descriptors: RemotePartDescriptor[];
   materialOptions: Map<string, RemoteMaterialOptions>;
 } {
   const manifest = resolveHeroSkinModel(heroId, skinId).bodyManifest;
-  const teamColor = TEAM_COLORS[team] ?? '#ffffff';
+  const instanceTeamColor = team === null;
+  const teamColor = team ? TEAM_COLORS[team] ?? '#ffffff' : '#ffffff';
   const materialOptionsByKey = new Map<string, RemoteMaterialOptions>();
   const descriptors: RemotePartDescriptor[] = [];
 
@@ -1905,6 +1919,7 @@ function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: T
   appendRiggedPartDescriptors(descriptors, groupRiggedParts(teamAccentParts), teamAccentKeyFor, {
     prefix: `${skinId}-team`,
     trim: true,
+    instanceTeamColor,
   });
 
   const botMarkerOptions = getPaletteMaterialOptions('accent', teamColor);
@@ -1926,6 +1941,7 @@ function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: T
       botMarkerKey,
       'bot'
     ),
+    instanceTeamColor,
     fixedEmissiveIntensity: HERO_BODY_BOT_MARKER_PART.fixedEmissiveIntensity,
   });
 
@@ -1935,7 +1951,7 @@ function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: T
 function createRemoteBatchResources(
   heroId: HeroId,
   skinId: HeroSkinId,
-  team: Team,
+  team: Team | null,
   includeOutlines = true
 ): RemoteBatchResources {
   const { descriptors, materialOptions } = createRemotePartDescriptors(heroId, skinId, team);
@@ -1943,7 +1959,7 @@ function createRemoteBatchResources(
   const outlineGroups = new Map<string, RemotePartDescriptor[]>();
 
   for (const descriptor of descriptors) {
-    const normalKey = `${descriptor.geometryKey}:${descriptor.materialKey}:${descriptor.playerFilter}`;
+    const normalKey = `${descriptor.geometryKey}:${descriptor.materialKey}:${descriptor.playerFilter}:${descriptor.instanceTeamColor ? 'team' : 'fixed'}`;
     const outlineKey = `${descriptor.geometryKey}:${descriptor.playerFilter}`;
     (normalGroups.get(normalKey) ?? normalGroups.set(normalKey, []).get(normalKey)!).push(descriptor);
     if (includeOutlines) {
@@ -1957,19 +1973,21 @@ function createRemoteBatchResources(
     if (!materialOptionsForKey) {
       throw new Error(`Missing remote hero material options for ${groupDescriptors[0].materialKey}`);
     }
-    const material = createStandardBatchMaterial(materialOptionsForKey);
+    const instanceTeamColor = groupDescriptors[0].instanceTeamColor === true;
+    const material = createStandardBatchMaterial(materialOptionsForKey, instanceTeamColor);
     materials.push(material);
     return {
-      key: `remote-hero:${skinId}:${team}:${key}`,
+      key: `remote-hero:${skinId}:${team ?? 'mixed'}:${key}`,
       geometry: groupDescriptors[0].geometry,
       descriptors: groupDescriptors,
       material,
       capacityPerPlayer: groupDescriptors.length,
       playerFilter: groupDescriptors[0].playerFilter,
+      instanceTeamColor,
     };
   });
 
-  const outlineBatches: RemoteOutlineBatch[] = Array.from(outlineGroups).flatMap(([key, groupDescriptors]) => (
+  const outlineBatches: RemoteOutlineBatch[] = !includeOutlines || !team ? [] : Array.from(outlineGroups).flatMap(([key, groupDescriptors]) => (
     REMOTE_OUTLINE_PASSES.map((pass): RemoteOutlineBatch => {
       const outlineDescriptors = groupDescriptors.map((descriptor) => createOutlineDescriptor(
         descriptor,
@@ -2003,7 +2021,6 @@ function createRemoteBatchResources(
   return {
     heroId,
     skinId,
-    team,
     batches,
     outlineBatches,
     dispose: () => {
@@ -2032,6 +2049,10 @@ function getDescriptorEmissiveBoost(
   return descriptor.fixedEmissiveIntensity ?? 0;
 }
 
+function getRemotePlayerTeamColor(player: Player, target: THREE.Color): THREE.Color {
+  return target.set(TEAM_COLORS[player.team] ?? '#ffffff');
+}
+
 function getOutlineLocalMatrix(descriptor: RemotePartDescriptor): THREE.Matrix4 {
   return descriptor.localMatrix;
 }
@@ -2056,6 +2077,19 @@ function assignDynamicInstancedMesh(
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   }
   onMesh(mesh);
+}
+
+function assignRemoteHeroInstancedMesh(
+  mesh: THREE.InstancedMesh | null,
+  batch: RemotePartBatch,
+  capacity: number,
+  onMesh: (mesh: THREE.InstancedMesh | null) => void
+): void {
+  if (mesh && batch.instanceTeamColor && !mesh.instanceColor) {
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  }
+  assignDynamicInstancedMesh(mesh, onMesh);
 }
 
 function RemoteHeroInstancedBatch({
@@ -2089,7 +2123,7 @@ function RemoteHeroInstancedBatch({
 
   return (
     <instancedMesh
-      ref={(mesh) => assignDynamicInstancedMesh(mesh, onMesh)}
+      ref={(mesh) => assignRemoteHeroInstancedMesh(mesh, batch, capacity, onMesh)}
       args={[geometry, batch.material, capacity]}
       count={0}
       castShadow={castShadow}
@@ -2161,6 +2195,8 @@ function RemoteHeroBatchGroup({
   const runtimeByPlayerIdRef = useRef<Map<string, RemoteHeroRuntime>>(new Map());
   const meshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const emissiveAttributesRef = useRef<Array<THREE.InstancedBufferAttribute | null>>([]);
+  const teamColorValuesRef = useRef<Array<Uint32Array | null>>([]);
+  const teamColorDirtyRef = useRef<Uint8Array>(new Uint8Array(resources.batches.length));
   const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const capeMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
@@ -2168,6 +2204,7 @@ function RemoteHeroBatchGroup({
   const cameraFrustumRef = useRef(new THREE.Frustum());
   const cameraFrustumMatrixRef = useRef(new THREE.Matrix4());
   const playerCullSphereRef = useRef(new THREE.Sphere());
+  const playerTeamColorRef = useRef(new THREE.Color());
   const playersRef = useRef(players);
   const configRef = useRef(config);
   const playerGenerationRef = useRef(0);
@@ -2192,6 +2229,9 @@ function RemoteHeroBatchGroup({
 
   if (countsRef.current.length !== resources.batches.length) {
     countsRef.current = new Uint32Array(resources.batches.length);
+  }
+  if (teamColorDirtyRef.current.length !== resources.batches.length) {
+    teamColorDirtyRef.current = new Uint8Array(resources.batches.length);
   }
   if (outlineCountsRef.current.length !== outlineBatches.length) {
     outlineCountsRef.current = new Uint32Array(outlineBatches.length);
@@ -2243,6 +2283,7 @@ function RemoteHeroBatchGroup({
       const frameConfig = configRef.current;
       const runtimes = runtimeByPlayerIdRef.current;
       const counts = countsRef.current;
+      const teamColorDirty = teamColorDirtyRef.current;
       const outlineCounts = outlineCountsRef.current;
       const visualState = visualStore.getState();
       const capeMesh = capeMeshRef.current;
@@ -2261,6 +2302,7 @@ function RemoteHeroBatchGroup({
         ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE)
         : Number.POSITIVE_INFINITY;
       counts.fill(0);
+      teamColorDirty.fill(0);
       outlineCounts.fill(0);
       let capeCount = 0;
 
@@ -2341,6 +2383,8 @@ function RemoteHeroBatchGroup({
           nowMs
         );
         updateBodyWorldMatrix(runtime);
+        const playerTeamColor = getRemotePlayerTeamColor(player, playerTeamColorRef.current);
+        const playerTeamColorHex = playerTeamColor.getHex();
         if (renderBody && capeMesh && hasActiveChronosAscendant(player, nowMs)) {
           const capeIntensity = getChronosAscendantCapeIntensity(player, nowMs);
           if (capeIntensity > 0.01) {
@@ -2361,10 +2405,20 @@ function RemoteHeroBatchGroup({
             const mesh = meshesRef.current[batchIndex];
             if (!mesh) continue;
             const emissiveAttribute = emissiveAttributesRef.current[batchIndex];
+            const teamColorValues = teamColorValuesRef.current[batchIndex];
             let writeIndex = counts[batchIndex];
             for (const descriptor of batch.descriptors) {
               mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
               emissiveAttribute?.setX(writeIndex, getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse));
+              if (
+                batch.instanceTeamColor &&
+                teamColorValues &&
+                teamColorValues[writeIndex] !== playerTeamColorHex
+              ) {
+                mesh.setColorAt(writeIndex, playerTeamColor);
+                teamColorValues[writeIndex] = playerTeamColorHex;
+                teamColorDirty[batchIndex] = 1;
+              }
               writeIndex++;
             }
             counts[batchIndex] = writeIndex;
@@ -2391,6 +2445,8 @@ function RemoteHeroBatchGroup({
       }
 
       for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
+        const batch = resources.batches[batchIndex];
+        if (!batch) continue;
         const mesh = meshesRef.current[batchIndex];
         if (!mesh) continue;
         const count = counts[batchIndex];
@@ -2399,6 +2455,7 @@ function RemoteHeroBatchGroup({
           mesh.instanceMatrix.needsUpdate = true;
           const emissiveAttribute = emissiveAttributesRef.current[batchIndex];
           if (emissiveAttribute) emissiveAttribute.needsUpdate = true;
+          if (teamColorDirty[batchIndex] && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         }
       }
 
@@ -2426,12 +2483,15 @@ function RemoteHeroBatchGroup({
           key={batch.key}
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
-          castShadow={config.castShadows}
+          castShadow={config.castShadows && !isBattleRoyal}
           writeSilhouetteStencil={!isBattleRoyal && outlineBatches.length > 0}
           onMesh={(mesh) => {
             meshesRef.current[batchIndex] = mesh;
             emissiveAttributesRef.current[batchIndex] = mesh
               ? (mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute)
+              : null;
+            teamColorValuesRef.current[batchIndex] = mesh?.instanceColor
+              ? new Uint32Array(mesh.instanceColor.count).fill(0xffffffff)
               : null;
           }}
         />

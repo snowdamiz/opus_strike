@@ -464,8 +464,11 @@ export const BATTLE_ROYAL_VISIBILITY_CONFIG: Record<GraphicsPreset, BattleRoyalV
   },
 };
 
-const BATTLE_ROYAL_FLIGHT_FULL_LOD_MULTIPLIER = 4.6;
-const BATTLE_ROYAL_FLIGHT_FULL_LOD_MIN_INCREASE = 130;
+// Aerial views need broad terrain coverage, but full voxel detail at the old
+// 4.6x radius hydrated most of the map while players were landing. Keep the
+// nearby read crisp and let the purpose-built coarse meshes cover distance.
+const BATTLE_ROYAL_FLIGHT_FULL_LOD_MULTIPLIER = 2;
+const BATTLE_ROYAL_FLIGHT_FULL_LOD_MIN_INCREASE = 64;
 const BATTLE_ROYAL_FLIGHT_COARSE_LOD_MULTIPLIER = 4.35;
 const BATTLE_ROYAL_FLIGHT_ULTRA_COARSE_LOD_MULTIPLIER = 4.15;
 const BATTLE_ROYAL_FLIGHT_CULL_MULTIPLIER = 4.15;
@@ -560,11 +563,6 @@ export function createBattleRoyalFlightVisibilityConfig(
     terrainLodUltraCoarseDistance: THREE.MathUtils.lerp(
       config.terrainLodUltraCoarseDistance,
       flightUltraCoarseDistance,
-      flightBlend
-    ),
-    terrainPrebuildFullDistance: THREE.MathUtils.lerp(
-      config.terrainPrebuildFullDistance,
-      flightFullDistance,
       flightBlend
     ),
     farTerrainFogBlend: THREE.MathUtils.lerp(

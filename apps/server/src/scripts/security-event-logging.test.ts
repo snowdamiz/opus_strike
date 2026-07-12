@@ -11,7 +11,7 @@ function barrier(reason: string) {
   return { type: 'movement_authority_barrier', reason };
 }
 
-for (const reason of ['spawn', 'respawn', 'teleport', 'knockback']) {
+for (const reason of ['spawn', 'respawn', 'teleport', 'knockback', 'root', 'downed', 'revived']) {
   assert.equal(isExpectedMovementAuthorityBarrier(barrier(reason)), true);
   assert.equal(getSecurityEventLogLevel(barrier(reason)), 'debug');
 }

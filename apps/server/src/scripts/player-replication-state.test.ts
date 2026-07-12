@@ -105,6 +105,30 @@ function vitals(id: string): PlayerVitalsSnapshot {
 
 {
   const tracker = new PlayerReplicationStateTracker();
+  const globalState = tracker.getGlobalTransformState();
+  const recipientAState = tracker.getTransformState('recipient-a');
+  const recipientBState = tracker.getTransformState('recipient-b');
+  for (const state of [globalState, recipientAState, recipientBState]) {
+    state.signatures.set('player-a', transformA);
+    state.signatures.set('player-b', transformB);
+    state.heartbeatAt.set('player-a', 1_000);
+    state.heartbeatAt.set('player-b', 1_000);
+  }
+  const streamEpoch = tracker.getStreamEpoch();
+
+  tracker.invalidatePlayerTransform('player-a');
+
+  for (const state of [globalState, recipientAState, recipientBState]) {
+    assert.equal(state.signatures.has('player-a'), false);
+    assert.equal(state.heartbeatAt.has('player-a'), false);
+    assert.equal(state.signatures.get('player-b'), transformB);
+    assert.equal(state.heartbeatAt.get('player-b'), 1_000);
+  }
+  assert.equal(tracker.getStreamEpoch(), streamEpoch);
+}
+
+{
+  const tracker = new PlayerReplicationStateTracker();
   tracker.markKnownPlayer('player-a');
   tracker.markKnownPlayer('player-b');
   tracker.getGlobalTransformState().signatures.set('player-a', transformA);

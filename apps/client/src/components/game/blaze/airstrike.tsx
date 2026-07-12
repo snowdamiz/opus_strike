@@ -94,6 +94,10 @@ const GEARSTORM_RADIUS = BLAZE_GEARSTORM_RADIUS;
 const GEARSTORM_COG_COUNT = 48;
 const GEARSTORM_BURN_PATCH_COUNT = 112;
 const GEARSTORM_GROUND_FLAME_COUNT = 112;
+const GEARSTORM_SECONDARY_COG_COUNT = 24;
+const GEARSTORM_SECONDARY_BURN_PATCH_COUNT = 48;
+const GEARSTORM_SECONDARY_GROUND_FLAME_COUNT = 48;
+const MAX_ACTIVE_GEARSTORMS = 4;
 const GEARSTORM_GROUND_RAY_START_HEIGHT = 96;
 const GEARSTORM_GROUND_RAY_DISTANCE = 220;
 const GROUND_FILL_OFFSET = 0.09;
@@ -496,15 +500,41 @@ interface AirStrikeOwner {
   ownerTeam?: Team | null;
 }
 
+function compactExpiredAirStrikes(nowMs: number): boolean {
+  let writeIndex = 0;
+  for (let readIndex = 0; readIndex < airStrikes.length; readIndex++) {
+    const strike = airStrikes[readIndex];
+    if (nowMs - strike.frameStartTime >= AIR_STRIKE_DURATION + 300) continue;
+    airStrikes[writeIndex++] = strike;
+  }
+  if (writeIndex === airStrikes.length) return false;
+  airStrikes.length = writeIndex;
+  airStrikeRevision++;
+  return true;
+}
+
 function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }, owner: AirStrikeOwner = {}) {
+  compactExpiredAirStrikes(getFrameClock().nowMs);
+  if (airStrikes.length >= MAX_ACTIVE_GEARSTORMS) {
+    airStrikes.splice(0, airStrikes.length - MAX_ACTIVE_GEARSTORMS + 1);
+    airStrikeRevision++;
+  }
+  const usePrimaryDecorationDensity = airStrikes.length === 0;
+  const cogCount = usePrimaryDecorationDensity ? GEARSTORM_COG_COUNT : GEARSTORM_SECONDARY_COG_COUNT;
+  const burnPatchCount = usePrimaryDecorationDensity
+    ? GEARSTORM_BURN_PATCH_COUNT
+    : GEARSTORM_SECONDARY_BURN_PATCH_COUNT;
+  const groundFlameCount = usePrimaryDecorationDensity
+    ? GEARSTORM_GROUND_FLAME_COUNT
+    : GEARSTORM_SECONDARY_GROUND_FLAME_COUNT;
   const fallbackGroundY = position.y - 1;
   const resolveGearstormGroundY = createGearstormGroundResolver(position.x, position.z, fallbackGroundY);
   const groundY = resolveGearstormGroundY(position.x, position.z);
-  const cogs = new Array<BurningCogData>(GEARSTORM_COG_COUNT);
-  const burnPatches = new Array<BurnPatchData>(GEARSTORM_BURN_PATCH_COUNT);
-  const groundFlames = new Array<GroundFlameData>(GEARSTORM_GROUND_FLAME_COUNT);
+  const cogs = new Array<BurningCogData>(cogCount);
+  const burnPatches = new Array<BurnPatchData>(burnPatchCount);
+  const groundFlames = new Array<GroundFlameData>(groundFlameCount);
 
-  for (let i = 0; i < GEARSTORM_COG_COUNT; i++) {
+  for (let i = 0; i < cogCount; i++) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 4.2 + Math.sqrt(Math.random()) * (GEARSTORM_RADIUS - 4.2);
     const x = position.x + Math.cos(angle) * radius;
@@ -527,7 +557,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
     };
   }
 
-  for (let i = 0; i < GEARSTORM_BURN_PATCH_COUNT; i++) {
+  for (let i = 0; i < burnPatchCount; i++) {
     const angle = Math.random() * Math.PI * 2;
     const distance = Math.sqrt(Math.random()) * GEARSTORM_RADIUS * 0.96;
     const x = position.x + Math.cos(angle) * distance;
@@ -545,7 +575,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
     };
   }
 
-  for (let i = 0; i < GEARSTORM_GROUND_FLAME_COUNT; i++) {
+  for (let i = 0; i < groundFlameCount; i++) {
     const angle = Math.random() * Math.PI * 2;
     const distance = Math.sqrt(Math.random()) * GEARSTORM_RADIUS * 0.94;
     const x = position.x + Math.cos(angle) * distance;
@@ -990,13 +1020,7 @@ export function useAirStrikes() {
   useFrame(() => {
     const now = getFrameClock().nowMs;
     let changed = lastRevisionRef.current !== airStrikeRevision;
-
-    for (let i = airStrikes.length - 1; i >= 0; i--) {
-      if (now - airStrikes[i].frameStartTime >= AIR_STRIKE_DURATION + 300) {
-        airStrikes.splice(i, 1);
-        changed = true;
-      }
-    }
+    changed = compactExpiredAirStrikes(now) || changed;
 
     if (changed) {
       lastRevisionRef.current = airStrikeRevision;

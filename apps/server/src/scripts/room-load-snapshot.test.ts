@@ -5,6 +5,7 @@ import {
 } from '../rooms/roomLoadSnapshot';
 import {
   ROOM_TICK_COUNTER_NAMES,
+  RoomTickProfiler,
   type RoomTickCounterSample,
   type RoomTickCounterName,
 } from '../rooms/roomTickProfiler';
@@ -49,6 +50,56 @@ function createTickOperationCounterSamples(
       }];
     })
   ) as Record<RoomTickCounterName, RoomTickCounterSample>;
+}
+
+{
+  const profiler = new RoomTickProfiler(4);
+  const tickSamples = [
+    { durationMs: 8, spanMs: 4, counter: 8 },
+    { durationMs: 2, spanMs: 1, counter: 2 },
+    { durationMs: 6, spanMs: 3, counter: 6 },
+    { durationMs: 4, spanMs: 2, counter: 4 },
+  ];
+  for (const sample of tickSamples) {
+    profiler.beginTick();
+    profiler.recordSpan('phase_gameplay_update', sample.spanMs);
+    profiler.recordCounter('bot_los_checks', sample.counter);
+    profiler.endTick(sample.durationMs);
+  }
+
+  const firstSnapshot = profiler.snapshot();
+  assert.deepEqual(firstSnapshot.spans.phase_gameplay_update, {
+    p50Ms: 2,
+    p95Ms: 3,
+    p99Ms: 3,
+    maxMs: 4,
+  });
+  assert.deepEqual(firstSnapshot.counterSamples.bot_los_checks, {
+    total: 20,
+    avgPerTick: 5,
+    p50: 4,
+    p95: 6,
+    p99: 6,
+    max: 8,
+  });
+
+  // Repeated snapshots reuse the sorted samples without sharing mutable output.
+  firstSnapshot.spans.phase_gameplay_update.p99Ms = 999;
+  assert.equal(profiler.snapshot().spans.phase_gameplay_update.p99Ms, 3);
+
+  // Replacing the oldest ring entry must invalidate both the sort and running total.
+  profiler.beginTick();
+  profiler.recordSpan('phase_gameplay_update', 10);
+  profiler.recordCounter('bot_los_checks', 10);
+  profiler.endTick(10);
+  assert.deepEqual(profiler.snapshot().counterSamples.bot_los_checks, {
+    total: 22,
+    avgPerTick: 5.5,
+    p50: 4,
+    p95: 6,
+    p99: 6,
+    max: 10,
+  });
 }
 
 {

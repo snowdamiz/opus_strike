@@ -16,6 +16,7 @@ import type { MovementSimulationState } from '@voxel-strike/physics';
 import {
   acknowledgeSelfMovementAck,
   applySelfMovementAuthority,
+  attachClientMovementState,
   createLocalMovementCommand,
   drainSelfMovementAuthorities,
   enqueueSelfMovementAuthority,
@@ -28,6 +29,7 @@ import {
   setLocalBlazePhoenixHovering,
   setLocalMovementRootedUntil,
   stepLocalMovementPrediction,
+  stripClientMovementState,
   suppressDownedMovementInput,
 } from './localPrediction';
 
@@ -67,6 +69,12 @@ assert.equal(command.movementEpoch, 5);
 assert.equal(command.seq, 43);
 assert.equal(command.collisionRevision, 3);
 assert.equal(getLocalMovementCollisionRevision(), 3);
+
+const fullStateCommand = attachClientMovementState(command, state());
+assert.deepEqual(fullStateCommand.clientState?.position, state().position);
+const dropCommand = stripClientMovementState(fullStateCommand);
+assert.equal(dropCommand, fullStateCommand);
+assert.equal('clientState' in dropCommand, false);
 
 const hintedCommand = createLocalMovementCommand(createEmptyInputState(), {
   lookYaw: 0,

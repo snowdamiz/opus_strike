@@ -165,9 +165,14 @@ const balancedFlightLod = getBattleRoyalTerrainLodDistances({
 });
 const balancedFlightVisibility = createBattleRoyalFlightVisibilityConfig(BATTLE_ROYAL_VISIBILITY_CONFIG.balanced);
 assert.equal(balancedFlightVisibility.terrainMacroTileSize, BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainMacroTileSize);
+assert.equal(
+  balancedFlightVisibility.terrainPrebuildFullDistance,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainPrebuildFullDistance,
+  'flight transitions should not restart full-detail terrain prebuilds'
+);
 assert.ok(
-  balancedFlightVisibility.terrainLodFullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainLodFullDistance * 4,
-  'flight full LOD breakpoint should be much farther than runtime'
+  balancedFlightVisibility.terrainLodFullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainLodFullDistance * 2,
+  'flight full LOD breakpoint should remain farther than runtime'
 );
 assert.ok(
   balancedFlightVisibility.terrainCullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainCullDistance * 4,

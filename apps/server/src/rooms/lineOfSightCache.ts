@@ -48,19 +48,40 @@ export class LineOfSightCache {
   private readonly cache = new Map<number, CachedLineOfSightResult>();
   private readonly samplePoint: PlainVec3 = { x: 0, y: 0, z: 0 };
 
+  traceLineOfSight(
+    start: PlainVec3,
+    end: PlainVec3,
+    isBlockedAtPosition: BlockedPositionPredicate
+  ): boolean {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const dz = end.z - start.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const steps = Math.max(1, Math.ceil(distance / BOT_LOS_SAMPLE_STEP));
+
+    const samplePoint = this.samplePoint;
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      samplePoint.x = start.x + dx * t;
+      samplePoint.y = start.y + dy * t;
+      samplePoint.z = start.z + dz * t;
+      if (isBlockedAtPosition(samplePoint)) return false;
+    }
+    return true;
+  }
+
   private pruneCache(now: number): void {
     if (this.cache.size < LINE_OF_SIGHT_CACHE_MAX_ENTRIES) return;
+    const targetSize = Math.max(0, LINE_OF_SIGHT_CACHE_MAX_ENTRIES - LINE_OF_SIGHT_CACHE_EVICT_BATCH);
 
     for (const [key, cached] of this.cache) {
       if (cached.expiresAt <= now) this.cache.delete(key);
     }
-    if (this.cache.size < LINE_OF_SIGHT_CACHE_MAX_ENTRIES) return;
+    if (this.cache.size <= targetSize) return;
 
-    let evicted = 0;
     for (const key of this.cache.keys()) {
       this.cache.delete(key);
-      evicted++;
-      if (evicted >= LINE_OF_SIGHT_CACHE_EVICT_BATCH || this.cache.size < LINE_OF_SIGHT_CACHE_MAX_ENTRIES) break;
+      if (this.cache.size <= targetSize) break;
     }
   }
 
@@ -88,24 +109,7 @@ export class LineOfSightCache {
       return cached.result;
     }
 
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const dz = end.z - start.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const steps = Math.max(1, Math.ceil(distance / BOT_LOS_SAMPLE_STEP));
-
-    let result = true;
-    const samplePoint = this.samplePoint;
-    for (let i = 1; i < steps; i++) {
-      const t = i / steps;
-      samplePoint.x = start.x + dx * t;
-      samplePoint.y = start.y + dy * t;
-      samplePoint.z = start.z + dz * t;
-      if (isBlockedAtPosition(samplePoint)) {
-        result = false;
-        break;
-      }
-    }
+    const result = this.traceLineOfSight(start, end, isBlockedAtPosition);
 
     this.pruneCache(now);
     if (cached) {

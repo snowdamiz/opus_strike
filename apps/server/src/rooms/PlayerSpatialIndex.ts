@@ -49,10 +49,6 @@ export class PlayerSpatialIndex {
     return this.alivePlayers;
   }
 
-  getAlivePlayersByTeam(): ReadonlyMap<Team, Player[]> {
-    return this.alivePlayersByTeam;
-  }
-
   getEnemyPlayers(team: Team): Player[] {
     let enemyPlayers = this.enemyPlayersByTeam.get(team);
     if (this.enemyPlayersGenerationByTeam.get(team) === this.rebuildGeneration) {
