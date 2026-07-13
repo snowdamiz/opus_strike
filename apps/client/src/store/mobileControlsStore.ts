@@ -80,7 +80,7 @@ export const useMobileControlsStore = create<MobileControlsState>((set) => ({
     };
   }),
 
-  reset: () => ({
+  reset: () => set({
     inputState: createEmptyInputState(),
     movementVector: { x: 0, y: 0 },
     isTouchInputActive: false,
