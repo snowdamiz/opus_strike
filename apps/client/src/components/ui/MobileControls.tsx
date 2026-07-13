@@ -22,9 +22,46 @@ interface MobileControlsProps {
 }
 
 function releasePointerCapture(element: Element, pointerId: number): void {
-  if (element.hasPointerCapture(pointerId)) {
-    element.releasePointerCapture(pointerId);
+  try {
+    if (element.hasPointerCapture(pointerId)) {
+      element.releasePointerCapture(pointerId);
+    }
+  } catch {
+    // Mobile browsers can invalidate the pointer while the page is being hidden.
   }
+}
+
+function useActivePointerTermination(
+  activePointerIdRef: { current: number | null },
+  resetPointer: () => void
+): void {
+  useEffect(() => {
+    const endActivePointer = (event: PointerEvent) => {
+      if (activePointerIdRef.current === event.pointerId) {
+        resetPointer();
+      }
+    };
+    const resetOnVisibilityChange = () => {
+      if (document.hidden) resetPointer();
+    };
+
+    // Listen above React's event root so a release cannot be swallowed by a
+    // different control after pointer capture is interrupted on mobile.
+    window.addEventListener('pointerup', endActivePointer, true);
+    window.addEventListener('pointercancel', endActivePointer, true);
+    window.addEventListener('blur', resetPointer);
+    window.addEventListener('pagehide', resetPointer);
+    document.addEventListener('visibilitychange', resetOnVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pointerup', endActivePointer, true);
+      window.removeEventListener('pointercancel', endActivePointer, true);
+      window.removeEventListener('blur', resetPointer);
+      window.removeEventListener('pagehide', resetPointer);
+      document.removeEventListener('visibilitychange', resetOnVisibilityChange);
+      resetPointer();
+    };
+  }, [activePointerIdRef, resetPointer]);
 }
 
 function TouchAimZone({ disabled }: { disabled: boolean }) {
@@ -34,25 +71,17 @@ function TouchAimZone({ disabled }: { disabled: boolean }) {
 
   const resetAimPointer = useCallback(() => {
     const pointerId = activePointerIdRef.current;
-    if (pointerId !== null && zoneRef.current?.hasPointerCapture(pointerId)) {
+    activePointerIdRef.current = null;
+    if (pointerId !== null && zoneRef.current) {
       releasePointerCapture(zoneRef.current, pointerId);
     }
-    activePointerIdRef.current = null;
   }, []);
 
   useEffect(() => {
     if (disabled) resetAimPointer();
-    return resetAimPointer;
   }, [disabled, resetAimPointer]);
 
-  const endAim = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (activePointerIdRef.current !== e.pointerId) return;
-
-    activePointerIdRef.current = null;
-    releasePointerCapture(e.currentTarget, e.pointerId);
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
+  useActivePointerTermination(activePointerIdRef, resetAimPointer);
 
   return (
     <div
@@ -79,11 +108,9 @@ function TouchAimZone({ disabled }: { disabled: boolean }) {
         e.preventDefault();
         e.stopPropagation();
       }}
-      onPointerUp={endAim}
-      onPointerCancel={endAim}
       onLostPointerCapture={(e) => {
         if (activePointerIdRef.current === e.pointerId) {
-          activePointerIdRef.current = null;
+          resetAimPointer();
         }
       }}
     />
@@ -98,17 +125,18 @@ function MovementStick({ disabled }: { disabled: boolean }) {
 
   const resetMovement = useCallback(() => {
     const pointerId = activePointerIdRef.current;
-    if (pointerId !== null && stickRef.current?.hasPointerCapture(pointerId)) {
-      releasePointerCapture(stickRef.current, pointerId);
-    }
     activePointerIdRef.current = null;
     setMovementVector(0, 0);
+    if (pointerId !== null && stickRef.current) {
+      releasePointerCapture(stickRef.current, pointerId);
+    }
   }, [setMovementVector]);
 
   useEffect(() => {
     if (disabled) resetMovement();
-    return resetMovement;
   }, [disabled, resetMovement]);
+
+  useActivePointerTermination(activePointerIdRef, resetMovement);
 
   const updateVector = useCallback((clientX: number, clientY: number) => {
     const stick = stickRef.current;
@@ -138,16 +166,6 @@ function MovementStick({ disabled }: { disabled: boolean }) {
     );
   }, [setMovementVector]);
 
-  const endMovement = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (activePointerIdRef.current !== e.pointerId) return;
-
-    activePointerIdRef.current = null;
-    setMovementVector(0, 0);
-    releasePointerCapture(e.currentTarget, e.pointerId);
-    e.preventDefault();
-    e.stopPropagation();
-  }, [setMovementVector]);
-
   return (
     <div
       ref={stickRef}
@@ -174,12 +192,9 @@ function MovementStick({ disabled }: { disabled: boolean }) {
         e.preventDefault();
         e.stopPropagation();
       }}
-      onPointerUp={endMovement}
-      onPointerCancel={endMovement}
       onLostPointerCapture={(e) => {
         if (activePointerIdRef.current === e.pointerId) {
-          activePointerIdRef.current = null;
-          setMovementVector(0, 0);
+          resetMovement();
         }
       }}
     >
@@ -473,10 +488,12 @@ export function MobileControls({
     };
 
     window.addEventListener('blur', resetOnPagePause);
+    window.addEventListener('pagehide', resetOnPagePause);
     document.addEventListener('visibilitychange', resetOnVisibilityChange);
 
     return () => {
       window.removeEventListener('blur', resetOnPagePause);
+      window.removeEventListener('pagehide', resetOnPagePause);
       document.removeEventListener('visibilitychange', resetOnVisibilityChange);
       resetOnPagePause();
     };
