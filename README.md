@@ -135,11 +135,9 @@ fly redis status opus-strike-redis
 fly secrets set -a opus-strike-server COLYSEUS_REDIS_URL='<private redis URL>'
 
 # Deploy the server, keep the primary region stronger, and add one smaller
-# Europe and Asia Machine.
+# Asia Machine.
 fly deploy -a opus-strike-server --config apps/server/fly.toml
-fly scale count app=3 europe=0 asia=0 -a opus-strike-server --config apps/server/fly.toml --region iad
-fly scale count europe=1 -a opus-strike-server --config apps/server/fly.toml --region lhr
-fly scale count asia=1 -a opus-strike-server --config apps/server/fly.toml --region nrt
+fly scale count app=2 europe=0 asia=1 -a opus-strike-server --config apps/server/fly.toml --region iad
 ```
 
 The checked-in `apps/server/fly.toml` enables:
