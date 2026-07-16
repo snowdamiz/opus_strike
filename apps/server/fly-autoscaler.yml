@@ -6,9 +6,9 @@ process-group: "app"
 # dynamic player-capacity estimate from tick cost, CPU, event-loop delay, and
 # memory pressure; overloaded Machines can request one more Machine even before
 # raw player demand crosses the projected per-Machine capacity.
-# The autoscaler only creates primary-region app Machines. The europe and asia
-# process groups are fixed smaller regional pools managed with fly scale count.
-# Keep three running primary Machines through fly.toml and one stopped spare
+# The autoscaler only creates primary-region app Machines. The asia process
+# group is a fixed smaller regional pool managed with fly scale count.
+# Keep two running primary Machines through fly.toml and one stopped spare
 # ready here.
 # Demand can create up to five Machines total. The running-machine guard is
 # outside the demand calculation so an already-running Machine is never selected
