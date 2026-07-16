@@ -95,7 +95,43 @@ type HeroEpicSet = {
   ultimate: NewEpicSkill; // F
 };
 
-const BLAZE_SKILL_PREVIEWS: Record<string, LoadoutSkillPreviewVideo> = {
+const LOADOUT_SKILL_PREVIEWS: Record<string, LoadoutSkillPreviewVideo> = {
+  'phantom-primaryFire-stock': {
+    videoSrc: '/videos/phantom/dire-ball.mp4',
+    posterSrc: '/videos/phantom/posters/dire-ball.jpg',
+  },
+  'phantom-primaryFire-soulrend': {
+    videoSrc: '/videos/phantom/soulrend-daggers.mp4',
+    posterSrc: '/videos/phantom/posters/soulrend-daggers.jpg',
+  },
+  'phantom-secondaryFire-stock': {
+    videoSrc: '/videos/phantom/void-ray.mp4',
+    posterSrc: '/videos/phantom/posters/void-ray.jpg',
+  },
+  'phantom-secondaryFire-riftbolt': {
+    videoSrc: '/videos/phantom/rift-bolt.mp4',
+    posterSrc: '/videos/phantom/posters/rift-bolt.jpg',
+  },
+  'phantom-ability1-stock': {
+    videoSrc: '/videos/phantom/blink.mp4',
+    posterSrc: '/videos/phantom/posters/blink.jpg',
+  },
+  'phantom-ability1-umbraldecoy': {
+    videoSrc: '/videos/phantom/umbral-decoy.mp4',
+    posterSrc: '/videos/phantom/posters/umbral-decoy.jpg',
+  },
+  'phantom-ability2-stock': {
+    videoSrc: '/videos/phantom/personal-shield.mp4',
+    posterSrc: '/videos/phantom/posters/personal-shield.jpg',
+  },
+  'phantom-ultimate-stock': {
+    videoSrc: '/videos/phantom/phantom-veil.mp4',
+    posterSrc: '/videos/phantom/posters/phantom-veil.jpg',
+  },
+  'phantom-ultimate-nightreign': {
+    videoSrc: '/videos/phantom/nightreign.mp4',
+    posterSrc: '/videos/phantom/posters/nightreign.jpg',
+  },
   'blaze-primaryFire-stock': {
     videoSrc: '/videos/blaze/fireball-rockets.mp4',
     posterSrc: '/videos/blaze/posters/fireball-rockets.jpg',
@@ -135,7 +171,7 @@ const BLAZE_SKILL_PREVIEWS: Record<string, LoadoutSkillPreviewVideo> = {
 };
 
 function getSkillPreviewVideo(optionId: string): LoadoutSkillPreviewVideo | undefined {
-  return BLAZE_SKILL_PREVIEWS[optionId];
+  return LOADOUT_SKILL_PREVIEWS[optionId];
 }
 
 const NEW_EPIC_SKILLS: Record<HeroId, HeroEpicSet> = {
