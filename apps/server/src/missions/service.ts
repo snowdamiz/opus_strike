@@ -1,4 +1,5 @@
 import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
+import bs58 from 'bs58';
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
@@ -65,8 +66,35 @@ const ADMIN_LIBRARY_LIMIT = 200;
 const ADMIN_AUDIT_LIMIT = 75;
 const TOKEN_PAYOUT_BATCH_SIZE = 25;
 const TOKEN_PAYOUT_MAX_ATTEMPTS = 6;
+const TOKEN_PAYOUT_PROCESSING_LEASE_MS = 5 * 60 * 1000;
 const MISSION_PROGRESS_SCOPE_KEY = 'lifetime';
 const MISSION_REWARD_BPS_TOTAL = 10_000;
+
+export type GameTokenPayoutSignatureDecision = 'granted' | 'failed' | 'pending' | 'expired';
+
+export function decideGameTokenPayoutSignature(input: {
+  status: {
+    err: unknown;
+    confirmationStatus?: string | null;
+    confirmations?: number | null;
+  } | null;
+  lastValidBlockHeight: bigint | null;
+  currentBlockHeight: bigint | null;
+}): GameTokenPayoutSignatureDecision {
+  if (input.status?.err) return 'failed';
+  if (input.status && (
+    input.status.confirmationStatus === 'confirmed'
+    || input.status.confirmationStatus === 'finalized'
+    || input.status.confirmations === null
+  )) return 'granted';
+  if (input.status) return 'pending';
+  if (
+    input.lastValidBlockHeight !== null
+    && input.currentBlockHeight !== null
+    && input.currentBlockHeight > input.lastValidBlockHeight
+  ) return 'expired';
+  return 'pending';
+}
 
 export interface SettleMatchDailyMissionsInput {
   matchId: string;
@@ -608,7 +636,12 @@ export class DailyMissionService {
         prisma.dailyMissionDefinition.count({ where: { enabled: true, archivedAt: null } }),
         prisma.dailyMissionDefinition.count({ where: { archivedAt: { not: null } } }),
         prisma.missionRewardGrant.count({ where: failedGrantWhere() }),
-        prisma.gameTokenPayout.count({ where: { status: { in: ['pending', 'processing', 'submitted'] } } }),
+        prisma.gameTokenPayout.count({
+          where: {
+            status: { in: ['pending', 'processing', 'submitted'] },
+            missionRewardGrant: { isNot: null },
+          },
+        }),
       ]),
     ]);
     const activeMissionIds = active.map((mission) => mission.id);
@@ -1164,6 +1197,11 @@ export class DailyMissionService {
         OR: [
           { status: 'pending' },
           { status: 'failed', attemptCount: { lt: TOKEN_PAYOUT_MAX_ATTEMPTS } },
+          { status: 'submitted' },
+          {
+            status: 'processing',
+            updatedAt: { lt: new Date(Date.now() - TOKEN_PAYOUT_PROCESSING_LEASE_MS) },
+          },
         ],
         ...(options.payoutIds?.length ? { id: { in: options.payoutIds } } : {}),
       },
@@ -1178,13 +1216,15 @@ export class DailyMissionService {
     let totalBaseUnits = 0n;
     for (const payout of payouts) {
       try {
-        const paidAmount = await this.payGameTokenPayout(payout.id);
+        const paidAmount = payout.status === 'submitted'
+          ? await this.reconcileSubmittedGameTokenPayout(payout.id)
+          : await this.payGameTokenPayout(payout.id);
         if (paidAmount !== null) {
           payoutCount += 1;
           totalBaseUnits += paidAmount;
         }
       } catch (error) {
-        loggers.room.error('Daily mission game-token payout failed', {
+        loggers.room.error('Game-token payout failed', {
           payoutId: payout.id,
           userId: payout.userId,
           error: error instanceof Error ? error.message : String(error),
@@ -1196,7 +1236,7 @@ export class DailyMissionService {
   }
 
   private async payGameTokenPayout(payoutId: string): Promise<bigint | null> {
-    const claim = await prisma.gameTokenPayout.updateMany({
+    let claim = await prisma.gameTokenPayout.updateMany({
       where: {
         id: payoutId,
         status: { in: ['pending', 'failed'] },
@@ -1209,6 +1249,16 @@ export class DailyMissionService {
         failedAt: null,
       },
     });
+    if (claim.count === 0) {
+      claim = await prisma.gameTokenPayout.updateMany({
+        where: {
+          id: payoutId,
+          status: 'processing',
+          updatedAt: { lt: new Date(Date.now() - TOKEN_PAYOUT_PROCESSING_LEASE_MS) },
+        },
+        data: { lastError: null },
+      });
+    }
     if (claim.count !== 1) return null;
 
     const payout = await prisma.gameTokenPayout.findUnique({
@@ -1247,17 +1297,20 @@ export class DailyMissionService {
         tokenDecimals: resolved.tokenDecimals,
         tokenProgramId: resolved.tokenProgramId,
         treasuryTokenAccount: resolved.treasuryTokenAccount,
-        onSubmitted: async (payload) => {
+        onPrepared: async (payload) => {
           await prisma.gameTokenPayout.update({
             where: { id: payout.id },
             data: {
               status: 'submitted',
               signature: payload.signature,
               burnSignature: payload.burnSignature,
+              lastValidBlockHeight: BigInt(payload.lastValidBlockHeight),
               tokenDecimals: payload.tokenDecimals,
               tokenProgramId: payload.tokenProgramId,
               treasuryTokenAccount: payload.treasuryTokenAccount,
               recipientTokenAccount: payload.recipientTokenAccount,
+              recipientAmountBaseUnits: resolved.recipientAmountBaseUnits,
+              burnAmountBaseUnits: resolved.burnAmountBaseUnits,
               submittedAt: new Date(),
               lastError: null,
             },
@@ -1300,6 +1353,19 @@ export class DailyMissionService {
       return resolved.totalAmountBaseUnits;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const current = await prisma.gameTokenPayout.findUnique({ where: { id: payout.id } });
+      if (current?.status === 'granted') {
+        return (current.recipientAmountBaseUnits ?? 0n) + (current.burnAmountBaseUnits ?? 0n);
+      }
+      if (current?.status === 'submitted' || (current?.status === 'processing' && current.conversionSignature)) {
+        // A deterministic on-chain signature is durable. Leave it for the
+        // recovery worker instead of risking a second transfer or swap.
+        await prisma.gameTokenPayout.update({
+          where: { id: payout.id },
+          data: { lastError: message },
+        });
+        throw error;
+      }
       await prisma.$transaction([
         prisma.gameTokenPayout.update({
           where: { id: payout.id },
@@ -1321,6 +1387,100 @@ export class DailyMissionService {
       ]);
       throw error;
     }
+  }
+
+  private async reconcileSubmittedGameTokenPayout(payoutId: string): Promise<bigint | null> {
+    const payout = await prisma.gameTokenPayout.findUnique({
+      where: { id: payoutId },
+      include: { missionRewardGrant: true },
+    });
+    if (!payout || payout.status !== 'submitted' || !payout.signature) return null;
+
+    const connection = this.getTokenConnection();
+    const response = await connection.getSignatureStatuses([payout.signature], {
+      searchTransactionHistory: true,
+    });
+    const status = response.value[0];
+    const currentBlockHeight = !status && payout.lastValidBlockHeight !== null
+      ? BigInt(await connection.getBlockHeight('confirmed'))
+      : null;
+    const decision = decideGameTokenPayoutSignature({
+      status,
+      lastValidBlockHeight: payout.lastValidBlockHeight,
+      currentBlockHeight,
+    });
+    if (decision === 'failed') {
+      const message = `Game token payout failed: ${JSON.stringify(status?.err ?? 'unknown chain error')}`;
+      await prisma.$transaction(async (tx) => {
+        const current = await tx.gameTokenPayout.findUnique({
+          where: { id: payout.id },
+          include: { missionRewardGrant: true },
+        });
+        if (!current || current.status !== 'submitted') return;
+        await tx.gameTokenPayout.update({
+          where: { id: current.id },
+          data: { status: 'failed', failedAt: new Date(), lastError: message },
+        });
+        if (current.missionRewardGrant) {
+          await tx.missionRewardGrant.update({
+            where: { id: current.missionRewardGrant.id },
+            data: { status: 'failed', lastError: message },
+          });
+        }
+      });
+      return null;
+    }
+
+    if (decision === 'granted') {
+      const grantedAt = new Date();
+      await prisma.$transaction(async (tx) => {
+        const current = await tx.gameTokenPayout.findUnique({
+          where: { id: payout.id },
+          include: { missionRewardGrant: true },
+        });
+        if (!current || current.status !== 'submitted') return;
+        await tx.gameTokenPayout.update({
+          where: { id: current.id },
+          data: { status: 'granted', grantedAt, failedAt: null, lastError: null },
+        });
+        if (current.missionRewardGrant) {
+          await tx.missionRewardGrant.update({
+            where: { id: current.missionRewardGrant.id },
+            data: { status: 'granted', grantedAt, lastError: null },
+          });
+        }
+      });
+      return (payout.recipientAmountBaseUnits ?? 0n) + (payout.burnAmountBaseUnits ?? 0n);
+    }
+
+    if (decision === 'pending') return null;
+
+    const message = 'Game token payout transaction expired before confirmation';
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.gameTokenPayout.findUnique({
+        where: { id: payout.id },
+        include: { missionRewardGrant: true },
+      });
+      if (!current || current.status !== 'submitted' || current.signature !== payout.signature) return;
+      await tx.gameTokenPayout.update({
+        where: { id: current.id },
+        data: {
+          status: 'failed',
+          signature: null,
+          burnSignature: null,
+          lastValidBlockHeight: null,
+          failedAt: new Date(),
+          lastError: message,
+        },
+      });
+      if (current.missionRewardGrant) {
+        await tx.missionRewardGrant.update({
+          where: { id: current.missionRewardGrant.id },
+          data: { status: 'failed', lastError: message },
+        });
+      }
+    });
+    return null;
   }
 
   private async resolveGameTokenPayout(input: {
@@ -1433,11 +1593,53 @@ export class DailyMissionService {
     quotedSwapBuild: JupiterSwapBuildResponse | null;
   }): Promise<void> {
     const connection = this.getTokenConnection();
-    const balance = await this.getTokenAccountBalance(
+    let balance = await this.getTokenAccountBalance(
       connection,
       input.runtime.treasuryTokenAccount
     );
     if (balance >= input.requiredAmountBaseUnits) return;
+
+    const payout = await prisma.gameTokenPayout.findUnique({ where: { id: input.payoutId } });
+    if (payout?.conversionSignature) {
+      const statuses = await connection.getSignatureStatuses([payout.conversionSignature], {
+        searchTransactionHistory: true,
+      });
+      const status = statuses.value[0];
+      if (status?.err) {
+        await prisma.gameTokenPayout.update({
+          where: { id: input.payoutId },
+          data: { conversionSignature: null, conversionLastValidBlockHeight: null },
+        });
+      } else if (status) {
+        const confirmed = status.confirmationStatus === 'confirmed'
+          || status.confirmationStatus === 'finalized'
+          || status.confirmations === null;
+        if (!confirmed) throw new Error('Game token top-up swap is still confirming');
+        const convertedTokenBaseUnits = await this.getConfirmedTokenDelta({
+          connection,
+          signature: payout.conversionSignature,
+          tokenAccountAddress: input.runtime.treasuryTokenAccount.toBase58(),
+          mintAddress: input.runtime.mint.toBase58(),
+        });
+        await prisma.gameTokenPayout.update({
+          where: { id: input.payoutId },
+          data: { convertedTokenBaseUnits },
+        });
+        balance = await this.getTokenAccountBalance(connection, input.runtime.treasuryTokenAccount);
+        if (balance >= input.requiredAmountBaseUnits) return;
+      } else if (payout.conversionLastValidBlockHeight !== null) {
+        const currentBlockHeight = await connection.getBlockHeight('confirmed');
+        if (BigInt(currentBlockHeight) <= payout.conversionLastValidBlockHeight) {
+          throw new Error('Game token top-up swap is still pending');
+        }
+        await prisma.gameTokenPayout.update({
+          where: { id: input.payoutId },
+          data: { conversionSignature: null, conversionLastValidBlockHeight: null },
+        });
+      } else {
+        throw new Error('Legacy game token top-up requires reconciliation');
+      }
+    }
 
     const missingBaseUnits = input.requiredAmountBaseUnits - balance;
     const swapBuild = input.quotedSwapBuild ?? await this.quoteGameTokenTopUp({
@@ -1506,19 +1708,28 @@ export class DailyMissionService {
       throw new Error(`Game token top-up swap simulation failed: ${JSON.stringify(simulation.value.err)}`);
     }
 
-    const signature = await connection.sendRawTransaction(built.transaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
+    const settlementSignature = built.transaction.signatures[0];
+    if (!settlementSignature || settlementSignature.every((byte) => byte === 0)) {
+      throw new Error('Game token top-up swap is missing the settlement signature');
+    }
+    const signature = bs58.encode(settlementSignature);
     await prisma.gameTokenPayout.update({
       where: { id: input.payoutId },
       data: {
         conversionSignature: signature,
+        conversionLastValidBlockHeight: BigInt(built.lastValidBlockHeight),
         tokenProgramId: input.runtime.tokenProgramId.toBase58(),
         treasuryTokenAccount: input.runtime.treasuryTokenAccount.toBase58(),
         lastError: null,
       },
     });
+    const broadcastSignature = await connection.sendRawTransaction(built.transaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    if (broadcastSignature !== signature) {
+      throw new Error('Solana returned an unexpected game token top-up signature');
+    }
 
     const confirmation = await connection.confirmTransaction({
       signature,
@@ -1549,9 +1760,10 @@ export class DailyMissionService {
     tokenDecimals: number;
     tokenProgramId: PublicKey;
     treasuryTokenAccount: PublicKey;
-    onSubmitted(payload: {
+    onPrepared(payload: {
       signature: string;
       burnSignature: string | null;
+      lastValidBlockHeight: number;
       tokenDecimals: number;
       tokenProgramId: string;
       treasuryTokenAccount: string;
@@ -1630,19 +1842,27 @@ export class DailyMissionService {
       throw new Error(`Game token payout simulation failed: ${JSON.stringify(simulation.value.err)}`);
     }
 
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+    if (!transaction.signature) {
+      throw new Error('Game token payout is missing the settlement signature');
+    }
+    const signature = bs58.encode(transaction.signature);
     const burnSignature = input.burnAmountBaseUnits > 0n ? signature : null;
-    await input.onSubmitted({
+    await input.onPrepared({
       signature,
       burnSignature,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
       tokenDecimals: input.tokenDecimals,
       tokenProgramId: input.tokenProgramId.toBase58(),
       treasuryTokenAccount: input.treasuryTokenAccount.toBase58(),
       recipientTokenAccount: recipientTokenAccount?.toBase58() ?? null,
     });
+    const broadcastSignature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+    if (broadcastSignature !== signature) {
+      throw new Error('Solana returned an unexpected game token payout signature');
+    }
     const confirmed = await connection.confirmTransaction({
       signature,
       blockhash: latest.blockhash,
@@ -1716,10 +1936,10 @@ export class DailyMissionService {
     const runTokenPayouts = () => {
       this.payPendingGameTokenPayouts().then((result) => {
         if (result.payoutCount > 0) {
-          loggers.room.info('Daily mission game-token payouts confirmed', result);
+          loggers.room.info('Game-token payouts confirmed', result);
         }
       }).catch((error) => {
-        loggers.room.error('Daily mission game-token payout retry failed', {
+        loggers.room.error('Game-token payout retry failed', {
           error: error instanceof Error ? error.message : String(error),
         });
       });

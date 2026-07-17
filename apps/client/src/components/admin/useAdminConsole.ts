@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminApiError, adminGet, adminPost } from './api';
 import type {
   AccountActionRequest,
+  AdminFreeOpenGrantRequest,
+  AdminFreeOpenGrantResponse,
   AdminSkinGrantRequest,
   AdminSkinGrantResponse,
   AdminOverview,
@@ -9,6 +11,8 @@ import type {
   ForcePlayerRewardPayoutRequest,
   MapPoolTopUpRequest,
   MapPoolTopUpResponse,
+  LootboxSettingsUpdate,
+  MarketplaceSettingsUpdate,
   MissionDefinitionRequest,
   MissionReorderRequest,
   RankedBrCombatRewardPayoutsResponse,
@@ -85,6 +89,9 @@ export interface UseAdminConsole {
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
   saveSkinShopItem: (skinId: string, body: SkinShopItemUpdate) => Promise<MutationResult>;
   grantSkin: (body: AdminSkinGrantRequest) => Promise<MutationResult<AdminSkinGrantResponse>>;
+  saveLootboxSettings: (body: LootboxSettingsUpdate) => Promise<MutationResult>;
+  grantFreeOpens: (body: AdminFreeOpenGrantRequest) => Promise<MutationResult<AdminFreeOpenGrantResponse>>;
+  saveMarketplaceSettings: (body: MarketplaceSettingsUpdate) => Promise<MutationResult>;
   saveEventBiome: (body: EventBiomeUpdate) => Promise<MutationResult>;
   topUpMapPool: (body?: MapPoolTopUpRequest) => Promise<MutationResult<MapPoolTopUpResponse>>;
 }
@@ -108,6 +115,7 @@ export function useAdminConsole(): UseAdminConsole {
   const inFlightRef = useRef(false);
   const noticeIdRef = useRef(0);
   const mountedRef = useRef(true);
+  const usersRequestIdRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -159,6 +167,7 @@ export function useAdminConsole(): UseAdminConsole {
 
   const loadUsers = useCallback(
     async (opts?: { page?: number; query?: string }) => {
+      const requestId = (usersRequestIdRef.current += 1);
       const page = Math.max(1, opts?.page ?? 1);
       const query = (opts?.query ?? '').trim().slice(0, 128);
       setUsersLoading(true);
@@ -170,14 +179,16 @@ export function useAdminConsole(): UseAdminConsole {
         });
         if (query) params.set('query', query);
         const data = await adminGet<UsersListResponse>(`/users?${params.toString()}`);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || requestId !== usersRequestIdRef.current) return;
         setUsers(data);
       } catch (err) {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || requestId !== usersRequestIdRef.current) return;
         const message = err instanceof AdminApiError ? err.message : 'Failed to load users';
         setUsersError(message);
       } finally {
-        if (mountedRef.current) setUsersLoading(false);
+        if (mountedRef.current && requestId === usersRequestIdRef.current) {
+          setUsersLoading(false);
+        }
       }
     },
     []
@@ -376,6 +387,26 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const saveLootboxSettings = useCallback(
+    (body: LootboxSettingsUpdate) =>
+      runMutation('Lootbox settings', (csrf) => adminPost('/lootbox-settings', body, csrf)),
+    [runMutation]
+  );
+
+  const grantFreeOpens = useCallback(
+    (body: AdminFreeOpenGrantRequest) =>
+      runMutation('Free crate opens', (csrf) =>
+        adminPost<AdminFreeOpenGrantResponse>('/lootbox-free-opens', body, csrf)
+      ),
+    [runMutation]
+  );
+
+  const saveMarketplaceSettings = useCallback(
+    (body: MarketplaceSettingsUpdate) =>
+      runMutation('Marketplace settings', (csrf) => adminPost('/marketplace-settings', body, csrf)),
+    [runMutation]
+  );
+
   const saveEventBiome = useCallback(
     (body: EventBiomeUpdate) =>
       runMutation('Event biome', (csrf) => adminPost('/event-biome', body, csrf)),
@@ -427,6 +458,9 @@ export function useAdminConsole(): UseAdminConsole {
     saveSkinShopSettings,
     saveSkinShopItem,
     grantSkin,
+    saveLootboxSettings,
+    grantFreeOpens,
+    saveMarketplaceSettings,
     saveEventBiome,
     topUpMapPool,
   };

@@ -75,6 +75,19 @@ import {
   type SkinShopAdminOverview,
 } from '../cosmetics/skinShopService';
 import {
+  LootboxServiceError,
+  getLootboxAdminOverview,
+  grantLootboxFreeOpens,
+  updateLootboxSettings,
+  type LootboxAdminOverview,
+} from '../lootbox/service';
+import {
+  MarketplaceServiceError,
+  getMarketplaceAdminOverview,
+  updateMarketplaceSettings,
+  type MarketplaceAdminOverview,
+} from '../marketplace/service';
+import {
   createAdminCsrfToken,
   ensureGameAdmin as ensureAdmin,
   ensureGameAdminMutation as ensureAdminMutation,
@@ -159,6 +172,8 @@ type AdminRankedSeason = RankedSeasonAdminView;
 type AdminRankedEntryGate = RankedEntryGateAdminView;
 type AdminSkinShop = SkinShopAdminOverview;
 type AdminMissions = DailyMissionAdminOverview;
+type AdminLootbox = LootboxAdminOverview;
+type AdminMarketplace = MarketplaceAdminOverview;
 
 function readStringField(body: unknown, key: string): string | null {
   if (!body || typeof body !== 'object') return null;
@@ -679,7 +694,7 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop, eventBiome, mapPool] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop, eventBiome, mapPool, lootbox, marketplace] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
@@ -697,6 +712,8 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     getSkinShopAdminOverview(),
     getEventBiomeAdminOverview(),
     pregeneratedMapCatalogService.getAdminOverview(),
+    getLootboxAdminOverview(),
+    getMarketplaceAdminOverview(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -827,6 +844,8 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     skinShop: skinShop satisfies AdminSkinShop,
     eventBiome,
     mapPool,
+    lootbox: lootbox satisfies AdminLootbox,
+    marketplace: marketplace satisfies AdminMarketplace,
   };
 }
 
@@ -836,6 +855,14 @@ function sendAdminMutationError(res: Response, error: unknown): void {
     return;
   }
   if (error instanceof SkinShopServiceError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+  if (error instanceof LootboxServiceError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+  if (error instanceof MarketplaceServiceError) {
     res.status(error.statusCode).json({ error: error.message });
     return;
   }
@@ -1241,6 +1268,57 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         updatedByUserId: adminUser.id,
       });
       res.json({ ok: true, result });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/lootbox-settings', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const settings = await updateLootboxSettings({
+        enabled: req.body?.enabled,
+        priceTokens: req.body?.priceTokens,
+        weights: req.body?.weights,
+        directTokenReward: req.body?.directTokenReward,
+        duplicateReward: req.body?.duplicateReward,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, settings });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/lootbox-free-opens', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const result = await grantLootboxFreeOpens({
+        userIds: readRequestStringList(req.body?.userIds, 1000),
+        count: req.body?.count,
+        grantedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, result });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/marketplace-settings', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const settings = await updateMarketplaceSettings({
+        enabled: req.body?.enabled,
+        listingHoldTokens: req.body?.listingHoldTokens,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, settings });
     } catch (error) {
       sendAdminMutationError(res, error);
     }

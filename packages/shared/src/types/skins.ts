@@ -36,14 +36,22 @@ export type HeroSkinId =
   | 'phantom.golden'
   | 'hookshot.golden'
   | 'blaze.golden'
-  | 'chronos.golden';
+  | 'chronos.golden'
+  | 'phantom.static-wraith'
+  | 'phantom.crimson-lotus'
+  | 'hookshot.glacier-breaker'
+  | 'hookshot.void-angler'
+  | 'blaze.frostfire-herald'
+  | 'blaze.ember-drake'
+  | 'chronos.dune-prophet'
+  | 'chronos.zodiac-weaver';
 
 export type HeroSkinRarity = 'common' | 'epic' | 'unique' | 'legendary';
 // 'unlockable' skins are shown in the store but cannot be purchased — they are
 // granted via achievements/events (e.g. the first-50-ranked founder reward).
 export type HeroSkinAvailability = 'free' | 'paid' | 'unlockable';
 export type HeroSkinReleaseState = 'live' | 'ready_when_token_launches' | 'disabled';
-export type HeroSkinEntitlement = 'free' | 'paid' | 'admin_grant' | 'event';
+export type HeroSkinEntitlement = 'free' | 'paid' | 'admin_grant' | 'event' | 'lootbox' | 'marketplace';
 
 export interface HeroSkinPrice {
   tokenSymbol: string;
@@ -63,6 +71,10 @@ export interface HeroSkinDefinition {
   availability: HeroSkinAvailability;
   releaseState: HeroSkinReleaseState;
   modelDocumentId: string;
+  // Paid skins default to true for both policies; event/founder skins default
+  // to false and must be explicitly opted in if their exclusivity changes.
+  lootboxEligible?: boolean;
+  marketplaceTradeable?: boolean;
   price?: HeroSkinPrice;
   // Short unlock condition shown in the store for non-purchasable skins
   // (e.g. "First 50 ranked players"). Surfaced to the client via HeroSkinCatalogItem.

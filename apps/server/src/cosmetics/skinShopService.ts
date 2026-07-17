@@ -385,7 +385,8 @@ function serializeAudit(audit: {
 }
 
 function toEntitlementSource(value: string): HeroSkinEntitlement {
-  return value === 'paid' || value === 'admin_grant' || value === 'event' || value === 'free'
+  return value === 'paid' || value === 'admin_grant' || value === 'event' || value === 'free' ||
+    value === 'lootbox' || value === 'marketplace'
     ? value
     : 'paid';
 }
@@ -513,13 +514,34 @@ function buildGameVisibleSkinIds(
   return visible;
 }
 
+// Skins granted through a lootbox pull or a marketplace purchase stay visible
+// and equippable regardless of the shop's per-item sale state — unlike
+// shop-bought 'paid' rows, which keep the launch-gated behaviour (hidden while
+// the shop is not selling them). Only a hard catalog disable removes a
+// trade-granted skin from play.
+function buildTradeGrantedSkinIds(
+  ownerships: Array<{ skinId: string; source: string; revokedAt: Date | null }>
+): Set<HeroSkinId> {
+  const granted = new Set<HeroSkinId>();
+  for (const ownership of ownerships) {
+    if (ownership.revokedAt || !isHeroSkinId(ownership.skinId)) continue;
+    if (ownership.source !== 'lootbox' && ownership.source !== 'marketplace') continue;
+    if (getHeroSkinDefinition(ownership.skinId).releaseState === 'disabled') continue;
+    granted.add(ownership.skinId);
+  }
+  return granted;
+}
+
 function buildGameEligibleOwnedSkinIds(
   ownedSkinIds: ReadonlySet<HeroSkinId>,
-  visibleSkinIds: ReadonlySet<HeroSkinId>
+  visibleSkinIds: ReadonlySet<HeroSkinId>,
+  tradeGrantedSkinIds?: ReadonlySet<HeroSkinId>
 ): Set<HeroSkinId> {
   const eligible = new Set<HeroSkinId>();
   for (const skinId of ownedSkinIds) {
-    if (visibleSkinIds.has(skinId)) eligible.add(skinId);
+    if (visibleSkinIds.has(skinId) || tradeGrantedSkinIds?.has(skinId)) {
+      eligible.add(skinId);
+    }
   }
   return eligible;
 }
@@ -635,11 +657,17 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
     }
   }
   const visibleSkinIds = buildGameVisibleSkinIds(shop, itemRowsBySkin);
-  const gameEligibleOwnedSkinIds = buildGameEligibleOwnedSkinIds(ownedSkinIds, visibleSkinIds);
+  const gameEligibleOwnedSkinIds = buildGameEligibleOwnedSkinIds(
+    ownedSkinIds,
+    visibleSkinIds,
+    buildTradeGrantedSkinIds(ownerships)
+  );
   const loadouts = await loadResolvedLoadouts(userId, gameEligibleOwnedSkinIds);
   const equippedSkinIds = new Set(loadouts.map((loadout) => loadout.skinId));
 
-  const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.filter((skin) => visibleSkinIds.has(skin.id)).map((skin) => {
+  const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.filter((skin) => (
+    visibleSkinIds.has(skin.id) || gameEligibleOwnedSkinIds.has(skin.id)
+  )).map((skin) => {
     const item = itemRowsBySkin.get(skin.id) ?? null;
     const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
     const entitlementSource = entitlementBySkin.get(skin.id) ?? null;
@@ -669,11 +697,21 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
 export async function userOwnsSkin(userId: string, skinId: HeroSkinId): Promise<boolean> {
   const skin = getHeroSkinDefinition(skinId);
   if (skin.availability === 'free') return true;
-  const ownership = await prisma.userSkinOwnership.findUnique({
-    where: { userId_skinId: { userId, skinId } },
-    select: { revokedAt: true },
-  });
-  return Boolean(ownership && !ownership.revokedAt);
+  const [ownership, pendingMarketplacePurchase] = await Promise.all([
+    prisma.userSkinOwnership.findUnique({
+      where: { userId_skinId: { userId, skinId } },
+      select: { revokedAt: true },
+    }),
+    prisma.marketplacePurchaseIntent.findFirst({
+      where: {
+        buyerUserId: userId,
+        skinId,
+        status: { in: ['intent_created', 'transaction_built', 'submitted', 'confirmed'] },
+      },
+      select: { id: true },
+    }),
+  ]);
+  return Boolean((ownership && !ownership.revokedAt) || pendingMarketplacePurchase);
 }
 
 export async function resolveUserLoadoutForHero(
@@ -692,7 +730,11 @@ export async function resolveUserLoadoutForHero(
       : Promise.resolve(null),
   ]);
   const ownedSkinIds = buildOwnedSkinIds(ownerships);
-  const gameEligibleOwnedSkinIds = buildGameEligibleOwnedSkinIds(ownedSkinIds, visibleSkinIds);
+  const gameEligibleOwnedSkinIds = buildGameEligibleOwnedSkinIds(
+    ownedSkinIds,
+    visibleSkinIds,
+    buildTradeGrantedSkinIds(ownerships)
+  );
   return resolveHeroSkinDefinition(heroId, requestedSkinId ?? stored?.selectedSkinId, {
     ownedSkinIds: gameEligibleOwnedSkinIds,
   }).skin.id;
@@ -707,12 +749,21 @@ export async function updateUserHeroLoadout(input: {
   if (skin.heroId !== input.heroId) {
     throw new SkinShopServiceError('Skin does not belong to that hero');
   }
-  const visibleSkinIds = await loadGameVisibleSkinIds();
-  if (!visibleSkinIds.has(input.skinId)) {
-    throw new SkinShopServiceError('Skin is not available in game');
-  }
-  if (!(await userOwnsSkin(input.userId, input.skinId))) {
+  const [ownerships, visibleSkinIds] = await Promise.all([
+    loadOwnershipRows(input.userId),
+    loadGameVisibleSkinIds(),
+  ]);
+  const ownedSkinIds = buildOwnedSkinIds(ownerships);
+  if (!ownedSkinIds.has(input.skinId)) {
     throw new SkinShopServiceError('You do not own that skin', 403);
+  }
+  const eligibleSkinIds = buildGameEligibleOwnedSkinIds(
+    ownedSkinIds,
+    visibleSkinIds,
+    buildTradeGrantedSkinIds(ownerships)
+  );
+  if (!eligibleSkinIds.has(input.skinId)) {
+    throw new SkinShopServiceError('Skin is not available in game');
   }
 
   const loadout = await prisma.userHeroLoadout.upsert({
@@ -1040,6 +1091,17 @@ export async function createSkinPurchaseIntent(input: {
   const intent = await (async () => {
     try {
       return await prisma.$transaction(async (tx) => {
+        const pendingMarketplacePurchase = await tx.marketplacePurchaseIntent.findFirst({
+          where: {
+            buyerUserId: input.userId,
+            skinId: input.skinId,
+            status: { in: ['intent_created', 'transaction_built', 'submitted', 'confirmed'] },
+          },
+          select: { id: true },
+        });
+        if (pendingMarketplacePurchase) {
+          throw new SkinShopServiceError('A marketplace purchase for this skin is already pending', 409);
+        }
         const currentItem = await tx.skinShopItemSettings.findUnique({ where: { skinId: input.skinId } });
         if (!currentItem) {
           throw new SkinShopServiceError(`Skin shop item settings could not be initialized for ${input.skinId}`, 500);

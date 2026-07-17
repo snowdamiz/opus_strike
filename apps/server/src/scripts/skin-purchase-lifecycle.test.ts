@@ -295,6 +295,9 @@ function createFakePrisma(input: {
       findUnique: async ({ where }: any) => (where.skinId === skinId ? { ...item } : null),
     },
     skinPurchaseIntent,
+    marketplacePurchaseIntent: {
+      findFirst: async () => null,
+    },
     userSkinOwnership,
   };
 
@@ -323,6 +326,9 @@ function createFakePrisma(input: {
         findUnique: async ({ where }: any) => (where.skinId === skinId ? { ...item } : null),
       },
       skinPurchaseIntent,
+      marketplacePurchaseIntent: {
+        findFirst: async () => null,
+      },
       userSkinOwnership,
       $transaction: async (operation: any) => operation(tx),
     },

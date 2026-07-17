@@ -115,6 +115,8 @@
     "test:skin-purchase-lifecycle": "tsx src/scripts/skin-purchase-lifecycle.test.ts",
     "test:skin-shop": "tsx src/scripts/skin-shop-service.test.ts",
     "test:skin-founder": "tsx src/scripts/ranked-founder-reward.test.ts",
+    "test:lootbox": "tsx src/scripts/lootbox-service.test.ts",
+    "test:marketplace": "tsx src/scripts/marketplace-service.test.ts",
     "test:autoscaler": "tsx src/scripts/autoscaler-metrics.test.ts",
     "test:distributed-runtime": "tsx src/scripts/distributed-runtime.test.ts",
     "test:spatial-index": "tsx src/scripts/player-spatial-index.test.ts",

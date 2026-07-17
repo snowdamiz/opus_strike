@@ -5,7 +5,9 @@ import {
   HERO_SKIN_CATALOG,
   getDefaultHeroSkinId,
   getHeroSkinsForHero,
+  getLootboxEligibleSkins,
   isHeroSkinId,
+  isMarketplaceTradeableSkin,
   resolveHeroSkinDefinition,
   validateHeroSkinCatalog,
 } from '../dist/index.js';
@@ -22,6 +24,8 @@ const paidSkinIdsByHero = {
     'phantom.eclipse-seraph',
     'phantom.umbral-reaver',
     'phantom.obsidian-revenant',
+    'phantom.static-wraith',
+    'phantom.crimson-lotus',
   ],
   hookshot: [
     'hookshot.tidebreaker',
@@ -30,6 +34,8 @@ const paidSkinIdsByHero = {
     'hookshot.kraken-sovereign',
     'hookshot.coral-warden',
     'hookshot.maelstrom-warlord',
+    'hookshot.glacier-breaker',
+    'hookshot.void-angler',
   ],
   blaze: [
     'blaze.solar-forge',
@@ -38,6 +44,8 @@ const paidSkinIdsByHero = {
     'blaze.starfall-phoenix',
     'blaze.cinder-warden',
     'blaze.pyre-tyrant',
+    'blaze.frostfire-herald',
+    'blaze.ember-drake',
   ],
   chronos: [
     'chronos.epoch-regent',
@@ -46,7 +54,16 @@ const paidSkinIdsByHero = {
     'chronos.eternity-sovereign',
     'chronos.clockwork-marshal',
     'chronos.quantum-arbiter',
+    'chronos.dune-prophet',
+    'chronos.zodiac-weaver',
   ],
+};
+// Skins are no longer strict per-hero sets — rarity mixes vary by hero.
+const expectedRarityCountsByHero = {
+  phantom: { common: 1, epic: 4, unique: 4, legendary: 2 },
+  hookshot: { common: 1, epic: 4, unique: 4, legendary: 2 },
+  blaze: { common: 1, epic: 4, unique: 4, legendary: 2 },
+  chronos: { common: 1, epic: 4, unique: 3, legendary: 3 },
 };
 const paidSkinIds = Object.values(paidSkinIdsByHero).flat();
 const founderSkinIdsByHero = {
@@ -64,7 +81,18 @@ const independenceSkinIdsByHero = {
 };
 const independenceSkinIds = Object.values(independenceSkinIdsByHero).flat();
 
-assert.equal(HERO_SKIN_CATALOG.length, 36);
+assert.deepEqual(
+  getLootboxEligibleSkins().map((skin) => skin.id).sort(),
+  [...paidSkinIds].sort(),
+  'event and founder unlockables must remain outside the crate pool'
+);
+assert.deepEqual(
+  HERO_SKIN_CATALOG.filter(isMarketplaceTradeableSkin).map((skin) => skin.id).sort(),
+  [...paidSkinIds].sort(),
+  'event and founder unlockables must not be marketplace tradeable by default'
+);
+
+assert.equal(HERO_SKIN_CATALOG.length, 44);
 for (const skinId of [...paidSkinIds, ...independenceSkinIds, ...founderSkinIds]) {
   assert.equal(isHeroSkinId(skinId), true, `${skinId} should be a known skin id`);
 }
@@ -75,7 +103,7 @@ for (const heroId of ALL_HERO_IDS) {
   assert.equal(defaultSkinId, DEFAULT_HERO_SKIN_IDS[heroId]);
 
   const skins = getHeroSkinsForHero(heroId);
-  assert.equal(skins.length, 9, `${heroId} should expose one default, six paid skins, one Independence skin, and one founder skin`);
+  assert.equal(skins.length, 11, `${heroId} should expose one default, eight paid skins, one Independence skin, and one founder skin`);
   assert.equal(
     skins.filter((skin) => skin.id === defaultSkinId).length,
     1,
@@ -91,10 +119,14 @@ for (const heroId of ALL_HERO_IDS) {
     [...independenceSkinIdsByHero[heroId], ...founderSkinIdsByHero[heroId]].sort(),
     `${heroId} unlockable skins should match the expected catalog`
   );
-  assert.equal(skins.filter((skin) => skin.rarity === 'common').length, 1, `${heroId} should have one common skin`);
-  assert.equal(skins.filter((skin) => skin.rarity === 'epic').length, 3, `${heroId} should have three epic skins`);
-  assert.equal(skins.filter((skin) => skin.rarity === 'unique').length, 3, `${heroId} should have three unique skins`);
-  assert.equal(skins.filter((skin) => skin.rarity === 'legendary').length, 2, `${heroId} should have two legendary skins`);
+  const expectedRarityCounts = expectedRarityCountsByHero[heroId];
+  for (const [rarity, expectedCount] of Object.entries(expectedRarityCounts)) {
+    assert.equal(
+      skins.filter((skin) => skin.rarity === rarity).length,
+      expectedCount,
+      `${heroId} should have ${expectedCount} ${rarity} skins`
+    );
+  }
 }
 
 for (const skinId of paidSkinIds) {

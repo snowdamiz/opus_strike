@@ -40,6 +40,12 @@ export const SKILL_RARITY_COLORS = {
   legendary: { hex: '#facc15', rgb: '250 204 21' },
 } as const;
 
+export const LOOTBOX_UI_COLORS = {
+  // Effect-art palette for the procedural crate embers. Kept here so strict
+  // UI components consume named tokens instead of embedding raw literals.
+  embers: ['#fb923c', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f97316'],
+} as const;
+
 export const HERO_PREVIEW_COLORS = {
   neutralShadow: '#05070a',
   platformBase: '#151922',

@@ -16,6 +16,8 @@ export * from './types/team.js';
 export * from './types/party.js';
 export * from './types/modelSystem.js';
 export * from './types/skins.js';
+export * from './types/lootbox.js';
+export * from './types/marketplace.js';
 export * from './types/dailyMissions.js';
 export * from './types/recording.js';
 export * from './types/loadout.js';

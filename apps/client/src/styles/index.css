@@ -3722,6 +3722,1013 @@ a {
   }
 }
 
+/* ===== SUPPLY CRATE STAGE ===== */
+/* Hero centerpiece for the Crates tab: a CSS-3D armored voxel crate hovering
+   over a glow pool, energy seams leaking light, holo rings, god rays, and
+   rarity-tinted voxel embers. Opening state rumbles the crate and flares the
+   seams. */
+.crate-stage {
+  isolation: isolate;
+  background:
+    radial-gradient(58% 46% at 50% 46%, rgb(249 115 22 / 0.13), transparent 72%),
+    radial-gradient(80% 60% at 50% 108%, rgb(167 139 250 / 0.09), transparent 70%),
+    linear-gradient(180deg, rgb(13 16 21 / 0.72), rgb(6 8 10 / 0.86));
+}
+
+.crate-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.crate-kicker::before,
+.crate-kicker::after {
+  content: "";
+  height: 1px;
+  width: 2.75rem;
+  background: linear-gradient(90deg, transparent, rgb(249 115 22 / 0.6));
+}
+
+.crate-kicker::after {
+  background: linear-gradient(90deg, rgb(249 115 22 / 0.6), transparent);
+}
+
+.crate-title {
+  background: linear-gradient(180deg, #ffffff 28%, rgb(255 218 178) 66%, rgb(251 146 60));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0.15rem 0.9rem rgb(249 115 22 / 0.28));
+}
+
+.crate-scene {
+  --crate-size: clamp(6rem, 16vmin, 10rem);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--crate-size) * 2.6);
+  height: calc(var(--crate-size) * 2.15);
+  perspective: 62rem;
+}
+
+/* --- backdrop: rotating god rays behind the crate --- */
+.crate-rays {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44rem;
+  height: 44rem;
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgb(255 176 100 / 0.075) 0deg 9deg,
+    transparent 9deg 26deg
+  );
+  -webkit-mask-image: radial-gradient(circle, rgb(0 0 0 / 0.9), transparent 58%);
+  mask-image: radial-gradient(circle, rgb(0 0 0 / 0.9), transparent 58%);
+  animation: crate-rays-spin 52s linear infinite;
+}
+
+@keyframes crate-rays-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* --- voxel embers drifting up around the crate --- */
+.crate-embers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.crate-ember {
+  position: absolute;
+  bottom: 16%;
+  border-radius: 1px;
+  background: var(--ember-color, rgb(251 146 60));
+  box-shadow: 0 0 0.4rem var(--ember-color, rgb(251 146 60));
+  opacity: 0;
+  animation: crate-ember-rise 6s linear infinite;
+}
+
+@keyframes crate-ember-rise {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    opacity: 0;
+  }
+
+  12% {
+    opacity: 0.9;
+  }
+
+  72% {
+    opacity: 0.45;
+  }
+
+  100% {
+    transform: translate3d(var(--ember-drift, 0rem), -15rem, 0) rotate(200deg) scale(0.35);
+    opacity: 0;
+  }
+}
+
+/* --- light column leaking out of the lid --- */
+.crate-beam {
+  position: absolute;
+  left: 50%;
+  bottom: 55%;
+  width: calc(var(--crate-size) * 1.2);
+  height: calc(var(--crate-size) * 0.95);
+  transform: translateX(-50%);
+  background: linear-gradient(
+    180deg,
+    transparent 4%,
+    rgb(255 176 96 / 0.06) 42%,
+    rgb(255 198 130 / 0.26) 100%
+  );
+  clip-path: polygon(37% 0, 63% 0, 88% 100%, 12% 100%);
+  filter: blur(4px);
+  opacity: 0.75;
+  animation: crate-beam-pulse 4.8s ease-in-out infinite;
+}
+
+@keyframes crate-beam-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/* --- contact shadow + glow pool (syncs with the 4.8s float bob) --- */
+.crate-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 9%;
+  width: calc(var(--crate-size) * 1.55);
+  height: calc(var(--crate-size) * 0.32);
+  transform: translateX(-50%);
+  background: radial-gradient(
+    50% 50% at 50% 50%,
+    rgb(0 0 0 / 0.6),
+    rgb(249 115 22 / 0.14) 52%,
+    transparent 72%
+  );
+  filter: blur(6px);
+  animation: crate-shadow-bob 4.8s ease-in-out infinite;
+}
+
+@keyframes crate-shadow-bob {
+  0%,
+  100% {
+    transform: translateX(-50%) scale(1.05);
+    opacity: 1;
+  }
+
+  50% {
+    transform: translateX(-50%) scale(0.84);
+    opacity: 0.65;
+  }
+}
+
+/* --- the crate itself --- */
+.crate-float {
+  position: relative;
+  width: var(--crate-size);
+  height: var(--crate-size);
+  transform-style: preserve-3d;
+  animation: crate-float-bob 4.8s ease-in-out infinite;
+}
+
+@keyframes crate-float-bob {
+  0%,
+  100% {
+    transform: translateY(0.45rem);
+  }
+
+  50% {
+    transform: translateY(-0.6rem);
+  }
+}
+
+.crate-cube {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  animation: crate-cube-spin 17s linear infinite;
+}
+
+@keyframes crate-cube-spin {
+  from { transform: rotateX(-14deg) rotateY(0deg); }
+  to { transform: rotateX(-14deg) rotateY(360deg); }
+}
+
+.crate-face {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(255 255 255 / 0.13);
+  background:
+    /* corner bolts */
+    radial-gradient(circle at 9% 9%, rgb(255 255 255 / 0.38) 0 1.5px, rgb(0 0 0 / 0.55) 2px 3px, transparent 3.5px),
+    radial-gradient(circle at 91% 9%, rgb(255 255 255 / 0.38) 0 1.5px, rgb(0 0 0 / 0.55) 2px 3px, transparent 3.5px),
+    radial-gradient(circle at 9% 91%, rgb(255 255 255 / 0.38) 0 1.5px, rgb(0 0 0 / 0.55) 2px 3px, transparent 3.5px),
+    radial-gradient(circle at 91% 91%, rgb(255 255 255 / 0.38) 0 1.5px, rgb(0 0 0 / 0.55) 2px 3px, transparent 3.5px),
+    /* recessed grooves the energy seams sit in */
+    linear-gradient(90deg, transparent calc(50% - 2.5px), rgb(0 0 0 / 0.62) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 2.5px)),
+    linear-gradient(0deg, transparent calc(50% - 2.5px), rgb(0 0 0 / 0.62) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 2.5px)),
+    /* bevel + gunmetal plate */
+    linear-gradient(150deg, rgb(255 255 255 / 0.13), transparent 34%, rgb(0 0 0 / 0.32) 86%),
+    linear-gradient(165deg, rgb(48 55 66), rgb(23 27 33) 55%, rgb(13 15 19));
+  box-shadow:
+    inset 0 0 0 2px rgb(0 0 0 / 0.35),
+    inset 0 0 2.2rem rgb(0 0 0 / 0.4);
+  backface-visibility: hidden;
+}
+
+/* energy seams — soft orange bloom + hot core line, pulsing */
+.crate-face::before {
+  content: "";
+  position: absolute;
+  inset: 3%;
+  background:
+    radial-gradient(circle at 50% 50%, rgb(255 216 158 / 0.5), rgb(249 115 22 / 0.26) 16%, transparent 34%),
+    linear-gradient(90deg, transparent 41%, rgb(249 115 22 / 0.3) 50%, transparent 59%),
+    linear-gradient(0deg, transparent 41%, rgb(249 115 22 / 0.3) 50%, transparent 59%),
+    linear-gradient(90deg, transparent calc(50% - 1px), rgb(255 208 150 / 0.95) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(0deg, transparent calc(50% - 1px), rgb(255 208 150 / 0.95) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px));
+  opacity: 0.8;
+  animation: crate-seam-pulse 3.4s ease-in-out infinite;
+}
+
+@keyframes crate-seam-pulse {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* hazard chevron band bolted across the bottom of each side */
+.crate-face.is-front::after,
+.crate-face.is-back::after,
+.crate-face.is-right::after,
+.crate-face.is-left::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 8%;
+  height: 12%;
+  border: 1px solid rgb(0 0 0 / 0.55);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgb(249 115 22 / 0.72) 0 0.4rem,
+    rgb(10 11 14 / 0.92) 0.4rem 0.8rem
+  );
+  opacity: 0.85;
+}
+
+.crate-face.is-front { transform: translateZ(calc(var(--crate-size) / 2)); }
+
+.crate-face.is-back {
+  transform: rotateY(180deg) translateZ(calc(var(--crate-size) / 2));
+  filter: brightness(0.72);
+}
+
+.crate-face.is-right {
+  transform: rotateY(90deg) translateZ(calc(var(--crate-size) / 2));
+  filter: brightness(0.84);
+}
+
+.crate-face.is-left {
+  transform: rotateY(-90deg) translateZ(calc(var(--crate-size) / 2));
+  filter: brightness(0.92);
+}
+
+.crate-face.is-top {
+  transform: rotateX(90deg) translateZ(calc(var(--crate-size) / 2));
+  filter: brightness(1.12);
+}
+
+.crate-face.is-top::before {
+  background:
+    radial-gradient(circle at 50% 50%, rgb(255 236 200 / 0.85), rgb(255 170 70 / 0.38) 30%, transparent 58%),
+    linear-gradient(90deg, transparent 40%, rgb(249 115 22 / 0.4) 50%, transparent 60%),
+    linear-gradient(0deg, transparent 40%, rgb(249 115 22 / 0.4) 50%, transparent 60%),
+    linear-gradient(90deg, transparent calc(50% - 1px), rgb(255 224 178 / 0.98) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(0deg, transparent calc(50% - 1px), rgb(255 224 178 / 0.98) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+.crate-face.is-bottom {
+  transform: rotateX(-90deg) translateZ(calc(var(--crate-size) / 2));
+  filter: brightness(0.45);
+}
+
+.crate-face.is-bottom::before {
+  content: none;
+}
+
+/* --- holo rings orbiting the crate --- */
+.crate-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--crate-size) * 1.75);
+  height: calc(var(--crate-size) * 1.75);
+  margin: calc(var(--crate-size) * -0.875);
+  border-radius: 50%;
+  border: 1px solid rgb(249 115 22 / 0.26);
+  border-top-color: rgb(255 196 130 / 0.75);
+  animation: crate-ring-spin 7s linear infinite;
+}
+
+.crate-ring.is-outer {
+  width: calc(var(--crate-size) * 2.1);
+  height: calc(var(--crate-size) * 2.1);
+  margin: calc(var(--crate-size) * -1.05);
+  border-style: dashed;
+  border-color: rgb(34 211 238 / 0.18);
+  border-top-color: rgb(34 211 238 / 0.5);
+  animation: crate-ring-spin-reverse 11s linear infinite;
+}
+
+@keyframes crate-ring-spin {
+  from { transform: rotateX(74deg) rotateZ(0deg); }
+  to { transform: rotateX(74deg) rotateZ(360deg); }
+}
+
+@keyframes crate-ring-spin-reverse {
+  from { transform: rotateX(74deg) rotateZ(360deg); }
+  to { transform: rotateX(74deg) rotateZ(0deg); }
+}
+
+/* --- hover: the whole stage leans in --- */
+@media (hover: hover) {
+  .crate-stage:hover .crate-face::before {
+    opacity: 1;
+  }
+
+  .crate-stage:hover .crate-beam {
+    opacity: 1;
+  }
+}
+
+/* --- opening: rumble + flare --- */
+.crate-stage[data-opening] .crate-float {
+  animation: crate-shake 0.32s linear infinite;
+}
+
+.crate-stage[data-opening] .crate-face::before {
+  opacity: 1;
+  animation-duration: 0.55s;
+}
+
+.crate-stage[data-opening] .crate-beam {
+  opacity: 1;
+  animation-duration: 1.1s;
+  filter: blur(5px) brightness(1.5);
+}
+
+.crate-stage[data-opening] .crate-ring {
+  animation-duration: 1.8s;
+}
+
+.crate-stage[data-opening] .crate-ring.is-outer {
+  animation-duration: 2.6s;
+}
+
+@keyframes crate-shake {
+  0%,
+  100% {
+    transform: translate(0, 0.14rem) rotate(0.4deg);
+  }
+
+  25% {
+    transform: translate(-0.2rem, 0) rotate(-0.7deg);
+  }
+
+  50% {
+    transform: translate(0.18rem, 0.1rem) rotate(0.55deg);
+  }
+
+  75% {
+    transform: translate(-0.12rem, -0.1rem) rotate(-0.45deg);
+  }
+}
+
+/* --- reveal ceremony: once the drop is known, the crate overloads (charging),
+   blows apart in a rarity-tinted burst, and only then hands off to the reveal
+   dialog. Stage color follows the rolled rarity via --crate-reveal-color. */
+.crate-stage {
+  --crate-reveal-color: 249 115 22;
+}
+
+.crate-stage[data-rarity='common'] { --crate-reveal-color: 148 163 184; }
+.crate-stage[data-rarity='epic'] { --crate-reveal-color: 167 139 250; }
+.crate-stage[data-rarity='unique'] { --crate-reveal-color: 34 211 238; }
+.crate-stage[data-rarity='legendary'] { --crate-reveal-color: 250 204 21; }
+.crate-stage[data-reward='game_token'] { --crate-reveal-color: 52 211 153; }
+
+/* charging: the rumble escalates, seams run white-hot, everything spins up */
+.crate-stage[data-reveal='charging'] .crate-float {
+  animation: crate-shake-hard 0.16s linear infinite;
+}
+
+.crate-stage[data-reveal='charging'] .crate-cube {
+  animation-duration: 2.6s;
+}
+
+.crate-stage[data-reveal='charging'] .crate-face::before {
+  animation: crate-seam-overload 1.5s ease-in forwards;
+}
+
+.crate-stage[data-reveal='charging'] .crate-beam {
+  opacity: 1;
+  animation-duration: 0.55s;
+  filter: blur(5px) brightness(2);
+}
+
+.crate-stage[data-reveal='charging'] .crate-ring {
+  animation-duration: 0.9s;
+  border-top-color: rgb(var(--crate-reveal-color) / 0.9);
+}
+
+.crate-stage[data-reveal='charging'] .crate-ring.is-outer {
+  animation-duration: 1.4s;
+}
+
+.crate-stage[data-reveal='charging'] .crate-rays {
+  animation-duration: 9s;
+}
+
+@keyframes crate-shake-hard {
+  0%,
+  100% {
+    transform: translate(0.05rem, 0.2rem) rotate(0.8deg);
+  }
+
+  25% {
+    transform: translate(-0.34rem, -0.08rem) rotate(-1.3deg);
+  }
+
+  50% {
+    transform: translate(0.3rem, 0.16rem) rotate(1.1deg);
+  }
+
+  75% {
+    transform: translate(-0.22rem, -0.18rem) rotate(-0.9deg);
+  }
+}
+
+@keyframes crate-seam-overload {
+  0% {
+    opacity: 0.8;
+    filter: brightness(1);
+  }
+
+  55% {
+    opacity: 1;
+    filter: brightness(1.7);
+  }
+
+  100% {
+    opacity: 1;
+    filter: brightness(2.5) saturate(0.65);
+  }
+}
+
+/* burst: faces blow outward along their normals while the flash blooms */
+.crate-stage[data-reveal='burst'] .crate-float {
+  animation: none;
+}
+
+.crate-stage[data-reveal='burst'] .crate-cube {
+  animation-play-state: paused;
+}
+
+.crate-stage[data-reveal='burst'] .crate-face {
+  transition:
+    transform 0.6s cubic-bezier(0.16, 0.8, 0.3, 1),
+    opacity 0.6s ease-out;
+  opacity: 0;
+}
+
+.crate-stage[data-reveal='burst'] .crate-face.is-front {
+  transform: translateZ(calc(var(--crate-size) * 1.9)) rotateX(18deg);
+}
+
+.crate-stage[data-reveal='burst'] .crate-face.is-back {
+  transform: rotateY(180deg) translateZ(calc(var(--crate-size) * 1.9)) rotateX(-14deg);
+}
+
+.crate-stage[data-reveal='burst'] .crate-face.is-right {
+  transform: rotateY(90deg) translateZ(calc(var(--crate-size) * 1.9)) rotateZ(16deg);
+}
+
+.crate-stage[data-reveal='burst'] .crate-face.is-left {
+  transform: rotateY(-90deg) translateZ(calc(var(--crate-size) * 1.9)) rotateZ(-16deg);
+}
+
+.crate-stage[data-reveal='burst'] .crate-face.is-top {
+  transform: rotateX(90deg) translateZ(calc(var(--crate-size) * 2.3));
+}
+
+.crate-stage[data-reveal='burst'] .crate-face.is-bottom {
+  transform: rotateX(-90deg) translateZ(calc(var(--crate-size) * 1.4));
+}
+
+.crate-stage[data-reveal='burst'] .crate-ring,
+.crate-stage[data-reveal='burst'] .crate-beam {
+  transition: opacity 0.45s ease-out;
+  opacity: 0;
+}
+
+/* rarity-tinted core flash covering the stage (clipped by its overflow) */
+.crate-flash {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: 58rem;
+  height: 58rem;
+  margin: -29rem;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgb(255 255 255 / 0.95),
+    rgb(var(--crate-reveal-color) / 0.5) 26%,
+    transparent 62%
+  );
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.crate-stage[data-reveal='burst'] .crate-flash {
+  animation: crate-flash-bloom 0.9s ease-out forwards;
+}
+
+@keyframes crate-flash-bloom {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+
+  18% {
+    opacity: 1;
+    transform: scale(0.9);
+  }
+
+  60% {
+    opacity: 0.8;
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+}
+
+/* expanding shockwave ring */
+.crate-shockwave {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: calc(var(--crate-size) * 1.15);
+  height: calc(var(--crate-size) * 1.15);
+  margin: calc(var(--crate-size) * -0.575);
+  border-radius: 50%;
+  border: 2px solid rgb(var(--crate-reveal-color) / 0.85);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.crate-stage[data-reveal='burst'] .crate-shockwave {
+  animation: crate-shockwave-expand 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+
+@keyframes crate-shockwave-expand {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.3);
+    box-shadow: 0 0 1.8rem rgb(var(--crate-reveal-color) / 0.65);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(4.2);
+    box-shadow: 0 0 0.2rem rgb(var(--crate-reveal-color) / 0);
+  }
+}
+
+/* --- reveal dialog: the card carries the rolled tier's full chrome. Tier
+   variables mirror .skins-row.is-* so the reveal reads as the same material
+   as the skins list; --crate-halo-rgb drives the hero spotlight (tier color
+   for skins, emerald for token payouts). */
+.crate-reveal-card {
+  --skins-tier-rgb: 249 115 22;
+  --skins-tier-secondary-rgb: 194 65 12;
+  --crate-halo-rgb: var(--skins-tier-rgb);
+  border-color: rgb(var(--skins-tier-rgb) / 0.3);
+  background:
+    radial-gradient(120% 62% at 50% -6%, rgb(var(--crate-halo-rgb) / 0.15), transparent 60%),
+    linear-gradient(180deg, rgb(var(--color-strike-surface) / 0.85), rgb(var(--color-strike-bg) / 0.96));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 0 3rem rgb(var(--crate-halo-rgb) / 0.12);
+  animation: crate-reveal-pop 0.45s cubic-bezier(0.18, 0.9, 0.32, 1.18) both;
+}
+
+.crate-reveal-card.is-common {
+  --skins-tier-rgb: 148 163 184;
+  --skins-tier-secondary-rgb: 71 85 105;
+  border-radius: 0.3rem;
+}
+
+.crate-reveal-card.is-epic {
+  --skins-tier-rgb: 167 139 250;
+  --skins-tier-secondary-rgb: 236 72 153;
+  border-radius: 0.18rem;
+  clip-path: polygon(0.55rem 0, calc(100% - 0.78rem) 0, 100% 0.78rem, 100% 100%, 0 100%, 0 calc(100% - 0.55rem));
+}
+
+.crate-reveal-card.is-unique {
+  --skins-tier-rgb: 34 211 238;
+  --skins-tier-secondary-rgb: 45 212 191;
+  border-radius: 0.12rem;
+  clip-path: polygon(0 0.52rem, 0.52rem 0, 100% 0, 100% calc(100% - 0.52rem), calc(100% - 0.52rem) 100%, 0 100%);
+}
+
+.crate-reveal-card.is-legendary {
+  --skins-tier-rgb: 250 204 21;
+  --skins-tier-secondary-rgb: 249 115 22;
+  border-radius: 0.22rem;
+  clip-path: polygon(0.8rem 0, calc(100% - 0.8rem) 0, 100% 0.8rem, 100% calc(100% - 0.8rem), calc(100% - 0.8rem) 100%, 0.8rem 100%, 0 calc(100% - 0.8rem), 0 0.8rem);
+}
+
+/* one-shot shine sweep as the card lands */
+.crate-reveal-card::after {
+  content: '';
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -70%;
+  width: 38%;
+  transform: skewX(-22deg);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.09), transparent);
+  pointer-events: none;
+  z-index: 3;
+  animation: crate-reveal-shine 1s ease-out 0.5s both;
+}
+
+@keyframes crate-reveal-shine {
+  from {
+    left: -70%;
+  }
+
+  to {
+    left: 140%;
+  }
+}
+
+/* corner brackets + bottom sash from SkinRarityChrome, invisible elsewhere
+   without a .skins-row/.skins-stage context, get a reveal-specific dressing */
+.crate-reveal-card .skins-card-bracket {
+  width: 1.4rem;
+  height: 1.4rem;
+  opacity: 0.6;
+}
+
+.crate-reveal-card.is-common .skins-card-bracket {
+  opacity: 0.28;
+}
+
+/* keep 1px borders: preflight sets border-style on every side, so widening
+   all widths would turn the corner brackets into full squares */
+.crate-reveal-card.is-legendary .skins-card-bracket {
+  width: 1.7rem;
+  height: 1.7rem;
+  opacity: 0.78;
+}
+
+.crate-reveal-card .skins-card-sash {
+  inset: auto 1.1rem 0.55rem 1.1rem;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(var(--skins-tier-rgb) / 0.5), transparent);
+  box-shadow: 0 0 0.9rem rgb(var(--skins-tier-rgb) / 0.2);
+  opacity: 0.7;
+}
+
+.crate-reveal-card .skins-card-emblem {
+  display: none;
+}
+
+/* hero spotlight: slow-spinning god rays + core bloom + floor glow */
+.crate-reveal-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.crate-reveal-stage > canvas,
+.crate-reveal-stage > div {
+  position: relative;
+  z-index: 1;
+}
+
+.crate-reveal-halo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26rem;
+  height: 26rem;
+  margin: -13rem;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, rgb(var(--crate-halo-rgb) / 0.26), transparent 60%);
+  animation: crate-reveal-rise 0.9s ease-out both;
+}
+
+.crate-reveal-halo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-conic-gradient(
+    from 8deg,
+    rgb(var(--crate-halo-rgb) / 0.15) 0deg 7deg,
+    transparent 7deg 26deg
+  );
+  -webkit-mask-image: radial-gradient(circle, rgb(0 0 0 / 0.85) 10%, transparent 64%);
+  mask-image: radial-gradient(circle, rgb(0 0 0 / 0.85) 10%, transparent 64%);
+  animation: crate-halo-spin 30s linear infinite;
+}
+
+@keyframes crate-halo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.crate-reveal-floor {
+  position: absolute;
+  left: 50%;
+  bottom: -0.2rem;
+  width: 11rem;
+  height: 1.7rem;
+  transform: translateX(-50%);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%, rgb(var(--crate-halo-rgb) / 0.32), transparent 72%);
+  filter: blur(5px);
+}
+
+/* staggered entrance for the copy under the hero */
+.crate-reveal-item {
+  animation: crate-reveal-rise 0.55s cubic-bezier(0.16, 0.84, 0.32, 1) both;
+  animation-delay: calc(0.18s + var(--reveal-i, 0) * 0.09s);
+}
+
+@keyframes crate-reveal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.6rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* the rarity chip stamps in instead of rising */
+.crate-reveal-card .skins-rarity-chip.crate-reveal-item {
+  animation-name: crate-chip-stamp;
+}
+
+@keyframes crate-chip-stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.7);
+    filter: blur(2px) brightness(1.7);
+  }
+
+  62% {
+    opacity: 1;
+    filter: brightness(1.25);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: none;
+  }
+}
+
+.crate-reveal-kicker {
+  color: rgb(var(--crate-halo-rgb) / 0.8);
+  text-shadow: 0 0 0.9rem rgb(var(--crate-halo-rgb) / 0.35);
+}
+
+.crate-reveal-name {
+  letter-spacing: 0.02em;
+  text-shadow:
+    0 0.16rem 0.4rem rgb(0 0 0 / 0.6),
+    0 0 1.4rem rgb(var(--skins-tier-rgb) / 0.3);
+}
+
+.crate-reveal-amount {
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 1.6rem rgb(var(--crate-halo-rgb) / 0.42);
+}
+
+/* token payouts: emerald atmosphere; duplicate cards layer this over the
+   rolled skin's rarity chrome (is-* wins the tier vars via specificity) */
+.crate-token-reveal {
+  --skins-tier-rgb: 52 211 153;
+  --skins-tier-secondary-rgb: 16 185 129;
+  --crate-halo-rgb: 52 211 153;
+  background:
+    radial-gradient(circle at 50% 22%, rgb(var(--color-ui-success-light) / 0.18), transparent 54%),
+    linear-gradient(155deg, rgb(var(--color-ui-success-deep) / 0.42), rgb(var(--color-strike-bg) / 0.94));
+}
+
+.crate-token-reveal::before {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  opacity: 0.2;
+  background-image: repeating-linear-gradient(
+    115deg,
+    transparent 0,
+    transparent 18px,
+    rgb(var(--color-ui-success-light) / 0.18) 19px,
+    transparent 20px
+  );
+}
+
+@keyframes crate-reveal-pop {
+  from {
+    transform: scale(0.86);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* dialog panel picks up a faint glow in the drop's color */
+.crate-reveal-dialog {
+  --crate-dialog-rgb: 249 115 22;
+  border-color: rgb(var(--crate-dialog-rgb) / 0.22);
+  box-shadow:
+    0 0 5rem rgb(var(--crate-dialog-rgb) / 0.15),
+    0 25px 50px -12px rgb(0 0 0 / 0.7);
+}
+
+.crate-reveal-dialog.is-common { --crate-dialog-rgb: 148 163 184; }
+.crate-reveal-dialog.is-epic { --crate-dialog-rgb: 167 139 250; }
+.crate-reveal-dialog.is-unique { --crate-dialog-rgb: 34 211 238; }
+.crate-reveal-dialog.is-legendary { --crate-dialog-rgb: 250 204 21; }
+.crate-reveal-dialog.is-token { --crate-dialog-rgb: 52 211 153; }
+
+.crate-reveal-dialog-icon {
+  background: rgb(var(--crate-dialog-rgb) / 0.16);
+  color: rgb(var(--crate-dialog-rgb));
+}
+
+/* footer actions: stacked label + context line so long price/free-open
+   copy never collides with the button edges */
+.crate-reveal-action {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 3.2rem;
+  flex-direction: column;
+  gap: 0.22rem;
+  padding: 0.55rem 0.9rem;
+}
+
+.crate-reveal-action-sub {
+  font-size: 0.64rem;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* the ✓ lives inline in the label here — the pseudo-element checkmark would
+   stack as its own row in the column layout */
+.crate-reveal-action.is-equipped:disabled::before {
+  content: none;
+}
+
+/* --- form select (GameSelect) --- */
+.game-select-menu {
+  box-shadow:
+    0 14px 30px rgb(0 0 0 / 0.5),
+    0 0 18px rgb(249 115 22 / 0.08);
+}
+
+/* --- open CTA --- */
+.crate-open-button {
+  position: relative;
+  overflow: hidden;
+  min-width: 15.5rem;
+  min-height: 3rem;
+  font-size: 1.22rem;
+  letter-spacing: 0.045em;
+}
+
+.crate-open-button:not(:disabled) {
+  border-color: rgb(249 115 22 / 0.62);
+  background: linear-gradient(180deg, rgb(249 115 22 / 0.34), rgb(194 65 12 / 0.2));
+  color: rgb(255 237 213);
+  text-shadow: 0 1px 0.55rem rgb(249 115 22 / 0.5);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    0 0 1.5rem rgb(249 115 22 / 0.22);
+}
+
+.crate-open-button:not(:disabled):hover,
+.crate-open-button:not(:disabled):focus-visible {
+  background: linear-gradient(180deg, rgb(249 115 22 / 0.48), rgb(194 65 12 / 0.28));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.2),
+    0 0 2.2rem rgb(249 115 22 / 0.36);
+}
+
+.crate-open-button:not(:disabled)::after {
+  content: "";
+  position: absolute;
+  top: -40%;
+  bottom: -40%;
+  left: -60%;
+  width: 34%;
+  transform: skewX(-24deg);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.22), transparent);
+  animation: crate-cta-shine 3.6s ease-in-out infinite;
+}
+
+@keyframes crate-cta-shine {
+  0%,
+  58% {
+    left: -60%;
+  }
+
+  100% {
+    left: 135%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crate-rays,
+  .crate-beam,
+  .crate-shadow,
+  .crate-float,
+  .crate-cube,
+  .crate-face::before,
+  .crate-ring,
+  .crate-open-button:not(:disabled)::after,
+  .crate-stage[data-opening] .crate-float,
+  .crate-stage[data-reveal='charging'] .crate-float,
+  .crate-stage[data-reveal='burst'] .crate-flash,
+  .crate-stage[data-reveal='burst'] .crate-shockwave,
+  .crate-reveal-card,
+  .crate-reveal-card::after,
+  .crate-reveal-halo,
+  .crate-reveal-halo::before,
+  .crate-reveal-item {
+    animation: none;
+  }
+
+  .crate-stage[data-reveal='burst'] .crate-face,
+  .crate-stage[data-reveal='burst'] .crate-ring,
+  .crate-stage[data-reveal='burst'] .crate-beam {
+    transition: none;
+  }
+
+  .crate-ember {
+    display: none;
+  }
+
+  .crate-cube {
+    transform: rotateX(-14deg) rotateY(38deg);
+  }
+
+  .crate-ring,
+  .crate-ring.is-outer {
+    transform: rotateX(74deg);
+  }
+}
+
 /* ===== LOADOUT BENCH ===== */
 /* Category-grid loadout configurator. Clones the skins armory chrome with a
    single neutral tier (no rarity) and the same orange active/equip accent. */
