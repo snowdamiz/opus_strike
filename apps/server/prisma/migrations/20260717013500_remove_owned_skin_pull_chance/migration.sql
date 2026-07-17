@@ -1,8 +1,17 @@
--- Skin ownership no longer changes pull rates. These columns only represented
--- the retired owned-skin pool selection step; all player, intent, skin, and
--- payout records remain intact.
+-- Skin ownership no longer changes pull rates. Preserve the retired values in
+-- place for auditability while keeping them out of the active application
+-- schema. The intent column receives a default so future inserts can omit it.
 ALTER TABLE "LootboxOpenIntent"
-DROP COLUMN "quotedDuplicateRewardChanceBps";
+RENAME COLUMN "quotedDuplicateRewardChanceBps" TO "archivedQuotedOwnedSkinChanceBps";
+
+ALTER TABLE "LootboxOpenIntent"
+ALTER COLUMN "archivedQuotedOwnedSkinChanceBps" SET DEFAULT 0;
+
+COMMENT ON COLUMN "LootboxOpenIntent"."archivedQuotedOwnedSkinChanceBps" IS
+'Retired owned-skin pull chance snapshot retained without data loss.';
 
 ALTER TABLE "LootboxSettings"
-DROP COLUMN "duplicateRewardChanceBps";
+RENAME COLUMN "duplicateRewardChanceBps" TO "archivedOwnedSkinChanceBps";
+
+COMMENT ON COLUMN "LootboxSettings"."archivedOwnedSkinChanceBps" IS
+'Retired owned-skin pull chance setting retained without data loss.';
