@@ -147,6 +147,28 @@ export const HERO_SKIN_CATALOG = [
     price: LAUNCH_PENDING_PRICE,
   },
   {
+    id: 'phantom.static-wraith',
+    heroId: 'phantom',
+    displayName: 'Static Wraith',
+    subtitle: 'An epic signal-lost Phantom with an antenna crest, scanline visor, and drifting interference shards.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'phantom.static-wraith',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'phantom.crimson-lotus',
+    heroId: 'phantom',
+    displayName: 'Crimson Lotus',
+    subtitle: 'A unique void-garden Phantom with a layered petal mantle, thorn crown, and a blooming lotus chest sigil.',
+    rarity: 'unique',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'phantom.crimson-lotus',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
     id: 'hookshot.tidebreaker',
     heroId: 'hookshot',
     displayName: 'Tidebreaker',
@@ -210,6 +232,28 @@ export const HERO_SKIN_CATALOG = [
     availability: 'paid',
     releaseState: 'ready_when_token_launches',
     modelDocumentId: 'hookshot.maelstrom-warlord',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'hookshot.glacier-breaker',
+    heroId: 'hookshot',
+    displayName: 'Glacier Breaker',
+    subtitle: 'An epic arctic icebreaker rig with ice-slab pauldrons, an icicle fringe, and frost-lit breaker hooks.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'hookshot.glacier-breaker',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'hookshot.void-angler',
+    heroId: 'hookshot',
+    displayName: 'Void Angler',
+    subtitle: 'A unique abyssal anglerfish rig with a glowing lure stalk, fang-hook collar, and sickle-green gill light.',
+    rarity: 'unique',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'hookshot.void-angler',
     price: LAUNCH_PENDING_PRICE,
   },
   {
@@ -279,6 +323,28 @@ export const HERO_SKIN_CATALOG = [
     price: LAUNCH_PENDING_PRICE,
   },
   {
+    id: 'blaze.frostfire-herald',
+    heroId: 'blaze',
+    displayName: 'Frostfire Herald',
+    subtitle: 'An epic paradox Blaze chassis burning cryo-blue, with frost vents, coolant lines, and an azure staff crystal.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'blaze.frostfire-herald',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'blaze.ember-drake',
+    heroId: 'blaze',
+    displayName: 'Ember Drake',
+    subtitle: 'A unique drake-knight Blaze with curved horn crown, dorsal spine ridge, and emerald drakefire cores.',
+    rarity: 'unique',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'blaze.ember-drake',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
     id: 'chronos.epoch-regent',
     heroId: 'chronos',
     displayName: 'Epoch Regent',
@@ -342,6 +408,28 @@ export const HERO_SKIN_CATALOG = [
     availability: 'paid',
     releaseState: 'ready_when_token_launches',
     modelDocumentId: 'chronos.quantum-arbiter',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'chronos.dune-prophet',
+    heroId: 'chronos',
+    displayName: 'Dune Prophet',
+    subtitle: 'An epic desert-keeper Chronos with a chest hourglass, drifting sand ring, and bone-and-amber plates.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'chronos.dune-prophet',
+    price: LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'chronos.zodiac-weaver',
+    heroId: 'chronos',
+    displayName: 'Zodiac Weaver',
+    subtitle: 'A legendary constellation Chronos with crossed zodiac rings, a star-chart mantle, and a silver starlight crown.',
+    rarity: 'legendary',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'chronos.zodiac-weaver',
     price: LAUNCH_PENDING_PRICE,
   },
   {
@@ -458,6 +546,22 @@ export function getHeroSkinsForHero(heroId: HeroId): HeroSkinDefinition[] {
 
 export function isDefaultHeroSkin(skin: Pick<HeroSkinDefinition, 'id' | 'heroId' | 'availability'>): boolean {
   return skin.availability === 'free' && DEFAULT_HERO_SKIN_IDS[skin.heroId] === skin.id;
+}
+
+export function isLootboxEligibleSkin(skin: HeroSkinDefinition): boolean {
+  return (skin.lootboxEligible ?? skin.availability === 'paid')
+    && skin.releaseState !== 'disabled';
+}
+
+export function isMarketplaceTradeableSkin(skin: HeroSkinDefinition): boolean {
+  return (skin.marketplaceTradeable ?? skin.availability === 'paid')
+    && skin.releaseState !== 'disabled';
+}
+
+export function getLootboxEligibleSkins(): HeroSkinDefinition[] {
+  return (HERO_SKIN_CATALOG as readonly HeroSkinDefinition[]).filter(
+    isLootboxEligibleSkin
+  );
 }
 
 export function validateHeroSkinCatalog(

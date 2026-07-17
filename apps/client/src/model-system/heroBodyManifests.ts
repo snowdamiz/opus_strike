@@ -570,6 +570,118 @@ export const CHRONOS_LIBERTY_SENTINEL_COLORS: Record<MaterialKind, string> = {
   mist: '#c81e3a',
 };
 
+export const STATIC_WRAITH_COLORS: Record<MaterialKind, string> = {
+  armor: '#1c1530',
+  dark: '#07040f',
+  metal: '#3f3860',
+  accent: '#f472b6',
+  glow: '#22d3ee',
+  glass: '#231a3d',
+  skin: '#180f26',
+  void: '#020108',
+  edge: '#38bdf8',
+  eye: '#cffafe',
+  mist: '#e879f9',
+};
+
+export const CRIMSON_LOTUS_COLORS: Record<MaterialKind, string> = {
+  armor: '#2a0f1d',
+  dark: '#0b0308',
+  metal: '#52242f',
+  accent: '#f43f5e',
+  glow: '#fda4af',
+  glass: '#3f0d20',
+  skin: '#220a12',
+  void: '#050103',
+  edge: '#9f1239',
+  eye: '#ffe4e6',
+  mist: '#fb7185',
+};
+
+export const GLACIER_BREAKER_COLORS: Record<MaterialKind, string> = {
+  armor: '#1d3b57',
+  dark: '#0a1826',
+  metal: '#cbd5e1',
+  accent: '#38bdf8',
+  glow: '#e0f2fe',
+  glass: '#7dd3fc',
+  skin: '#16283a',
+  void: '#040c14',
+  edge: '#94a3b8',
+  eye: '#f0f9ff',
+  mist: '#bae6fd',
+};
+
+export const VOID_ANGLER_COLORS: Record<MaterialKind, string> = {
+  armor: '#141227',
+  dark: '#060411',
+  metal: '#2e2a4a',
+  accent: '#a3e635',
+  glow: '#bef264',
+  glass: '#1e1b3a',
+  skin: '#120e20',
+  void: '#02010a',
+  edge: '#4c4470',
+  eye: '#f7fee7',
+  mist: '#84cc16',
+};
+
+export const FROSTFIRE_HERALD_COLORS: Record<MaterialKind, string> = {
+  armor: '#1c2f54',
+  dark: '#0a1122',
+  metal: '#64748b',
+  accent: '#38bdf8',
+  glow: '#a5f3fc',
+  glass: '#60a5fa',
+  skin: '#152238',
+  void: '#03060e',
+  edge: '#3b82f6',
+  eye: '#e0f7ff',
+  mist: '#7dd3fc',
+};
+
+export const EMBER_DRAKE_COLORS: Record<MaterialKind, string> = {
+  armor: '#1a3323',
+  dark: '#08120a',
+  metal: '#4d7c0f',
+  accent: '#34d399',
+  glow: '#6ee7b7',
+  glass: '#065f46',
+  skin: '#132416',
+  void: '#030905',
+  edge: '#65a30d',
+  eye: '#d1fae5',
+  mist: '#10b981',
+};
+
+export const DUNE_PROPHET_COLORS: Record<MaterialKind, string> = {
+  armor: '#4d3a22',
+  dark: '#171008',
+  metal: '#d9b56c',
+  accent: '#f59e0b',
+  glow: '#fcd34d',
+  glass: '#b45309',
+  skin: '#33261a',
+  void: '#0a0603',
+  edge: '#a16207',
+  eye: '#fef3c7',
+  mist: '#fbbf24',
+};
+
+export const ZODIAC_WEAVER_COLORS: Record<MaterialKind, string> = {
+  armor: '#1e1b4b',
+  dark: '#0b0a1f',
+  metal: '#e2e8f0',
+  accent: '#818cf8',
+  glow: '#fef08a',
+  glass: '#312e81',
+  skin: '#161437',
+  void: '#040317',
+  edge: '#a5b4fc',
+  eye: '#fefce8',
+  mist: '#c7d2fe',
+};
+
 type TeamAccentPartDraft = Omit<TeamAccentPart, 'id' | 'bone'> & {
   id?: string;
   bone?: TeamAccentPart['bone'];
@@ -1466,6 +1578,277 @@ export const QUANTUM_ARBITER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'accent', position: [0, 1.16, -0.276], scale: [0.26, 0.034, 0.026], emissive: true },
 ], 'chronos.quantumArbiter.body');
 
+export const STATIC_WRAITH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.6, 0.012, 0.6], transparent: true },
+  // Broadcast antenna crest: a bent twin-aerial mast with a signal bead.
+  { material: 'metal', position: [0.06, 2.08, -0.02], scale: [0.028, 0.26, 0.03], rotation: [0, 0, -0.14] },
+  { material: 'metal', position: [-0.08, 2.02, -0.02], scale: [0.024, 0.18, 0.026], rotation: [0, 0, 0.3] },
+  { material: 'glow', kind: 'sphere', position: [0.1, 2.24, -0.02], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true },
+  // Scanline visor: a cyan sweep bar over the void mask with a magenta tear.
+  { material: 'glow', position: [0, 1.66, -0.225], scale: [0.3, 0.026, 0.026], emissive: true },
+  { material: 'accent', position: [0.05, 1.61, -0.225], scale: [0.18, 0.02, 0.024], emissive: true },
+  // Displaced-frame pauldrons: each shoulder slab drags a magenta ghost frame
+  // offset like a dropped video frame.
+  { material: 'armor', position: [-0.34, 1.42, -0.02], scale: [0.16, 0.13, 0.24], bone: 'torso' },
+  { material: 'armor', position: [0.34, 1.42, -0.02], scale: [0.16, 0.13, 0.24], bone: 'torso' },
+  { material: 'accent', position: [-0.38, 1.46, 0.03], scale: [0.15, 0.12, 0.22], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0.3, 1.38, -0.07], scale: [0.15, 0.12, 0.22], emissive: true, transparent: true, bone: 'torso' },
+  // Interference chest bars: broken-signal strips of uneven width and offset.
+  { material: 'glow', position: [-0.03, 1.24, -0.25], scale: [0.26, 0.028, 0.024], emissive: true },
+  { material: 'accent', position: [0.05, 1.14, -0.25], scale: [0.18, 0.024, 0.024], emissive: true },
+  { material: 'glow', position: [-0.06, 1.04, -0.25], scale: [0.12, 0.022, 0.024], emissive: true },
+  // Static back panel with scan bars.
+  { material: 'dark', position: [0, 1.16, 0.22], scale: [0.32, 0.6, 0.04], bone: 'torso' },
+  { material: 'glow', position: [0.02, 1.34, 0.23], scale: [0.26, 0.024, 0.03], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [-0.03, 1.08, 0.23], scale: [0.2, 0.02, 0.03], emissive: true, transparent: true, bone: 'torso' },
+  // Drifting static shards: dead-pixel fragments hanging off the frame.
+  { material: 'glass', position: [-0.46, 1.5, 0.1], scale: [0.05, 0.05, 0.05], rotation: [0.3, 0, 0.5], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', position: [0.5, 1.32, 0.14], scale: [0.035, 0.035, 0.035], rotation: [0, 0.4, 0.2], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', position: [-0.42, 1.1, 0.16], scale: [0.04, 0.04, 0.04], rotation: [0.5, 0.2, 0], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', position: [0.44, 1.6, 0.06], scale: [0.03, 0.06, 0.03], rotation: [0, 0, -0.4], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  // Signal-dead shin trim.
+  { material: 'metal', position: [-0.15, 0.46, -0.07], scale: [0.11, 0.03, 0.03] },
+  { material: 'metal', position: [0.15, 0.46, -0.07], scale: [0.11, 0.03, 0.03] },
+], 'phantom.staticWraith.body');
+
+export const CRIMSON_LOTUS_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.74, 0.012, 0.74], transparent: true },
+  // Thorn crown: three curved briar prongs sweeping back over the cowl.
+  { material: 'metal', position: [0, 2.06, 0.02], scale: [0.04, 0.2, 0.05], rotation: [0.18, 0, 0] },
+  { material: 'metal', position: [-0.13, 2.0, 0.02], scale: [0.035, 0.16, 0.045], rotation: [0.18, 0, 0.34] },
+  { material: 'metal', position: [0.13, 2.0, 0.02], scale: [0.035, 0.16, 0.045], rotation: [0.18, 0, -0.34] },
+  { material: 'accent', kind: 'sphere', position: [0, 2.2, 0.05], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true },
+  // Layered petal mantle: overlapping crimson petals draped over the shoulders.
+  { material: 'armor', position: [-0.32, 1.5, -0.02], scale: [0.14, 0.24, 0.2], rotation: [0, 0, -0.46], bone: 'torso' },
+  { material: 'armor', position: [0.32, 1.5, -0.02], scale: [0.14, 0.24, 0.2], rotation: [0, 0, 0.46], bone: 'torso' },
+  { material: 'accent', position: [-0.38, 1.38, -0.02], scale: [0.1, 0.2, 0.16], rotation: [0, 0, -0.62], emissive: true, bone: 'torso' },
+  { material: 'accent', position: [0.38, 1.38, -0.02], scale: [0.1, 0.2, 0.16], rotation: [0, 0, 0.62], emissive: true, bone: 'torso' },
+  { material: 'edge', position: [-0.44, 1.26, -0.02], scale: [0.06, 0.14, 0.12], rotation: [0, 0, -0.74], emissive: true, bone: 'torso' },
+  { material: 'edge', position: [0.44, 1.26, -0.02], scale: [0.06, 0.14, 0.12], rotation: [0, 0, 0.74], emissive: true, bone: 'torso' },
+  // Blooming lotus chest sigil: a soul core wrapped in four angled petals.
+  { material: 'glow', kind: 'sphere', position: [0, 1.12, -0.26], scale: [0.08, 0.08, 0.05], emissive: true, transparent: true },
+  { material: 'accent', position: [-0.08, 1.2, -0.25], scale: [0.06, 0.12, 0.026], rotation: [0, 0, 0.5], emissive: true },
+  { material: 'accent', position: [0.08, 1.2, -0.25], scale: [0.06, 0.12, 0.026], rotation: [0, 0, -0.5], emissive: true },
+  { material: 'accent', position: [-0.08, 1.04, -0.25], scale: [0.06, 0.12, 0.026], rotation: [0, 0, -0.5], emissive: true },
+  { material: 'accent', position: [0.08, 1.04, -0.25], scale: [0.06, 0.12, 0.026], rotation: [0, 0, 0.5], emissive: true },
+  // Trailing petal skirt off the hips.
+  { material: 'armor', position: [-0.18, 0.5, 0.22], scale: [0.14, 0.4, 0.045], rotation: [0.12, 0, -0.14], bone: 'hips' },
+  { material: 'armor', position: [0.18, 0.5, 0.22], scale: [0.14, 0.4, 0.045], rotation: [0.12, 0, 0.14], bone: 'hips' },
+  { material: 'edge', position: [0, 0.44, 0.24], scale: [0.12, 0.34, 0.04], rotation: [0.16, 0, 0], emissive: true, transparent: true, bone: 'hips' },
+  // Drifting loose petals caught in the void draft.
+  { material: 'accent', position: [-0.48, 1.44, 0.14], scale: [0.05, 0.08, 0.026], rotation: [0.4, 0.3, -0.5], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', position: [0.5, 1.2, 0.16], scale: [0.045, 0.07, 0.024], rotation: [0.2, -0.4, 0.5], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', position: [0.42, 1.58, 0.08], scale: [0.04, 0.06, 0.022], rotation: [0, 0.5, 0.3], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  // Thorn wrist cuffs and briar shin wraps.
+  { material: 'metal', position: [-0.43, 0.96, -0.05], scale: [0.12, 0.06, 0.12], bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.96, -0.05], scale: [0.12, 0.06, 0.12], bone: 'rightForearm' },
+  { material: 'edge', position: [-0.15, 0.44, -0.07], scale: [0.11, 0.028, 0.028] },
+  { material: 'edge', position: [0.15, 0.44, -0.07], scale: [0.11, 0.028, 0.028] },
+], 'phantom.crimsonLotus.body');
+
+export const GLACIER_BREAKER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.64, 0.012, 0.64], transparent: true },
+  // Ice-slab pauldrons capped in blue glacier glass.
+  { material: 'metal', position: [-0.4, 1.42, -0.04], scale: [0.2, 0.16, 0.24], rotation: [0, 0, -0.16], bone: 'torso' },
+  { material: 'metal', position: [0.4, 1.42, -0.04], scale: [0.2, 0.16, 0.24], rotation: [0, 0, 0.16], bone: 'torso' },
+  { material: 'glass', position: [-0.42, 1.52, -0.04], scale: [0.16, 0.06, 0.2], rotation: [0, 0, -0.16], transparent: true, bone: 'torso' },
+  { material: 'glass', position: [0.42, 1.52, -0.04], scale: [0.16, 0.06, 0.2], rotation: [0, 0, 0.16], transparent: true, bone: 'torso' },
+  // Icicle fringe hanging off each pauldron.
+  { material: 'glass', kind: 'cone', position: [-0.46, 1.28, -0.12], scale: [0.04, 0.12, 0.04], rotation: [Math.PI, 0, 0], transparent: true, bone: 'torso' },
+  { material: 'glass', kind: 'cone', position: [-0.36, 1.26, 0.06], scale: [0.035, 0.16, 0.035], rotation: [Math.PI, 0, 0], transparent: true, bone: 'torso' },
+  { material: 'glass', kind: 'cone', position: [0.46, 1.28, -0.12], scale: [0.04, 0.12, 0.04], rotation: [Math.PI, 0, 0], transparent: true, bone: 'torso' },
+  { material: 'glass', kind: 'cone', position: [0.38, 1.26, 0.08], scale: [0.035, 0.15, 0.035], rotation: [Math.PI, 0, 0], transparent: true, bone: 'torso' },
+  // Frost crest fin over the helm.
+  { material: 'metal', position: [0, 1.97, -0.02], scale: [0.05, 0.16, 0.14] },
+  { material: 'glass', position: [0, 2.08, -0.02], scale: [0.04, 0.1, 0.11], transparent: true },
+  // Glacial chest core and frost collar.
+  { material: 'accent', position: [0, 1.24, -0.262], scale: [0.3, 0.036, 0.026], emissive: true },
+  { material: 'glass', kind: 'sphere', position: [0, 1.08, -0.275], scale: [0.08, 0.08, 0.055], emissive: true, transparent: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.08, -0.26], scale: [0.045, 0.045, 0.035], emissive: true, transparent: true },
+  // Twin frost fins venting cold light down the back.
+  { material: 'metal', position: [-0.16, 1.32, 0.25], scale: [0.06, 0.44, 0.045], rotation: [0, 0, -0.06], bone: 'torso' },
+  { material: 'metal', position: [0.16, 1.32, 0.25], scale: [0.06, 0.44, 0.045], rotation: [0, 0, 0.06], bone: 'torso' },
+  { material: 'glow', position: [-0.16, 1.14, 0.27], scale: [0.036, 0.3, 0.028], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.16, 1.14, 0.27], scale: [0.036, 0.3, 0.028], emissive: true, transparent: true, bone: 'torso' },
+  // Icebreaker forearm clamps and frosted knee guards.
+  { material: 'metal', position: [-0.6, 0.96, -0.305], scale: [0.18, 0.05, 0.036], bone: 'leftForearm' },
+  { material: 'metal', position: [0.6, 0.98, -0.305], scale: [0.18, 0.05, 0.036], bone: 'rightForearm' },
+  { material: 'metal', position: [-0.18, 0.5, -0.11], scale: [0.12, 0.04, 0.05] },
+  { material: 'metal', position: [0.18, 0.5, -0.11], scale: [0.12, 0.04, 0.05] },
+], 'hookshot.glacierBreaker.body');
+
+export const VOID_ANGLER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.76, 0.012, 0.76], transparent: true },
+  // Angler lure stalk: a bent mast arcing over the helm with a hanging lure
+  // light drifting ahead of the visor — the skin's signature read.
+  { material: 'metal', position: [0, 2.0, 0.04], scale: [0.035, 0.24, 0.04], rotation: [0.3, 0, 0] },
+  { material: 'metal', position: [0, 2.14, -0.1], scale: [0.03, 0.05, 0.24], rotation: [0.16, 0, 0] },
+  { material: 'glow', kind: 'sphere', position: [0, 2.04, -0.26], scale: [0.075, 0.075, 0.075], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'glass', kind: 'sphere', position: [0, 2.04, -0.26], scale: [0.11, 0.11, 0.11], transparent: true, attachmentMode: 'floating' },
+  // Fang-hook collar: downward teeth ringing the gorget.
+  { material: 'edge', kind: 'cone', position: [-0.14, 1.3, -0.24], scale: [0.04, 0.11, 0.04], rotation: [Math.PI, 0, 0] },
+  { material: 'edge', kind: 'cone', position: [0.14, 1.3, -0.24], scale: [0.04, 0.11, 0.04], rotation: [Math.PI, 0, 0] },
+  { material: 'edge', kind: 'cone', position: [-0.05, 1.32, -0.25], scale: [0.035, 0.14, 0.035], rotation: [Math.PI, 0, 0] },
+  { material: 'edge', kind: 'cone', position: [0.05, 1.32, -0.25], scale: [0.035, 0.14, 0.035], rotation: [Math.PI, 0, 0] },
+  // Dorsal fin spines stepping down the back.
+  { material: 'metal', position: [0, 1.62, 0.24], scale: [0.05, 0.2, 0.07], rotation: [0.2, 0, 0], bone: 'torso' },
+  { material: 'metal', position: [0, 1.4, 0.27], scale: [0.045, 0.16, 0.06], rotation: [0.24, 0, 0], bone: 'torso' },
+  { material: 'metal', position: [0, 1.2, 0.29], scale: [0.04, 0.13, 0.05], rotation: [0.28, 0, 0], bone: 'torso' },
+  { material: 'edge', position: [0, 0.94, 0.28], scale: [0.035, 0.1, 0.045], rotation: [0.3, 0, 0], emissive: true, bone: 'hips' },
+  // Bioluminescent gill vents slanting along the ribs.
+  { material: 'glow', position: [-0.2, 1.16, -0.26], scale: [0.09, 0.024, 0.024], rotation: [0, 0, 0.42], emissive: true },
+  { material: 'glow', position: [-0.22, 1.06, -0.26], scale: [0.08, 0.022, 0.022], rotation: [0, 0, 0.42], emissive: true },
+  { material: 'glow', position: [0.2, 1.16, -0.26], scale: [0.09, 0.024, 0.024], rotation: [0, 0, -0.42], emissive: true },
+  { material: 'glow', position: [0.22, 1.06, -0.26], scale: [0.08, 0.022, 0.022], rotation: [0, 0, -0.42], emissive: true },
+  // Deep-pressure chest light.
+  { material: 'accent', position: [0, 1.26, -0.268], scale: [0.3, 0.034, 0.024], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.28], scale: [0.07, 0.07, 0.05], emissive: true, transparent: true },
+  // Drifting plankton motes pulled along in the dark.
+  { material: 'glow', kind: 'sphere', position: [-0.44, 1.48, 0.12], scale: [0.035, 0.035, 0.035], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [0.48, 1.3, 0.16], scale: [0.04, 0.04, 0.04], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.4, 1.62, 0.06], scale: [0.028, 0.028, 0.028], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  // Fang barbs riding beside the hook lines.
+  { material: 'edge', position: [-0.7, 0.7, -0.76], scale: [0.034, 0.042, 0.13], rotation: [0, 0.5, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'edge', position: [0.7, 0.73, -0.76], scale: [0.034, 0.042, 0.13], rotation: [0, -0.5, 0], emissive: true, bone: 'rightForearm' },
+], 'hookshot.voidAngler.body');
+
+export const FROSTFIRE_HERALD_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.6, 0.012, 0.6], transparent: true },
+  // Cryo shoulder vents burning cold blue flame.
+  { material: 'dark', position: [-0.33, 1.4, -0.02], scale: [0.16, 0.14, 0.22], bone: 'torso' },
+  { material: 'dark', position: [0.33, 1.4, -0.02], scale: [0.16, 0.14, 0.22], bone: 'torso' },
+  { material: 'glow', kind: 'cone', position: [-0.33, 1.58, -0.02], scale: [0.09, 0.2, 0.09], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', kind: 'cone', position: [0.33, 1.58, -0.02], scale: [0.09, 0.2, 0.09], emissive: true, transparent: true, bone: 'torso' },
+  // Helm crest with a hovering frost mote.
+  { material: 'metal', position: [0, 1.98, -0.02], scale: [0.05, 0.15, 0.12] },
+  { material: 'glow', kind: 'sphere', position: [0.06, 2.24, -0.02], scale: [0.05, 0.05, 0.05], emissive: true, transparent: true, attachmentMode: 'floating' },
+  // Cold-flame chest sigil: an azure center tongue flanked by angled licks.
+  { material: 'glow', position: [0, 1.12, -0.265], scale: [0.05, 0.3, 0.026], emissive: true, transparent: true },
+  { material: 'accent', position: [-0.09, 1.08, -0.262], scale: [0.04, 0.2, 0.024], rotation: [0, 0, 0.22], emissive: true, transparent: true },
+  { material: 'accent', position: [0.09, 1.08, -0.262], scale: [0.04, 0.2, 0.024], rotation: [0, 0, -0.22], emissive: true, transparent: true },
+  { material: 'metal', position: [0, 1.3, -0.258], scale: [0.3, 0.04, 0.026], emissive: true },
+  // Coolant conduits running the flanks.
+  { material: 'accent', position: [-0.24, 1.12, -0.24], scale: [0.026, 0.36, 0.022], emissive: true },
+  { material: 'accent', position: [0.24, 1.12, -0.24], scale: [0.026, 0.36, 0.022], emissive: true },
+  // Azure staff crystal on the rocket-staff arm.
+  { material: 'metal', kind: 'cylinder', position: [0.52, 1.48, -0.38], scale: [0.12, 0.03, 0.12], emissive: true, bone: 'rightForearm' },
+  { material: 'glass', kind: 'sphere', position: [0.52, 1.7, -0.38], scale: [0.14, 0.14, 0.14], emissive: true, transparent: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.7, -0.38], scale: [0.08, 0.08, 0.08], emissive: true, bone: 'rightForearm' },
+  // Frost venting down the back.
+  { material: 'glow', position: [-0.14, 1.24, 0.24], scale: [0.04, 0.32, 0.028], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.14, 1.24, 0.24], scale: [0.04, 0.32, 0.028], emissive: true, transparent: true, bone: 'torso' },
+  // Iced knee plates.
+  { material: 'metal', position: [-0.17, 0.5, -0.1], scale: [0.11, 0.04, 0.05] },
+  { material: 'metal', position: [0.17, 0.5, -0.1], scale: [0.11, 0.04, 0.05] },
+], 'blaze.frostfireHerald.body');
+
+export const EMBER_DRAKE_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.76, 0.012, 0.76], transparent: true },
+  // Drake horn crown: paired curved horns with emerald tips.
+  { material: 'metal', position: [-0.16, 2.0, 0], scale: [0.05, 0.2, 0.06], rotation: [0.1, 0, 0.4] },
+  { material: 'metal', position: [0.16, 2.0, 0], scale: [0.05, 0.2, 0.06], rotation: [0.1, 0, -0.4] },
+  { material: 'accent', position: [-0.24, 2.12, 0.02], scale: [0.035, 0.12, 0.045], rotation: [0.1, 0, 0.62], emissive: true },
+  { material: 'accent', position: [0.24, 2.12, 0.02], scale: [0.035, 0.12, 0.045], rotation: [0.1, 0, -0.62], emissive: true },
+  // Drake brow visor ridge.
+  { material: 'metal', position: [0, 1.76, -0.2], scale: [0.32, 0.05, 0.06], rotation: [0.2, 0, 0] },
+  // Dorsal spine ridge stepping down the back.
+  { material: 'metal', position: [0, 1.64, 0.22], scale: [0.05, 0.18, 0.07], rotation: [0.16, 0, 0], bone: 'torso' },
+  { material: 'edge', position: [0, 1.44, 0.25], scale: [0.045, 0.15, 0.06], rotation: [0.2, 0, 0], emissive: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.24, 0.27], scale: [0.04, 0.12, 0.05], rotation: [0.24, 0, 0], bone: 'torso' },
+  { material: 'edge', position: [0, 0.96, 0.27], scale: [0.035, 0.1, 0.045], rotation: [0.28, 0, 0], emissive: true, bone: 'hips' },
+  // Layered scale pauldrons.
+  { material: 'armor', position: [-0.35, 1.46, -0.02], scale: [0.17, 0.1, 0.24], rotation: [0, 0, -0.18], bone: 'torso' },
+  { material: 'armor', position: [0.35, 1.46, -0.02], scale: [0.17, 0.1, 0.24], rotation: [0, 0, 0.18], bone: 'torso' },
+  { material: 'metal', position: [-0.38, 1.36, -0.02], scale: [0.14, 0.08, 0.2], rotation: [0, 0, -0.26], bone: 'torso' },
+  { material: 'metal', position: [0.38, 1.36, -0.02], scale: [0.14, 0.08, 0.2], rotation: [0, 0, 0.26], bone: 'torso' },
+  // Drake-eye chest core: an emerald slit iris in a molten socket.
+  { material: 'metal', position: [0, 1.3, -0.264], scale: [0.32, 0.04, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.28], scale: [0.085, 0.085, 0.055], emissive: true, transparent: true },
+  { material: 'dark', position: [0, 1.1, -0.295], scale: [0.024, 0.11, 0.02] },
+  // Drakefire staff core on the rocket-staff arm.
+  { material: 'metal', kind: 'cylinder', position: [0.52, 1.48, -0.38], scale: [0.13, 0.03, 0.13], emissive: true, bone: 'rightForearm' },
+  { material: 'accent', kind: 'cylinder', position: [0.52, 1.6, -0.38], scale: [0.16, 0.024, 0.16], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.76, -0.38], scale: [0.1, 0.1, 0.1], emissive: true, transparent: true, bone: 'rightForearm' },
+  // Emberfly sparks drifting off the scales.
+  { material: 'glow', kind: 'sphere', position: [-0.42, 1.52, 0.1], scale: [0.032, 0.032, 0.032], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [0.46, 1.3, 0.14], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [-0.36, 1.06, 0.18], scale: [0.026, 0.026, 0.026], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  // Scaled tail plate off the hips and clawed knee guards.
+  { material: 'armor', position: [0, 0.56, 0.24], scale: [0.16, 0.34, 0.05], rotation: [0.2, 0, 0], bone: 'hips' },
+  { material: 'metal', position: [-0.17, 0.5, -0.1], scale: [0.11, 0.04, 0.06] },
+  { material: 'metal', position: [0.17, 0.5, -0.1], scale: [0.11, 0.04, 0.06] },
+], 'blaze.emberDrake.body');
+
+export const DUNE_PROPHET_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.68, 0.012, 0.68], transparent: true },
+  // Chest hourglass: framed sand bulbs pinched around a falling amber thread.
+  { material: 'glass', kind: 'cone', position: [0, 1.22, -0.258], scale: [0.13, 0.11, 0.05], rotation: [Math.PI, 0, 0], transparent: true },
+  { material: 'glass', kind: 'cone', position: [0, 1.06, -0.258], scale: [0.13, 0.11, 0.05], transparent: true },
+  { material: 'glow', position: [0, 1.14, -0.262], scale: [0.02, 0.14, 0.02], emissive: true },
+  { material: 'metal', position: [0, 1.3, -0.258], scale: [0.16, 0.026, 0.05] },
+  { material: 'metal', position: [0, 0.98, -0.258], scale: [0.16, 0.026, 0.05] },
+  // Drifting sand ring circling the frame.
+  { material: 'glow', kind: 'cylinder', position: [0, 1.22, 0], scale: [0.62, 0.012, 0.62], rotation: [1.24, 0, 0.3], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [-0.5, 1.34, 0.08], scale: [0.035, 0.035, 0.035], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.12, 0.1], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  // Prophet's head wrap and brow band.
+  { material: 'armor', position: [0, 1.88, 0.02], scale: [0.34, 0.16, 0.3] },
+  { material: 'edge', position: [0, 1.8, -0.21], scale: [0.3, 0.04, 0.04], emissive: true },
+  { material: 'armor', position: [0, 1.7, 0.19], scale: [0.3, 0.3, 0.07] },
+  // Bone-and-amber pauldrons.
+  { material: 'metal', position: [-0.32, 1.42, -0.02], scale: [0.15, 0.12, 0.22], rotation: [0, 0, -0.14], bone: 'torso' },
+  { material: 'metal', position: [0.32, 1.42, -0.02], scale: [0.15, 0.12, 0.22], rotation: [0, 0, 0.14], bone: 'torso' },
+  { material: 'accent', position: [-0.34, 1.5, -0.02], scale: [0.12, 0.04, 0.18], rotation: [0, 0, -0.14], emissive: true, bone: 'torso' },
+  { material: 'accent', position: [0.34, 1.5, -0.02], scale: [0.12, 0.04, 0.18], rotation: [0, 0, 0.14], emissive: true, bone: 'torso' },
+  // Sand trickle lines and drifting motes down the back.
+  { material: 'glow', position: [-0.12, 1.2, 0.23], scale: [0.03, 0.44, 0.024], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.12, 1.2, 0.23], scale: [0.03, 0.44, 0.024], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [-0.2, 0.84, 0.26], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'hips' },
+  { material: 'glow', kind: 'sphere', position: [0.16, 0.66, 0.28], scale: [0.026, 0.026, 0.026], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'hips' },
+  // Wrist dials and sandstone knee plates.
+  { material: 'metal', kind: 'cylinder', position: [-0.43, 0.96, -0.04], scale: [0.085, 0.04, 0.085], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'metal', kind: 'cylinder', position: [0.43, 0.96, -0.04], scale: [0.085, 0.04, 0.085], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [-0.16, 0.5, -0.1], scale: [0.11, 0.04, 0.05] },
+  { material: 'metal', position: [0.16, 0.5, -0.1], scale: [0.11, 0.04, 0.05] },
+], 'chronos.duneProphet.body');
+
+export const ZODIAC_WEAVER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.88, 0.012, 0.88], transparent: true },
+  // Crossed zodiac bands with orbiting star gems.
+  { material: 'metal', kind: 'cylinder', position: [0, 1.32, 0], scale: [0.68, 0.014, 0.68], rotation: [1.16, 0, 0.36], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.32, 0], scale: [0.74, 0.012, 0.74], rotation: [1.16, 0, -0.36], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [-0.54, 1.5, 0.1], scale: [0.05, 0.05, 0.05], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [0.56, 1.2, 0.08], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.48, 1.56, 0.12], scale: [0.035, 0.035, 0.035], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  // Silver starlight crown: a halo ring under a star-topped spire.
+  { material: 'metal', kind: 'cylinder', position: [0, 2.0, -0.04], scale: [0.3, 0.014, 0.3], rotation: [Math.PI / 2, 0, 0], emissive: true, attachmentMode: 'floating' },
+  { material: 'metal', position: [0, 2.12, -0.02], scale: [0.045, 0.2, 0.05] },
+  { material: 'metal', position: [-0.12, 2.05, -0.02], scale: [0.035, 0.12, 0.045], rotation: [0, 0, 0.3] },
+  { material: 'metal', position: [0.12, 2.05, -0.02], scale: [0.035, 0.12, 0.045], rotation: [0, 0, -0.3] },
+  { material: 'glow', kind: 'sphere', position: [0, 2.28, -0.02], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
+  // Star-chart mantle: a midnight panel pinned with constellation lights.
+  { material: 'dark', position: [0, 1.14, 0.23], scale: [0.36, 0.64, 0.04], bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [-0.1, 1.36, 0.25], scale: [0.026, 0.026, 0.026], emissive: true, bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.08, 1.24, 0.25], scale: [0.03, 0.03, 0.03], emissive: true, bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [-0.05, 1.06, 0.25], scale: [0.024, 0.024, 0.024], emissive: true, bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.12, 0.94, 0.25], scale: [0.026, 0.026, 0.026], emissive: true, bone: 'torso' },
+  { material: 'edge', position: [-0.01, 1.3, 0.25], scale: [0.02, 0.16, 0.016], rotation: [0, 0, 0.6], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'edge', position: [0.02, 1.15, 0.25], scale: [0.02, 0.14, 0.016], rotation: [0, 0, -0.5], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'edge', position: [0.04, 1.0, 0.25], scale: [0.018, 0.13, 0.016], rotation: [0, 0, 0.45], emissive: true, transparent: true, bone: 'torso' },
+  // Constellation chest sigil: linked starlights over a silver collar.
+  { material: 'metal', position: [0, 1.32, -0.27], scale: [0.36, 0.04, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [-0.1, 1.18, -0.27], scale: [0.036, 0.036, 0.03], emissive: true, transparent: true },
+  { material: 'glow', kind: 'sphere', position: [0.08, 1.1, -0.27], scale: [0.042, 0.042, 0.032], emissive: true, transparent: true },
+  { material: 'glow', kind: 'sphere', position: [-0.03, 1.0, -0.27], scale: [0.032, 0.032, 0.028], emissive: true, transparent: true },
+  { material: 'accent', position: [-0.01, 1.14, -0.27], scale: [0.018, 0.13, 0.016], rotation: [0, 0, 0.55], emissive: true, transparent: true },
+  { material: 'accent', position: [0.03, 1.05, -0.27], scale: [0.016, 0.12, 0.016], rotation: [0, 0, -0.5], emissive: true, transparent: true },
+  // Woven silver cuffs and starlit knee trim.
+  { material: 'metal', position: [-0.43, 0.96, -0.05], scale: [0.12, 0.06, 0.12], emissive: true, bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.96, -0.05], scale: [0.12, 0.06, 0.12], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [-0.16, 0.48, -0.09], scale: [0.11, 0.032, 0.03] },
+  { material: 'metal', position: [0.16, 0.48, -0.09], scale: [0.11, 0.032, 0.03] },
+], 'chronos.zodiacWeaver.body');
+
 export const HOOKSHOT_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.54, 0.024, 0.54], transparent: true },
   { material: 'dark', position: [-0.18, 0.36, 0], scale: [0.16, 0.62, 0.17] },
@@ -2046,6 +2429,14 @@ export const HERO_SKIN_BODY_MANIFESTS: Record<HeroSkinId, HeroBodyManifest> = {
   'hookshot.golden': createSkinBodyManifest('hookshot', HOOKSHOT_GOLDEN_EXTRA_PARTS, HOOKSHOT_GOLDEN_COLORS, 0.24),
   'blaze.golden': createSkinBodyManifest('blaze', BLAZE_GOLDEN_EXTRA_PARTS, BLAZE_GOLDEN_COLORS, 0.24),
   'chronos.golden': createSkinBodyManifest('chronos', CHRONOS_GOLDEN_EXTRA_PARTS, CHRONOS_GOLDEN_COLORS, 0.24),
+  'phantom.static-wraith': createSkinBodyManifest('phantom', STATIC_WRAITH_EXTRA_PARTS, STATIC_WRAITH_COLORS, 0.16),
+  'phantom.crimson-lotus': createSkinBodyManifest('phantom', CRIMSON_LOTUS_EXTRA_PARTS, CRIMSON_LOTUS_COLORS, 0.2),
+  'hookshot.glacier-breaker': createSkinBodyManifest('hookshot', GLACIER_BREAKER_EXTRA_PARTS, GLACIER_BREAKER_COLORS, 0.13),
+  'hookshot.void-angler': createSkinBodyManifest('hookshot', VOID_ANGLER_EXTRA_PARTS, VOID_ANGLER_COLORS, 0.2),
+  'blaze.frostfire-herald': createSkinBodyManifest('blaze', FROSTFIRE_HERALD_EXTRA_PARTS, FROSTFIRE_HERALD_COLORS, 0.15),
+  'blaze.ember-drake': createSkinBodyManifest('blaze', EMBER_DRAKE_EXTRA_PARTS, EMBER_DRAKE_COLORS, 0.2),
+  'chronos.dune-prophet': createSkinBodyManifest('chronos', DUNE_PROPHET_EXTRA_PARTS, DUNE_PROPHET_COLORS, 0.17),
+  'chronos.zodiac-weaver': createSkinBodyManifest('chronos', ZODIAC_WEAVER_EXTRA_PARTS, ZODIAC_WEAVER_COLORS, 0.25),
 };
 
 export const HERO_DEFAULT_FALLBACK_SOCKETS = {

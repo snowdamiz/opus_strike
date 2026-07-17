@@ -5,6 +5,14 @@ import type {
   HeroLoadoutSelection,
   HeroSkinCatalogResponse,
   HeroSkinId,
+  LootboxOpenIntentSnapshot,
+  LootboxOpenTransactionSnapshot,
+  LootboxStateResponse,
+  MarketplaceListingSnapshot,
+  MarketplaceListingsResponse,
+  MarketplacePurchaseIntentSnapshot,
+  MarketplacePurchaseTransactionSnapshot,
+  MarketplaceStateResponse,
   MatchPerspective,
   PlayerDailyMissionsResponse,
   PregeneratedMapArtifactEnvelope,
@@ -781,6 +789,235 @@ export async function submitSignedSkinPurchaseTransaction(input: {
   signedTransactionBase64: string;
 }): Promise<SkinPurchaseIntentSnapshot> {
   const response = await fetch(`${getHttpUrl()}/cosmetics/purchases/intents/${encodeURIComponent(input.intentId)}/signed-transaction`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signedTransactionBase64: input.signedTransactionBase64 }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to submit signed purchase transaction'));
+  }
+
+  return response.json();
+}
+
+/* ------------------------------- Lootbox ------------------------------- */
+
+export async function requestLootboxState(): Promise<LootboxStateResponse> {
+  const response = await fetch(`${getHttpUrl()}/lootbox/state`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load lootbox state'));
+  }
+
+  return response.json();
+}
+
+export async function createLootboxOpenIntent(input: {
+  walletAddress: string;
+}): Promise<LootboxOpenIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/lootbox/opens`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to create lootbox open intent'));
+  }
+
+  return response.json();
+}
+
+// Spends one admin-granted free open. A wallet address is supplied as the
+// recipient when the crate can drop game tokens; no signature is required.
+export async function openLootboxWithFreeCredit(input: {
+  walletAddress?: string;
+} = {}): Promise<LootboxOpenIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/lootbox/opens/free`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to open free crate'));
+  }
+
+  return response.json();
+}
+
+export async function getLootboxOpenIntent(intentId: string): Promise<LootboxOpenIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/lootbox/opens/${encodeURIComponent(intentId)}`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load lootbox open intent'));
+  }
+
+  return response.json();
+}
+
+export async function buildLootboxOpenTransaction(intentId: string): Promise<LootboxOpenTransactionSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/lootbox/opens/${encodeURIComponent(intentId)}/transaction`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to build lootbox transaction'));
+  }
+
+  return response.json();
+}
+
+export async function submitSignedLootboxOpenTransaction(input: {
+  intentId: string;
+  signedTransactionBase64: string;
+}): Promise<LootboxOpenIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/lootbox/opens/${encodeURIComponent(input.intentId)}/signed-transaction`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signedTransactionBase64: input.signedTransactionBase64 }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to submit signed lootbox transaction'));
+  }
+
+  return response.json();
+}
+
+/* ----------------------------- Marketplace ----------------------------- */
+
+export async function requestMarketplaceState(): Promise<MarketplaceStateResponse> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/state`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load marketplace state'));
+  }
+
+  return response.json();
+}
+
+export async function requestMarketplaceListings(): Promise<MarketplaceListingsResponse> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/listings`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load marketplace listings'));
+  }
+
+  return response.json();
+}
+
+export async function requestMyMarketplaceListings(): Promise<MarketplaceListingsResponse> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/listings/mine`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load your listings'));
+  }
+
+  return response.json();
+}
+
+export async function createMarketplaceListing(input: {
+  skinId: HeroSkinId;
+  priceLamports: string;
+}): Promise<MarketplaceListingSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/listings`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to create listing'));
+  }
+
+  return response.json();
+}
+
+export async function cancelMarketplaceListing(listingId: string): Promise<MarketplaceListingSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/listings/${encodeURIComponent(listingId)}/cancel`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to cancel listing'));
+  }
+
+  return response.json();
+}
+
+export async function createMarketplacePurchaseIntent(input: {
+  listingId: string;
+  walletAddress: string;
+}): Promise<MarketplacePurchaseIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/listings/${encodeURIComponent(input.listingId)}/intents`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ walletAddress: input.walletAddress }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to create purchase intent'));
+  }
+
+  return response.json();
+}
+
+export async function getMarketplacePurchaseIntent(intentId: string): Promise<MarketplacePurchaseIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/intents/${encodeURIComponent(intentId)}`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load purchase intent'));
+  }
+
+  return response.json();
+}
+
+export async function buildMarketplacePurchaseTransaction(intentId: string): Promise<MarketplacePurchaseTransactionSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/intents/${encodeURIComponent(intentId)}/transaction`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to build purchase transaction'));
+  }
+
+  return response.json();
+}
+
+export async function submitSignedMarketplacePurchaseTransaction(input: {
+  intentId: string;
+  signedTransactionBase64: string;
+}): Promise<MarketplacePurchaseIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/marketplace/intents/${encodeURIComponent(input.intentId)}/signed-transaction`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

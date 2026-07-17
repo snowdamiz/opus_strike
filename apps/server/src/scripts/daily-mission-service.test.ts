@@ -513,6 +513,26 @@ async function runSettlementTests(): Promise<void> {
   (globalThis as any).prisma = fake.prisma;
 
   const missionServiceModule = await import('../missions/service');
+  assert.equal(missionServiceModule.decideGameTokenPayoutSignature({
+    status: { err: null, confirmationStatus: 'confirmed', confirmations: 1 },
+    lastValidBlockHeight: 100n,
+    currentBlockHeight: null,
+  }), 'granted');
+  assert.equal(missionServiceModule.decideGameTokenPayoutSignature({
+    status: null,
+    lastValidBlockHeight: 100n,
+    currentBlockHeight: 101n,
+  }), 'expired');
+  assert.equal(missionServiceModule.decideGameTokenPayoutSignature({
+    status: null,
+    lastValidBlockHeight: 100n,
+    currentBlockHeight: 100n,
+  }), 'pending');
+  assert.equal(missionServiceModule.decideGameTokenPayoutSignature({
+    status: { err: { InstructionError: [0, 'Custom'] } },
+    lastValidBlockHeight: 100n,
+    currentBlockHeight: null,
+  }), 'failed');
   const rewardsModule = await import('../rewards/service');
   delete process.env.GAME_TOKEN_MINT;
   delete process.env.GAME_TOKEN_SYMBOL;

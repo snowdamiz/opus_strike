@@ -88,6 +88,13 @@ function createFakePrisma() {
       revokedAt: new Date('2026-06-24T12:18:00.000Z'),
       purchaseId: 'old-purchase',
     },
+    {
+      userId: 'user-c',
+      skinId: 'phantom.umbral-reaver',
+      source: 'lootbox',
+      grantedAt: new Date('2026-06-24T12:19:00.000Z'),
+      revokedAt: null,
+    },
   ];
   const heroLoadouts: UserHeroLoadoutRow[] = [
     {
@@ -512,6 +519,28 @@ async function runSkinShopServiceTests() {
     [],
     'paid skins stay out of the public catalog while the shop is disabled'
   );
+
+  // Lootbox/marketplace-granted paid skins are the exception: they stay
+  // visible and equippable even while the shop is disabled, unlike the
+  // launch-gated shop-bought rows asserted above.
+  const tradeGrantedCatalog = await getSkinCatalogForUser('user-c');
+  assert.deepEqual(
+    tradeGrantedCatalog.skins.filter((skin) => skin.availability === 'paid').map((skin) => skin.id),
+    ['phantom.umbral-reaver'],
+    'trade-granted paid skins stay in the catalog while the shop is disabled'
+  );
+  const tradeGranted = tradeGrantedCatalog.skins.find((skin) => skin.id === 'phantom.umbral-reaver');
+  assert.equal(tradeGranted?.owned, true);
+  assert.equal(tradeGranted?.entitlementSource, 'lootbox');
+  assert.deepEqual(await updateUserHeroLoadout({
+    userId: 'user-c',
+    heroId: 'phantom',
+    skinId: 'phantom.umbral-reaver',
+  }), {
+    heroId: 'phantom',
+    skinId: 'phantom.umbral-reaver',
+  });
+  assert.equal(await resolveUserLoadoutForHero('user-c', 'phantom'), 'phantom.umbral-reaver');
 
   // Enable the shop; it now transacts in the configured game token.
   await updateSkinShopSettings({

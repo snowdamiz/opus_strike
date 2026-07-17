@@ -625,6 +625,75 @@ export interface AdminSkinGrantResult {
   skippedUserIds: string[];
 }
 
+/* Lootbox */
+export interface LootboxRarityWeights {
+  common: number;
+  epic: number;
+  unique: number;
+  legendary: number;
+}
+
+export interface LootboxSettingsView {
+  enabled: boolean;
+  priceTokens: string;
+  weights: LootboxRarityWeights;
+  directTokenReward: {
+    chanceBps: number;
+    range: { minTokens: string; maxTokens: string };
+  };
+  duplicateReward: {
+    skinTokenRanges: Record<string, { minTokens: string; maxTokens: string }>;
+  };
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+export interface LootboxRecentResult {
+  intentId: string;
+  userId: string;
+  rewardKind: 'skin' | 'game_token';
+  skinId: string | null;
+  rarity: string | null;
+  tokenAmount: string | null;
+  tokenSymbol: string;
+  tokenPayoutStatus: string | null;
+  creditedAt: string;
+}
+
+export interface LootboxFreeOpenBalanceView {
+  userId: string;
+  name: string | null;
+  balance: number;
+  totalGranted: number;
+}
+
+export interface LootboxAdminOverview {
+  settings: LootboxSettingsView;
+  tokenPayoutsReady: boolean;
+  tokenPayoutsDisabledReason: string | null;
+  totalOpens: number;
+  recentResults: LootboxRecentResult[];
+  freeOpens: {
+    totalOutstanding: number;
+    balances: LootboxFreeOpenBalanceView[];
+  };
+}
+
+/* Marketplace */
+export interface MarketplaceSettingsView {
+  enabled: boolean;
+  listingHoldTokens: string;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+export interface MarketplaceAdminOverview {
+  settings: MarketplaceSettingsView;
+  activeListings: number;
+  soldListings: number;
+  totalVolumeLamports: LamportString;
+}
+
 /* ----------------------------- Anti-Cheat --------------------------- */
 
 export interface AntiCheatReview {
@@ -666,6 +735,8 @@ export interface AdminOverview {
   skinShop: SkinShopOverview;
   eventBiome: EventBiomeSettings;
   mapPool: MapPoolAdminOverview;
+  lootbox: LootboxAdminOverview;
+  marketplace: MarketplaceAdminOverview;
 }
 
 /* ----------------------- Request payloads --------------------------- */
@@ -725,6 +796,24 @@ export interface SkinShopSettingsUpdate {
   enabled: boolean;
 }
 
+export interface LootboxSettingsUpdate {
+  enabled?: boolean;
+  priceTokens?: string;
+  weights?: Partial<LootboxRarityWeights>;
+  directTokenReward?: {
+    chanceBps: number;
+    range: { minTokens: string; maxTokens: string };
+  };
+  duplicateReward?: {
+    skinTokenRanges?: Record<string, { minTokens: string; maxTokens: string }>;
+  };
+}
+
+export interface MarketplaceSettingsUpdate {
+  enabled?: boolean;
+  listingHoldTokens?: string;
+}
+
 export interface EventBiomeUpdate {
   enabled: boolean;
 }
@@ -746,4 +835,20 @@ export interface AdminSkinGrantRequest {
 export interface AdminSkinGrantResponse {
   ok: true;
   result: AdminSkinGrantResult;
+}
+
+export interface AdminFreeOpenGrantRequest {
+  userIds: string[];
+  count: number;
+}
+
+export interface AdminFreeOpenGrantResult {
+  granted: Array<{ userId: string; name: string | null; balance: number }>;
+  skippedUserIds: string[];
+  count: number;
+}
+
+export interface AdminFreeOpenGrantResponse {
+  ok: true;
+  result: AdminFreeOpenGrantResult;
 }

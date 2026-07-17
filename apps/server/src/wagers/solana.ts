@@ -25,6 +25,7 @@ export interface ExpectedSolPayment {
   createdAt: Date;
   expiresAt: Date;
   expiryGraceMs: number;
+  allowAfterExpiry?: boolean;
 }
 
 export interface ParsedSolPayment {
@@ -171,7 +172,10 @@ export function verifyParsedSolPayment(
     if (blockTime.getTime() + 1000 < expected.createdAt.getTime()) {
       return { ok: false, reason: 'transaction_before_intent' };
     }
-    if (blockTime.getTime() > expected.expiresAt.getTime() + expected.expiryGraceMs) {
+    if (
+      !expected.allowAfterExpiry
+      && blockTime.getTime() > expected.expiresAt.getTime() + expected.expiryGraceMs
+    ) {
       return { ok: false, reason: 'expired_intent' };
     }
   }

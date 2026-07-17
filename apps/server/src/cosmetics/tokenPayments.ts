@@ -47,6 +47,7 @@ export interface VerifySplTokenPaymentInput {
   createdAt: Date;
   expiresAt: Date;
   expiryGraceMs: number;
+  allowAfterExpiry?: boolean;
 }
 
 export type VerifySplTokenPaymentReason =
@@ -295,7 +296,10 @@ export function verifyParsedSplTokenPayment(input: VerifySplTokenPaymentInput): 
     if (blockTime.getTime() < input.createdAt.getTime() - 5_000) {
       return { ok: false, reason: 'transaction_before_intent' };
     }
-    if (blockTime.getTime() > input.expiresAt.getTime() + input.expiryGraceMs) {
+    if (
+      !input.allowAfterExpiry
+      && blockTime.getTime() > input.expiresAt.getTime() + input.expiryGraceMs
+    ) {
       return { ok: false, reason: 'expired_intent' };
     }
   }

@@ -100,6 +100,8 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
 const HeroesPage = lazy(() => import('./HeroesPage').then((module) => ({ default: module.HeroesPage })));
 const LoadoutTab = lazy(() => import('./LoadoutTab').then((module) => ({ default: module.LoadoutTab })));
 const StatsPage = lazy(() => import('./StatsPage').then((module) => ({ default: module.StatsPage })));
+const CratesTab = lazy(() => import('./CratesTab').then((module) => ({ default: module.CratesTab })));
+const MarketTab = lazy(() => import('./MarketTab').then((module) => ({ default: module.MarketTab })));
 const loadSettingsModalModule = () => import('./SettingsModal');
 const SettingsModal = lazy(() => loadSettingsModalModule().then((module) => ({ default: module.SettingsModal })));
 const HeroPreviewCanvas = lazy(() => import('./HeroPreviewCanvas').then((module) => ({ default: module.HeroPreviewCanvas })));
@@ -300,7 +302,7 @@ function SlopHeroesMark({ className }: { className?: string }) {
 }
 
 // Navigation tabs
-const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'stats'] as const;
+const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'crates', 'market', 'stats'] as const;
 const SLOP_HEROES_X_URL = 'https://x.com/slopheroes';
 type MainTab = (typeof MAIN_TABS)[number];
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
@@ -1529,6 +1531,25 @@ export function MainLobby() {
             onEquipSkin={handleEquipSkin}
             onPurchaseSkin={handlePurchaseSkin}
           />
+        )}
+        {activeTab === 'crates' && (
+          <Suspense fallback={null}>
+            <CratesTab
+              isAuthenticated={isAuthenticated}
+              onLogin={handleOpenLogin}
+              onInventoryChanged={loadSkinCatalog}
+            />
+          </Suspense>
+        )}
+        {activeTab === 'market' && (
+          <Suspense fallback={null}>
+            <MarketTab
+              isAuthenticated={isAuthenticated}
+              catalog={skinCatalog}
+              onLogin={handleOpenLogin}
+              onInventoryChanged={loadSkinCatalog}
+            />
+          </Suspense>
         )}
       </div>
 

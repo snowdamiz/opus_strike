@@ -5,14 +5,22 @@ import {
   Coins,
   Gift,
   Loader2,
+  Package,
   RefreshCw,
   Send,
   ShoppingBag,
   Sparkles,
+  Store,
 } from 'lucide-react';
-import { HERO_SKIN_CATALOG, type HeroSkinId, type HeroSkinRarity } from '@voxel-strike/shared';
+import {
+  getLootboxEligibleSkins,
+  HERO_SKIN_CATALOG,
+  type HeroSkinId,
+  type HeroSkinRarity,
+} from '@voxel-strike/shared';
 import type { SectionProps } from '../section';
 import type {
+  AdminFreeOpenGrantResult,
   AdminSkinGrantResult,
   PlayerRewardSettings,
   PlayerRewardPayoutStatus,
@@ -62,6 +70,7 @@ import {
   titleCase,
 } from '../format';
 import { SkinRarityChrome } from '../../ui/SkinRarityChrome';
+import { AdminUserPicker, type AdminUserChoice } from '../AdminUserPicker';
 
 const AdminHeroPreviewCanvas = React.lazy(() => import('../../ui/HeroPreviewCanvas').then((module) => ({
   default: module.HeroPreviewCanvas,
@@ -78,6 +87,7 @@ function NumberField({
   disabled,
   step,
   min,
+  max,
   className,
 }: {
   label: React.ReactNode;
@@ -88,6 +98,7 @@ function NumberField({
   disabled?: boolean;
   step?: string;
   min?: string;
+  max?: string;
   className?: string;
 }) {
   return (
@@ -99,6 +110,7 @@ function NumberField({
         value={value}
         step={step}
         min={min}
+        max={max}
         placeholder={placeholder}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
@@ -1657,6 +1669,675 @@ function SkinShopTab({ console: c }: { console: SectionProps['console'] }) {
   );
 }
 
+/* ----------------------------- Lootbox ------------------------------ */
+
+const LOOTBOX_RARITY_KEYS = ['common', 'epic', 'unique', 'legendary'] as const;
+const LOOTBOX_SKINS = getLootboxEligibleSkins();
+
+type DuplicateSkinRangeDraft = { minTokens: string; maxTokens: string };
+
+function buildDuplicateSkinRanges(
+  ranges: Record<string, DuplicateSkinRangeDraft> | undefined
+): Record<string, DuplicateSkinRangeDraft> {
+  return Object.fromEntries(LOOTBOX_SKINS.map((skin) => [skin.id, {
+    minTokens: ranges?.[skin.id]?.minTokens ?? '',
+    maxTokens: ranges?.[skin.id]?.maxTokens ?? '',
+  }]));
+}
+
+function LootboxSettingsCard({ console: c }: { console: SectionProps['console'] }) {
+  const lootbox = c.overview?.lootbox;
+  const gameToken = c.overview?.gameToken;
+  const [enabled, setEnabled] = React.useState<boolean>(lootbox?.settings.enabled ?? false);
+  const [priceTokens, setPriceTokens] = React.useState<string>(lootbox?.settings.priceTokens ?? '75000');
+  const [directDropChancePercent, setDirectDropChancePercent] = React.useState<string>(
+    str((lootbox?.settings.directTokenReward.chanceBps ?? 6000) / 100)
+  );
+  const [directDropMinTokens, setDirectDropMinTokens] = React.useState<string>(
+    lootbox?.settings.directTokenReward.range.minTokens ?? '5000'
+  );
+  const [directDropMaxTokens, setDirectDropMaxTokens] = React.useState<string>(
+    lootbox?.settings.directTokenReward.range.maxTokens ?? '75000'
+  );
+  const [duplicateSkinRanges, setDuplicateSkinRanges] = React.useState<Record<string, DuplicateSkinRangeDraft>>(
+    () => buildDuplicateSkinRanges(lootbox?.settings.duplicateReward.skinTokenRanges)
+  );
+  const [weights, setWeights] = React.useState<Record<(typeof LOOTBOX_RARITY_KEYS)[number], string>>({
+    common: str(lootbox?.settings.weights.common ?? 0),
+    epic: str(lootbox?.settings.weights.epic ?? 0),
+    unique: str(lootbox?.settings.weights.unique ?? 0),
+    legendary: str(lootbox?.settings.weights.legendary ?? 0),
+  });
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!lootbox) return;
+    setEnabled(lootbox.settings.enabled);
+    setPriceTokens(lootbox.settings.priceTokens);
+    setDirectDropChancePercent(str(lootbox.settings.directTokenReward.chanceBps / 100));
+    setDirectDropMinTokens(lootbox.settings.directTokenReward.range.minTokens);
+    setDirectDropMaxTokens(lootbox.settings.directTokenReward.range.maxTokens);
+    setDuplicateSkinRanges(buildDuplicateSkinRanges(lootbox.settings.duplicateReward.skinTokenRanges));
+    setWeights({
+      common: str(lootbox.settings.weights.common),
+      epic: str(lootbox.settings.weights.epic),
+      unique: str(lootbox.settings.weights.unique),
+      legendary: str(lootbox.settings.weights.legendary),
+    });
+  }, [lootbox]);
+
+  if (!lootbox) return null;
+
+  const symbol = gameToken?.symbol || 'TOKEN';
+  const rpcReady = gameToken?.rpcConfigured === true;
+  const mintPresent = gameToken?.mintAddress != null;
+  const duplicateRangesValid = LOOTBOX_SKINS.every((skin) => {
+    const range = duplicateSkinRanges[skin.id];
+    return range
+      && positiveIntegerText(range.minTokens)
+      && positiveIntegerText(range.maxTokens)
+      && BigInt(range.minTokens) <= BigInt(range.maxTokens);
+  });
+  const tokenPayoutReady = lootbox.tokenPayoutsReady;
+  const canEnable = mintPresent && rpcReady && tokenPayoutReady;
+  const weightTotal = LOOTBOX_RARITY_KEYS.reduce((sum, key) => sum + num(weights[key]), 0);
+  const priceValid = positiveIntegerText(priceTokens);
+  const directDropPercent = num(directDropChancePercent);
+  const directDropChanceBps = Math.round(directDropPercent * 100);
+  const directDropChanceValid = directDropChancePercent.trim() !== ''
+    && Number.isFinite(directDropPercent)
+    && directDropPercent >= 0
+    && directDropPercent <= 100
+    && Math.abs((directDropPercent * 100) - directDropChanceBps) < 0.000001;
+  const directDropRangeValid = positiveIntegerText(directDropMinTokens)
+    && positiveIntegerText(directDropMaxTokens)
+    && BigInt(directDropMinTokens) <= BigInt(directDropMaxTokens);
+  const weightsValid = weightTotal > 0 || (directDropChanceValid && directDropChanceBps === 10_000);
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      await c.saveLootboxSettings({
+        enabled,
+        priceTokens: integerText(priceTokens),
+        weights: {
+          common: num(weights.common),
+          epic: num(weights.epic),
+          unique: num(weights.unique),
+          legendary: num(weights.legendary),
+        },
+        directTokenReward: {
+          chanceBps: directDropChanceBps,
+          range: {
+            minTokens: integerText(directDropMinTokens),
+            maxTokens: integerText(directDropMaxTokens),
+          },
+        },
+        duplicateReward: {
+          skinTokenRanges: Object.fromEntries(LOOTBOX_SKINS.map((skin) => [skin.id, {
+            minTokens: integerText(duplicateSkinRanges[skin.id]?.minTokens ?? ''),
+            maxTokens: integerText(duplicateSkinRanges[skin.id]?.maxTokens ?? ''),
+          }])),
+        },
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <CardTitle>Lootbox Settings</CardTitle>
+            <CardDescription>
+              Configure raw ${symbol} drops, skin rarity weights, and owned-skin conversion values.
+            </CardDescription>
+          </div>
+          <Switch
+            checked={enabled}
+            disabled={!canEnable && !enabled}
+            onCheckedChange={setEnabled}
+          />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={mintPresent ? 'success' : 'danger'}>
+            GAME_TOKEN_MINT {mintPresent ? 'Ready' : 'Missing'}
+          </Badge>
+          <Badge variant={rpcReady ? 'success' : 'danger'}>
+            SOLANA_RPC_URL {rpcReady ? 'Ready' : 'Missing'}
+          </Badge>
+          <Badge variant={tokenPayoutReady ? 'success' : 'danger'}>
+            Token payouts {tokenPayoutReady ? 'Ready' : 'Unavailable'}
+          </Badge>
+        </div>
+
+        <NumberField
+          label={`Open price (whole $${symbol})`}
+          value={priceTokens}
+          onChange={setPriceTokens}
+          min="1"
+          step="1"
+          hint={`Players pay this on-chain per crate. Default 75,000 $${symbol}.`}
+        />
+
+        <div className="space-y-4 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.035] p-4">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-2 text-emerald-300">
+              <Coins className="h-4 w-4" />
+            </div>
+            <div>
+              <Label>{`Raw $${symbol} drop`}</Label>
+              <p className="mt-1 text-[11px] text-white/40">
+                This is a separate crate outcome instead of a skin. Amounts use the lower-biased
+                sliding scale, and successful drops are automatically sent to the player&apos;s wallet.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <NumberField
+              label="Drop chance (%)"
+              value={directDropChancePercent}
+              onChange={setDirectDropChancePercent}
+              min="0"
+              max="100"
+              step="0.01"
+              hint={directDropChanceValid
+                ? `${Math.max(0, 100 - directDropPercent).toFixed(2)}% continue to the skin pool`
+                : '0–100%, up to two decimal places'}
+            />
+            <NumberField
+              label={`Minimum $${symbol}`}
+              value={directDropMinTokens}
+              onChange={setDirectDropMinTokens}
+              min="1"
+              step="1"
+            />
+            <NumberField
+              label={`Maximum $${symbol}`}
+              value={directDropMaxTokens}
+              onChange={setDirectDropMaxTokens}
+              min="1"
+              step="1"
+              hint="About 75% of drops land in the lower half"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <Label>Owned-skin conversion ranges</Label>
+          <p className="text-[11px] text-white/35">
+            Every skin keeps its normal rarity-weighted pull rate. If the selected skin is already owned,
+            it converts inside its range below. Roughly 75% of token outcomes land in the lower half.
+          </p>
+
+          <div className="overflow-hidden rounded-lg border border-white/10">
+            <div className="max-h-[28rem] overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Skin</TableHead>
+                    <TableHead>Rarity</TableHead>
+                    <TableHead className="w-36 text-right">{`Minimum $${symbol}`}</TableHead>
+                    <TableHead className="w-36 text-right">{`Maximum $${symbol}`}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {LOOTBOX_SKINS.map((skin) => (
+                    <TableRow key={skin.id}>
+                      <TableCell>
+                        <div className="font-medium text-white/85">{skin.displayName}</div>
+                        <div className="font-mono text-[10px] text-white/35">{skin.id}</div>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`skins-rarity-chip is-${skin.rarity}`}>{skin.rarity}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          min="1"
+                          step="1"
+                          aria-label={`${skin.displayName} minimum duplicate value in ${symbol}`}
+                          value={duplicateSkinRanges[skin.id]?.minTokens ?? ''}
+                          onChange={(event) => setDuplicateSkinRanges((current) => ({
+                            ...current,
+                            [skin.id]: {
+                              ...current[skin.id],
+                              minTokens: event.target.value,
+                            },
+                          }))}
+                          className="ml-auto max-w-32 text-right font-mono"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          min="1"
+                          step="1"
+                          aria-label={`${skin.displayName} maximum duplicate value in ${symbol}`}
+                          value={duplicateSkinRanges[skin.id]?.maxTokens ?? ''}
+                          onChange={(event) => setDuplicateSkinRanges((current) => ({
+                            ...current,
+                            [skin.id]: {
+                              ...current[skin.id],
+                              maxTokens: event.target.value,
+                            },
+                          }))}
+                          className="ml-auto max-w-32 text-right font-mono"
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Rarity pull weights</Label>
+          <div className="grid gap-3 sm:grid-cols-4">
+            {LOOTBOX_RARITY_KEYS.map((key) => (
+              <NumberField
+                key={key}
+                label={titleCase(key)}
+                value={weights[key]}
+                onChange={(next) => setWeights((prev) => ({ ...prev, [key]: next }))}
+                min="0"
+                step="1"
+                hint={weightTotal > 0 ? `${((num(weights[key]) / weightTotal) * 100).toFixed(2)}%` : '—'}
+              />
+            ))}
+          </div>
+          <p className="text-[11px] text-white/35">
+            Relative shares after the raw-token check enters the skin pool. Ownership never
+            changes these rates. There are no purchasable common skins today, so the common
+            weight usually stays 0.
+          </p>
+        </div>
+
+        {!priceValid ? (
+          <p className="text-[11px] text-ui-warning">Open price must be a positive whole-token amount.</p>
+        ) : null}
+        {!duplicateRangesValid ? (
+          <p className="text-[11px] text-ui-warning">Every skin needs a positive whole-token range whose minimum does not exceed its maximum.</p>
+        ) : null}
+        {!directDropChanceValid ? (
+          <p className="text-[11px] text-ui-warning">Raw token drop chance must be between 0% and 100% with at most two decimal places.</p>
+        ) : null}
+        {!directDropRangeValid ? (
+          <p className="text-[11px] text-ui-warning">Raw token drops need a positive whole-token range whose minimum does not exceed its maximum.</p>
+        ) : null}
+        {!weightsValid ? (
+          <p className="text-[11px] text-ui-warning">At least one rarity weight must be positive while skins can drop.</p>
+        ) : null}
+        {!tokenPayoutReady ? (
+          <p className="text-[11px] text-ui-warning">
+            {lootbox.tokenPayoutsDisabledReason ?? 'Treasury token payouts are unavailable.'}
+          </p>
+        ) : null}
+        {!canEnable ? (
+          <p className="text-[11px] text-ui-warning">
+            Enabling requires the game token, RPC, treasury wallet, and matching settlement signer.
+          </p>
+        ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ReadOnlyMetric label="Crates opened" value={formatNumber(lootbox.totalOpens)} />
+          <ReadOnlyMetric
+            label="Last updated"
+            value={lootbox.settings.updatedAt ? formatRelativeTime(lootbox.settings.updatedAt) : '—'}
+          />
+        </div>
+
+        <div className="flex justify-end pt-1">
+          <SaveButton
+            saving={saving}
+            disabled={!priceValid || !directDropChanceValid || !directDropRangeValid || !duplicateRangesValid || !weightsValid}
+            onClick={onSave}
+          >
+            Save Lootbox Settings
+          </SaveButton>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LootboxFreeOpensCard({ console: c }: { console: SectionProps['console'] }) {
+  const freeOpens = c.overview?.lootbox?.freeOpens;
+  const [selectedUsers, setSelectedUsers] = React.useState<AdminUserChoice[]>([]);
+  const [countText, setCountText] = React.useState('1');
+  const [saving, setSaving] = React.useState(false);
+  const [localError, setLocalError] = React.useState<string | null>(null);
+  const [lastResult, setLastResult] = React.useState<AdminFreeOpenGrantResult | null>(null);
+
+  const targetUserIds = selectedUsers.map((user) => user.id);
+  const count = num(countText);
+  const countValid = Number.isInteger(count) && count >= 1 && count <= 1000;
+  const canGrant = countValid && targetUserIds.length > 0;
+  const totalOpenCount = countValid ? count * targetUserIds.length : 0;
+  const grantButtonLabel = saving
+    ? 'Granting…'
+    : !countValid
+      ? 'Enter a Valid Count'
+      : targetUserIds.length === 0
+        ? 'Select Players'
+        : `Grant ${formatNumber(totalOpenCount)} Free ${totalOpenCount === 1 ? 'Open' : 'Opens'}`;
+
+  const onGrant = async () => {
+    if (!canGrant) {
+      setLocalError('Select at least one player and enter a count between 1 and 1000.');
+      return;
+    }
+
+    setSaving(true);
+    setLocalError(null);
+    try {
+      const result = await c.grantFreeOpens({ userIds: targetUserIds, count });
+      if (result.ok) {
+        setLastResult(result.data.result);
+        setSelectedUsers([]);
+      } else {
+        setLocalError(result.error);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <CardTitle>Free Crate Opens</CardTitle>
+            <CardDescription>
+              Grant on-the-house supply crate opens. Free opens skip the on-chain payment and
+              work even while paid opens are disabled.
+            </CardDescription>
+          </div>
+          <Badge variant="secondary">
+            {formatNumber(freeOpens?.totalOutstanding ?? 0)} Outstanding
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
+          <AdminUserPicker
+            selectedUsers={selectedUsers}
+            onSelectedUsersChange={(users) => {
+              setSelectedUsers(users);
+              if (users.length > 0) setLocalError(null);
+            }}
+            users={c.users}
+            loading={c.usersLoading}
+            error={c.usersError}
+            loadUsers={c.loadUsers}
+            disabled={saving}
+          />
+          <div className="space-y-3 rounded-lg border border-strike-border bg-strike-canvas/35 p-3">
+            <NumberField
+              label="Opens per player"
+              value={countText}
+              onChange={(value) => {
+                setCountText(value);
+                setLocalError(null);
+              }}
+              min="1"
+              step="1"
+              disabled={saving}
+              hint="Between 1 and 1,000 per player"
+            />
+            {!countValid ? (
+              <p className="text-[11px] text-ui-warning">Enter a whole number from 1 to 1,000.</p>
+            ) : null}
+            <div className="border-t border-strike-border pt-3">
+              <div className="text-[10px] font-medium uppercase tracking-wide text-white/35">
+                Total grant
+              </div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums text-white/90">
+                {formatNumber(totalOpenCount)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-white/35">
+                {formatNumber(countValid ? count : 0)} each · {formatNumber(targetUserIds.length)}{' '}
+                {targetUserIds.length === 1 ? 'player' : 'players'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {localError ? <p className="text-xs text-ui-danger">{localError}</p> : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-strike-border pt-4">
+          <p className="text-xs text-white/40">
+            Grants are applied immediately and do not require an on-chain payment.
+          </p>
+          <Button type="button" variant="secondary" onClick={onGrant} disabled={saving || !canGrant}>
+            {saving ? <Loader2 className="animate-spin" /> : <Gift />}
+            {grantButtonLabel}
+          </Button>
+        </div>
+
+        {lastResult ? (
+          <div className="space-y-3 rounded-lg border border-strike-border bg-strike-canvas/40 p-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <ReadOnlyMetric label="Users Credited" value={formatNumber(lastResult.granted.length)} />
+              <ReadOnlyMetric label="Opens Each" value={formatNumber(lastResult.count)} />
+              <ReadOnlyMetric label="Skipped Accounts" value={formatNumber(lastResult.skippedUserIds.length)} />
+            </div>
+            {lastResult.skippedUserIds.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {lastResult.skippedUserIds.slice(0, 12).map((userId) => (
+                  <Badge key={userId} variant="outline" className="font-mono">
+                    {truncateAddress(userId, 6, 6)}
+                  </Badge>
+                ))}
+                {lastResult.skippedUserIds.length > 12 ? (
+                  <Badge variant="outline">+{formatNumber(lastResult.skippedUserIds.length - 12)}</Badge>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {freeOpens && freeOpens.balances.length > 0 ? (
+          <div className="space-y-2">
+            <Label>Outstanding balances</Label>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>ID</TableHead>
+                  <TableHead className="text-right">Unspent</TableHead>
+                  <TableHead className="text-right">Granted Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {freeOpens.balances.map((row) => (
+                  <TableRow key={row.userId}>
+                    <TableCell>{row.name ?? '—'}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.userId}</TableCell>
+                    <TableCell className="text-right">{formatNumber(row.balance)}</TableCell>
+                    <TableCell className="text-right">{formatNumber(row.totalGranted)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LootboxRecentResultsCard({ console: c }: { console: SectionProps['console'] }) {
+  const results = c.overview?.lootbox?.recentResults ?? [];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Recent Pulls</CardTitle>
+        <CardDescription>The last credited lootbox opens.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {results.length === 0 ? (
+          <EmptyState
+            icon={Package}
+            title="No opens yet"
+            description="Credited lootbox opens will appear here."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reward</TableHead>
+                <TableHead>Detail</TableHead>
+                <TableHead>User</TableHead>
+                <TableHead>When</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {results.map((result) => (
+                <TableRow key={result.intentId}>
+                  <TableCell>{result.rewardKind === 'game_token' ? 'Game Token' : 'Skin'}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {result.rewardKind === 'game_token'
+                      ? `${result.skinId ?? 'Raw token drop'} → ${formatNumber(result.tokenAmount ?? '0')} $${result.tokenSymbol || 'TOKEN'} · ${titleCase(result.tokenPayoutStatus ?? 'pending')}`
+                      : `${result.skinId ?? '—'} · ${result.rarity ? titleCase(result.rarity) : '—'}`}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{result.userId}</TableCell>
+                  <TableCell>{formatRelativeTime(result.creditedAt)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LootboxTab({ console: c }: { console: SectionProps['console'] }) {
+  return (
+    <div className="space-y-6">
+      <LootboxSettingsCard console={c} />
+      <LootboxFreeOpensCard console={c} />
+      <LootboxRecentResultsCard console={c} />
+    </div>
+  );
+}
+
+/* ----------------------------- Marketplace -------------------------- */
+
+function MarketplaceSettingsCard({ console: c }: { console: SectionProps['console'] }) {
+  const marketplace = c.overview?.marketplace;
+  const gameToken = c.overview?.gameToken;
+  const [enabled, setEnabled] = React.useState<boolean>(marketplace?.settings.enabled ?? false);
+  const [listingHoldTokens, setListingHoldTokens] = React.useState<string>(
+    marketplace?.settings.listingHoldTokens ?? '200000'
+  );
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!marketplace) return;
+    setEnabled(marketplace.settings.enabled);
+    setListingHoldTokens(marketplace.settings.listingHoldTokens);
+  }, [marketplace]);
+
+  if (!marketplace) return null;
+
+  const symbol = gameToken?.symbol || 'TOKEN';
+  const rpcReady = gameToken?.rpcConfigured === true;
+  const mintPresent = gameToken?.mintAddress != null;
+  const canEnable = mintPresent && rpcReady;
+  const holdValid = /^[0-9]+$/.test(listingHoldTokens.trim());
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      await c.saveMarketplaceSettings({
+        enabled,
+        listingHoldTokens: integerText(listingHoldTokens),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <CardTitle>Marketplace Settings</CardTitle>
+            <CardDescription>
+              Player-to-player skin sales, settled wallet-to-wallet in SOL.
+            </CardDescription>
+          </div>
+          <Switch
+            checked={enabled}
+            disabled={!canEnable && !enabled}
+            onCheckedChange={setEnabled}
+          />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={mintPresent ? 'success' : 'danger'}>
+            GAME_TOKEN_MINT {mintPresent ? 'Ready' : 'Missing'}
+          </Badge>
+          <Badge variant={rpcReady ? 'success' : 'danger'}>
+            SOLANA_RPC_URL {rpcReady ? 'Ready' : 'Missing'}
+          </Badge>
+        </div>
+
+        <NumberField
+          label={`Listing hold requirement (whole $${symbol})`}
+          value={listingHoldTokens}
+          onChange={setListingHoldTokens}
+          min="0"
+          step="1"
+          hint={`Sellers must hold this much $${symbol} on-chain to create a listing. Default 200,000. Buying is ungated.`}
+        />
+
+        {!holdValid ? (
+          <p className="text-[11px] text-ui-warning">Hold requirement must be a whole-token amount.</p>
+        ) : null}
+        {!canEnable ? (
+          <p className="text-[11px] text-ui-warning">
+            Enabling requires a configured game token mint and SOLANA_RPC_URL.
+          </p>
+        ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <ReadOnlyMetric label="Open listings" value={formatNumber(marketplace.activeListings)} />
+          <ReadOnlyMetric label="Skins sold" value={formatNumber(marketplace.soldListings)} />
+          <ReadOnlyMetric label="Volume" value={`${formatSol(marketplace.totalVolumeLamports)} SOL`} />
+        </div>
+
+        <div className="flex justify-end pt-1">
+          <SaveButton saving={saving} disabled={!holdValid} onClick={onSave}>
+            Save Marketplace Settings
+          </SaveButton>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MarketplaceTab({ console: c }: { console: SectionProps['console'] }) {
+  return (
+    <div className="space-y-6">
+      <MarketplaceSettingsCard console={c} />
+    </div>
+  );
+}
+
 /* ----------------------------- Section ------------------------------ */
 
 export function EconomySection({ console }: SectionProps) {
@@ -1684,6 +2365,14 @@ export function EconomySection({ console }: SectionProps) {
             <ShoppingBag className="h-3.5 w-3.5" />
             Skin Shop
           </TabsTrigger>
+          <TabsTrigger value="lootbox">
+            <Package className="h-3.5 w-3.5" />
+            Lootbox
+          </TabsTrigger>
+          <TabsTrigger value="marketplace">
+            <Store className="h-3.5 w-3.5" />
+            Marketplace
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="rewards">
@@ -1694,6 +2383,12 @@ export function EconomySection({ console }: SectionProps) {
         </TabsContent>
         <TabsContent value="skins">
           <SkinShopTab console={console} />
+        </TabsContent>
+        <TabsContent value="lootbox">
+          <LootboxTab console={console} />
+        </TabsContent>
+        <TabsContent value="marketplace">
+          <MarketplaceTab console={console} />
         </TabsContent>
       </Tabs>
     </div>

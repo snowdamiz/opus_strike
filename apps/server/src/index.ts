@@ -13,6 +13,16 @@ import { SocialRoom } from './rooms/SocialRoom';
 import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import cosmeticsRoutes from './cosmetics/routes';
+import lootboxRoutes from './lootbox/routes';
+import {
+  startLootboxReconciliationWorker,
+  type LootboxReconciliationWorkerHandle,
+} from './lootbox/reconciler';
+import marketplaceRoutes from './marketplace/routes';
+import {
+  startMarketplaceReconciliationWorker,
+  type MarketplaceReconciliationWorkerHandle,
+} from './marketplace/reconciler';
 import matchmakingRoutes from './matchmaking/routes';
 import { createMapRouter } from './maps/routes';
 import {
@@ -75,6 +85,8 @@ let flyReplayUpgradeRouterInstalled = false;
 let flyReplayRouteHandle: FlyReplayProcessRouteHandle | null = null;
 let adminMachineHeartbeatHandle: AdminMachineHeartbeatHandle | null = null;
 let pregeneratedMapPoolAutoTopUpHandle: PregeneratedMapPoolAutoTopUpHandle | null = null;
+let lootboxReconciliationWorker: LootboxReconciliationWorkerHandle | null = null;
+let marketplaceReconciliationWorker: MarketplaceReconciliationWorkerHandle | null = null;
 
 function getAutoscalerMetricLabels() {
   return {
@@ -197,6 +209,8 @@ app.use(express.json());
 // Auth routes
 app.use('/auth', authRoutes);
 app.use('/cosmetics', cosmeticsRoutes);
+app.use('/lootbox', lootboxRoutes);
+app.use('/marketplace', marketplaceRoutes);
 app.use('/matchmaking', matchmakingRoutes);
 app.use('/maps', createMapRouter());
 app.use('/missions', missionsRoutes);
@@ -479,6 +493,12 @@ async function startServer(): Promise<void> {
     }
 
     await server.listen(PORT);
+    lootboxReconciliationWorker = startLootboxReconciliationWorker({
+      redis: sharedRedisClient as RedisOwnerLockClient | null,
+    });
+    marketplaceReconciliationWorker = startMarketplaceReconciliationWorker({
+      redis: sharedRedisClient as RedisOwnerLockClient | null,
+    });
     wagerService.startBackgroundJobs();
     playerRewardService.startBackgroundJobs(sharedRedisClient as RedisOwnerLockClient | null);
     dailyMissionService.startBackgroundJobs();
@@ -492,6 +512,10 @@ async function startServer(): Promise<void> {
       redis: sharedRedisClient as MapPoolAutoTopUpRedisClient | null,
     });
   } catch (error) {
+    await marketplaceReconciliationWorker?.close();
+    marketplaceReconciliationWorker = null;
+    await lootboxReconciliationWorker?.close();
+    lootboxReconciliationWorker = null;
     pregeneratedMapPoolAutoTopUpHandle?.close();
     pregeneratedMapPoolAutoTopUpHandle = null;
     dailyMissionService.stopBackgroundJobs();
@@ -550,6 +574,10 @@ async function shutdown(signal: string): Promise<void> {
   });
 
   try {
+    await marketplaceReconciliationWorker?.close();
+    marketplaceReconciliationWorker = null;
+    await lootboxReconciliationWorker?.close();
+    lootboxReconciliationWorker = null;
     dailyMissionService.stopBackgroundJobs();
     playerRewardService.stopBackgroundJobs();
     wagerService.stopBackgroundJobs();

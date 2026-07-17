@@ -147,9 +147,43 @@ enum SkinEntitlementSource {
   paid
   admin_grant
   event
+  lootbox
+  marketplace
 }
 
 enum SkinPurchaseIntentStatus {
+  intent_created
+  transaction_built
+  submitted
+  confirmed
+  credited
+  failed
+  expired
+}
+
+enum LootboxOpenIntentStatus {
+  intent_created
+  transaction_built
+  submitted
+  confirmed
+  credited
+  failed
+  expired
+}
+
+enum LootboxRewardKind {
+  skin
+  game_token
+}
+
+enum MarketplaceListingStatus {
+  active
+  pending_sale
+  sold
+  canceled
+}
+
+enum MarketplacePurchaseIntentStatus {
   intent_created
   transaction_built
   submitted
@@ -183,41 +217,45 @@ enum GameTokenPayoutStatus {
 }
 
 model User {
-  id                     String                  @id @default(cuid())
-  walletAddress          String?                 @unique
+  id                        String                         @id @default(cuid())
+  walletAddress             String?                        @unique
   // Callsigns are unique case-insensitively via the User_name_lower_key index.
-  name                   String                  @unique
-  lastLoginAt            DateTime?
-  tutorialCompletedAt    DateTime?
+  name                      String                         @unique
+  lastLoginAt               DateTime?
+  tutorialCompletedAt       DateTime?
   // Set the first time this account is opened from the installed home-screen
   // App (standalone display mode). Lets the web (Safari) surface a "switch to
   // the App" nudge, which iOS otherwise can't detect due to the PWA/Safari
   // storage split.
-  appOpenedAt            DateTime?
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  authAccounts           AuthAccount[]
-  matchStats             GameMatchParticipant[]
-  wageredLobbies         WageredLobby[]
-  wagerPayments          WagerPayment[]
-  rankedEntryQuotes      RankedEntryQuote[]
-  rankedSeasonStats      RankedSeasonUserStats[]
-  friendshipsA           Friendship[]            @relation("FriendshipUserA")
-  friendshipsB           Friendship[]            @relation("FriendshipUserB")
-  friendshipRequestsSent Friendship[]            @relation("FriendshipRequester")
-  sentLobbyInvites       LobbyInvite[]           @relation("LobbyInviteSender")
-  receivedLobbyInvites   LobbyInvite[]           @relation("LobbyInviteRecipient")
-  sentPartyInvites       PartyInvite[]           @relation("PartyInviteSender")
-  receivedPartyInvites   PartyInvite[]           @relation("PartyInviteRecipient")
-  skinOwnerships         UserSkinOwnership[]
-  skinPurchaseIntents    SkinPurchaseIntent[]
-  heroLoadouts           UserHeroLoadout[]
-  playerRewards          PlayerReward[]
-  playerRewardPayouts    PlayerRewardPayout[]
-  dailyMissionProgress   UserDailyMissionProgress[]
+  appOpenedAt               DateTime?
+  createdAt                 DateTime                       @default(now())
+  updatedAt                 DateTime                       @updatedAt
+  authAccounts              AuthAccount[]
+  matchStats                GameMatchParticipant[]
+  wageredLobbies            WageredLobby[]
+  wagerPayments             WagerPayment[]
+  rankedEntryQuotes         RankedEntryQuote[]
+  rankedSeasonStats         RankedSeasonUserStats[]
+  friendshipsA              Friendship[]                   @relation("FriendshipUserA")
+  friendshipsB              Friendship[]                   @relation("FriendshipUserB")
+  friendshipRequestsSent    Friendship[]                   @relation("FriendshipRequester")
+  sentLobbyInvites          LobbyInvite[]                  @relation("LobbyInviteSender")
+  receivedLobbyInvites      LobbyInvite[]                  @relation("LobbyInviteRecipient")
+  sentPartyInvites          PartyInvite[]                  @relation("PartyInviteSender")
+  receivedPartyInvites      PartyInvite[]                  @relation("PartyInviteRecipient")
+  skinOwnerships            UserSkinOwnership[]
+  skinPurchaseIntents       SkinPurchaseIntent[]
+  heroLoadouts              UserHeroLoadout[]
+  playerRewards             PlayerReward[]
+  playerRewardPayouts       PlayerRewardPayout[]
+  dailyMissionProgress      UserDailyMissionProgress[]
   dailyMissionContributions UserDailyMissionContribution[]
-  missionRewardGrants    MissionRewardGrant[]
-  gameTokenPayouts       GameTokenPayout[]
+  missionRewardGrants       MissionRewardGrant[]
+  gameTokenPayouts          GameTokenPayout[]
+  lootboxOpenIntents        LootboxOpenIntent[]
+  lootboxFreeOpenBalance    LootboxFreeOpenBalance?
+  marketplaceListings       MarketplaceListing[]           @relation("MarketplaceListingSeller")
+  marketplacePurchases      MarketplacePurchaseIntent[]    @relation("MarketplacePurchaseBuyer")
 
   // Player stats (optional - can expand later)
   totalGames                Int       @default(0)
@@ -334,41 +372,41 @@ model PartyInvite {
 }
 
 model SkinShopSettings {
-  id              String   @id @default("default")
-  enabled         Boolean  @default(false)
+  id               String   @id @default("default")
+  enabled          Boolean  @default(false)
   tokenMintAddress String?
-  tokenSymbol     String   @default("")
-  cluster         String   @default("devnet")
-  updatedByUserId String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  tokenSymbol      String   @default("")
+  cluster          String   @default("devnet")
+  updatedByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model SkinShopItemSettings {
-  skinId               String   @id
-  saleEnabled          Boolean  @default(false)
+  skinId               String              @id
+  saleEnabled          Boolean             @default(false)
   tokenAmountBaseUnits BigInt?
   maxSupply            Int?
-  priceVersion         Int      @default(1)
+  priceVersion         Int                 @default(1)
   updatedByUserId      String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
   audits               SkinShopItemAudit[]
 }
 
 model SkinShopItemAudit {
-  id                         String   @id @default(cuid())
-  skinId                     String
-  updatedByUserId            String?
-  oldTokenAmountBaseUnits    BigInt?
-  newTokenAmountBaseUnits    BigInt?
-  oldMaxSupply               Int?
-  newMaxSupply               Int?
-  oldSaleEnabled             Boolean?
-  newSaleEnabled             Boolean?
-  oldPriceVersion            Int?
-  newPriceVersion            Int?
-  createdAt                  DateTime @default(now())
+  id                      String   @id @default(cuid())
+  skinId                  String
+  updatedByUserId         String?
+  oldTokenAmountBaseUnits BigInt?
+  newTokenAmountBaseUnits BigInt?
+  oldMaxSupply            Int?
+  newMaxSupply            Int?
+  oldSaleEnabled          Boolean?
+  newSaleEnabled          Boolean?
+  oldPriceVersion         Int?
+  newPriceVersion         Int?
+  createdAt               DateTime @default(now())
 
   item SkinShopItemSettings @relation(fields: [skinId], references: [skinId], onDelete: Cascade)
 
@@ -385,8 +423,9 @@ model UserSkinOwnership {
   grantedAt  DateTime              @default(now())
   revokedAt  DateTime?
 
-  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  purchase SkinPurchaseIntent? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  user                      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchase                  SkinPurchaseIntent?  @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  marketplaceEscrowListings MarketplaceListing[] @relation("MarketplaceListingEscrow")
 
   @@unique([userId, skinId])
   @@index([userId, revokedAt])
@@ -451,6 +490,177 @@ model RankedFounderReward {
   updatedAt    DateTime @updatedAt
 }
 
+// Lootbox economy. The open price is stored in whole game tokens (like
+// RankedEntryGateSettings.requiredTokenAmount) and scaled by the on-chain mint
+// decimals when an intent is created. Rarity weights are bps-style integers
+// applied to the full skin pool; ownership only changes the resulting reward.
+model LootboxSettings {
+  id                         String   @id @default("default")
+  enabled                    Boolean  @default(false)
+  priceTokens                String   @default("75000")
+  directTokenRewardChanceBps Int      @default(6000)
+  directTokenRewardMinTokens String   @default("5000")
+  directTokenRewardMaxTokens String   @default("75000")
+  commonWeightBps            Int      @default(0)
+  epicWeightBps              Int      @default(7900)
+  uniqueWeightBps            Int      @default(1800)
+  legendaryWeightBps         Int      @default(300)
+  updatedByUserId            String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+model LootboxDuplicateRewardSetting {
+  skinId               String   @id
+  minTokenAmountTokens String
+  maxTokenAmountTokens String
+  updatedByUserId      String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model LootboxOpenIntent {
+  id                               String                  @id @default(cuid())
+  userId                           String
+  walletAddress                    String
+  quotedPriceTokens                String
+  // Immutable rarity weights quoted when this open was created. Crediting
+  // must never read mutable admin settings after the player has paid.
+  quotedCommonWeightBps            Int
+  quotedEpicWeightBps              Int
+  quotedUniqueWeightBps            Int
+  quotedLegendaryWeightBps         Int
+  quotedDirectTokenRewardChanceBps Int
+  quotedDirectTokenRewardMinTokens String
+  quotedDirectTokenRewardMaxTokens String
+  quotedDuplicateTokenRanges       Json
+  // Exact catalog pool quoted before payment so a deployment cannot change
+  // the possible reward set for an in-flight open.
+  quotedSkinIds                    Json                    @default("[]")
+  tokenMintAddress                 String
+  tokenSymbol                      String
+  tokenAmountBaseUnits             BigInt
+  tokenDecimals                    Int?
+  treasuryWallet                   String
+  treasuryTokenAccount             String
+  cluster                          String
+  memo                             String                  @unique
+  status                           LootboxOpenIntentStatus @default(intent_created)
+  transactionSignature             String?                 @unique
+  intentExpiresAt                  DateTime
+  lastValidBlockHeight             BigInt?
+  // Rolled server-side after the on-chain payment is verified, never earlier.
+  resultSkinId                     String?
+  resultRarity                     String?
+  resultKind                       LootboxRewardKind?
+  resultTokenAmount                String?
+  tokenPayoutId                    String?                 @unique
+  creditedAt                       DateTime?
+  lastError                        String?
+  createdAt                        DateTime                @default(now())
+  updatedAt                        DateTime                @updatedAt
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenPayout GameTokenPayout? @relation(fields: [tokenPayoutId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status, createdAt])
+  @@index([walletAddress])
+  @@index([status, intentExpiresAt])
+  @@index([resultSkinId])
+}
+
+// Admin-granted free lootbox opens. balance is decremented inside the same
+// serializable transaction that grants the skin or queues the token payout,
+// so a credit is spent at most once. Free opens skip payment entirely.
+model LootboxFreeOpenBalance {
+  userId          String   @id
+  balance         Int      @default(0)
+  totalGranted    Int      @default(0)
+  lastGrantedById String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([balance])
+}
+
+// Player-to-player skin marketplace. Listings are priced in SOL (lamports) and
+// settle wallet-to-wallet; listing requires holding listingHoldTokens of the
+// game token on-chain at listing time (whole tokens, scaled like LootboxSettings).
+model MarketplaceSettings {
+  id                String   @id @default("default")
+  enabled           Boolean  @default(true)
+  listingHoldTokens String   @default("200000")
+  updatedByUserId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model MarketplaceListing {
+  id                  String                   @id @default(cuid())
+  sellerUserId        String
+  sellerWalletAddress String
+  skinId              String
+  priceLamports       BigInt
+  status              MarketplaceListingStatus @default(active)
+  // A buy intent claims the listing (active -> pending_sale) so concurrent
+  // buyers can never pay for the same listing; the claim is released when the
+  // intent expires or fails.
+  reservedIntentId    String?
+  reservedUntil       DateTime?
+  // References the exact seller entitlement held by this listing. The FK
+  // prevents deletion, and settlement revokes the row only after SOL verifies.
+  escrowedOwnershipId String?
+  escrowedAt          DateTime?
+  buyerUserId         String?
+  soldAt              DateTime?
+  canceledAt          DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  seller            User                        @relation("MarketplaceListingSeller", fields: [sellerUserId], references: [id], onDelete: Cascade)
+  intents           MarketplacePurchaseIntent[]
+  escrowedOwnership UserSkinOwnership?          @relation("MarketplaceListingEscrow", fields: [escrowedOwnershipId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([sellerUserId, status])
+  @@index([skinId, status])
+  @@index([status, reservedUntil])
+  @@index([escrowedOwnershipId])
+}
+
+model MarketplacePurchaseIntent {
+  id                   String                          @id @default(cuid())
+  listingId            String
+  buyerUserId          String
+  buyerWalletAddress   String
+  sellerUserId         String
+  sellerWalletAddress  String
+  skinId               String
+  priceLamports        BigInt
+  cluster              String
+  memo                 String                          @unique
+  status               MarketplacePurchaseIntentStatus @default(intent_created)
+  transactionSignature String?                         @unique
+  // Non-null only while this intent can still settle. The unique constraint
+  // prevents a buyer from paying multiple sellers for the same skin.
+  activeBuyerSkinKey   String?                         @unique
+  intentExpiresAt      DateTime
+  lastValidBlockHeight BigInt?
+  creditedAt           DateTime?
+  lastError            String?
+  createdAt            DateTime                        @default(now())
+  updatedAt            DateTime                        @updatedAt
+
+  listing MarketplaceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer   User               @relation("MarketplacePurchaseBuyer", fields: [buyerUserId], references: [id], onDelete: Cascade)
+
+  @@index([buyerUserId, status, createdAt])
+  @@index([listingId, status])
+  @@index([status, intentExpiresAt])
+}
+
 model PersistentParty {
   id             String   @id
   roomId         String   @unique
@@ -467,13 +677,13 @@ model PersistentParty {
 }
 
 model GameMatch {
-  id                       String    @id
+  id                       String            @id
   roomId                   String
   lobbyId                  String?
-  matchMode                MatchMode @default(custom)
-  gameplayMode             String    @default("capture_the_flag")
+  matchMode                MatchMode         @default(custom)
+  gameplayMode             String            @default("capture_the_flag")
   mapSeed                  BigInt
-  mapThemeId               String    @default("standard")
+  mapThemeId               String            @default("standard")
   mapSize                  String?
   mapProfileId             String?
   mapTopologyId            String?
@@ -484,20 +694,20 @@ model GameMatch {
   redScore                 Int
   blueScore                Int
   winningTeam              String?
-  rankedEligible           Boolean   @default(false)
+  rankedEligible           Boolean           @default(false)
   rankedSeasonMode         RankedSeasonMode?
   rankedSeasonNumber       Int?
-  antiCheatIntegrityStatus String    @default("clean")
-  antiCheatReviewRequired  Boolean   @default(false)
+  antiCheatIntegrityStatus String            @default("clean")
+  antiCheatReviewRequired  Boolean           @default(false)
   antiCheatIntegrityReason String?
-  rankedOutcomeStatus      String    @default("not_applicable")
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  rankedOutcomeStatus      String            @default("not_applicable")
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
 
-  participants GameMatchParticipant[]
-  playerRewards PlayerReward[]
-  killEvents GameMatchKillEvent[]
-  pregeneratedMap PregeneratedMap? @relation(fields: [pregeneratedMapId], references: [id], onDelete: SetNull)
+  participants    GameMatchParticipant[]
+  playerRewards   PlayerReward[]
+  killEvents      GameMatchKillEvent[]
+  pregeneratedMap PregeneratedMap?       @relation(fields: [pregeneratedMapId], references: [id], onDelete: SetNull)
 
   @@index([roomId])
   @@index([lobbyId])
@@ -536,32 +746,32 @@ model PregeneratedMapArtifact {
 }
 
 model PregeneratedMap {
-  id                  String   @id
-  artifactId          String
-  generatorVersion    Int
-  seed                BigInt
-  themeId             String
-  profileId           String
-  gameplayMode        String
-  familyId            String
-  mapSize             String
-  topologyId          String
-  displayName         String
-  previewTags         String[] @default([])
-  previewSilhouette   Json
-  stats               Json
-  diagnosticsScore    Float
-  diagnosticsWarnings String[] @default([])
-  status              String   @default("ready")
-  visibility          String   @default("public")
-  lastSelectedAt      DateTime?
-  selectionCount      Int      @default(0)
-  failureCount        Int      @default(0)
+  id                   String    @id
+  artifactId           String
+  generatorVersion     Int
+  seed                 BigInt
+  themeId              String
+  profileId            String
+  gameplayMode         String
+  familyId             String
+  mapSize              String
+  topologyId           String
+  displayName          String
+  previewTags          String[]  @default([])
+  previewSilhouette    Json
+  stats                Json
+  diagnosticsScore     Float
+  diagnosticsWarnings  String[]  @default([])
+  status               String    @default("ready")
+  visibility           String    @default("public")
+  lastSelectedAt       DateTime?
+  selectionCount       Int       @default(0)
+  failureCount         Int       @default(0)
   reservationExpiresAt DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  artifact   PregeneratedMapArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  artifact   PregeneratedMapArtifact    @relation(fields: [artifactId], references: [id], onDelete: Restrict)
   selections PregeneratedMapSelection[]
   matches    GameMatch[]
 
@@ -620,39 +830,39 @@ model GameMatchKillEvent {
 }
 
 model GameMatchParticipant {
-  id                   String    @id @default(cuid())
-  matchId              String
-  userId               String
-  playerSessionId      String
-  displayName          String
-  team                 String
-  heroId               String?
-  kills                Int       @default(0)
-  deaths               Int       @default(0)
-  assists              Int       @default(0)
-  flagCaptures         Int       @default(0)
-  flagReturns          Int       @default(0)
-  score                Int       @default(0)
-  experienceGained     Int       @default(0)
-  outcome              String
-  placement            Int?
-  rankedEligible       Boolean   @default(false)
-  ratingBefore         Int?
-  ratingAfter          Int?
-  ratingDelta          Int?
-  visibleRankBefore    String?
-  visibleRankAfter     String?
-  rankedPlacementPoints Int?
-  rankedCombatPoints   Int?
-  rankedEntryCost      Int?
+  id                      String    @id @default(cuid())
+  matchId                 String
+  userId                  String
+  playerSessionId         String
+  displayName             String
+  team                    String
+  heroId                  String?
+  kills                   Int       @default(0)
+  deaths                  Int       @default(0)
+  assists                 Int       @default(0)
+  flagCaptures            Int       @default(0)
+  flagReturns             Int       @default(0)
+  score                   Int       @default(0)
+  experienceGained        Int       @default(0)
+  outcome                 String
+  placement               Int?
+  rankedEligible          Boolean   @default(false)
+  ratingBefore            Int?
+  ratingAfter             Int?
+  ratingDelta             Int?
+  visibleRankBefore       String?
+  visibleRankAfter        String?
+  rankedPlacementPoints   Int?
+  rankedCombatPoints      Int?
+  rankedEntryCost         Int?
   rankedQualityMultiplier Float?
-  rankedRulesVersion   String?
-  rankedBreakdown      Json?
-  leaverPenaltyApplied Boolean   @default(false)
-  joinedAt             DateTime
-  leftAt               DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  rankedRulesVersion      String?
+  rankedBreakdown         Json?
+  leaverPenaltyApplied    Boolean   @default(false)
+  joinedAt                DateTime
+  leftAt                  DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   match GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
   user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -770,20 +980,20 @@ model WagerTreasuryRpcState {
 }
 
 model WagerSettlement {
-  id                   String                @id @default(cuid())
-  wageredLobbyId       String                @unique
-  matchId              String?
-  winningTeam          String?
-  totalPotLamports     BigInt                @default(0)
-  treasuryFeeLamports  BigInt                @default(0)
-  burnLamports         BigInt                @default(0)
-  winnerPoolLamports   BigInt                @default(0)
-  status               WagerSettlementStatus @default(pending)
-  attemptCount         Int                   @default(0)
-  lastError            String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  completedAt          DateTime?
+  id                  String                @id @default(cuid())
+  wageredLobbyId      String                @unique
+  matchId             String?
+  winningTeam         String?
+  totalPotLamports    BigInt                @default(0)
+  treasuryFeeLamports BigInt                @default(0)
+  burnLamports        BigInt                @default(0)
+  winnerPoolLamports  BigInt                @default(0)
+  status              WagerSettlementStatus @default(pending)
+  attemptCount        Int                   @default(0)
+  lastError           String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  completedAt         DateTime?
 
   wageredLobby WageredLobby              @relation(fields: [wageredLobbyId], references: [id], onDelete: Cascade)
   transfers    WagerSettlementTransfer[]
@@ -861,48 +1071,48 @@ model GoldenBiomeReward {
 }
 
 model GoldenBiomeRewardSettings {
-  id                    String                            @id @default("default")
-  distributionMode      GoldenBiomeRewardDistributionMode @default(manual)
-  enabled               Boolean                           @default(true)
-  chanceBps             Int                               @default(200)
-  winnerRewardLamports  BigInt                            @default(200000000)
-  treasuryMinLamports   BigInt                            @default(1000000000)
-  updatedByUserId       String?
-  createdAt             DateTime                          @default(now())
-  updatedAt             DateTime                          @updatedAt
+  id                   String                            @id @default("default")
+  distributionMode     GoldenBiomeRewardDistributionMode @default(manual)
+  enabled              Boolean                           @default(true)
+  chanceBps            Int                               @default(200)
+  winnerRewardLamports BigInt                            @default(200000000)
+  treasuryMinLamports  BigInt                            @default(1000000000)
+  updatedByUserId      String?
+  createdAt            DateTime                          @default(now())
+  updatedAt            DateTime                          @updatedAt
 }
 
 model PlayerRewardSettings {
-  id                          String   @id @default("default")
-  enabled                     Boolean  @default(true)
-  settingsVersion             Int      @default(1)
-  dailyRankedDripLamports     BigInt   @default(20000)
-  dailyRankedDripMaxMatches   Int      @default(5)
-  minMatchDurationMs          Int      @default(180000)
-  objectiveWinLamports        BigInt   @default(10000)
-  objectiveFlagCaptureLamports BigInt  @default(15000)
-  objectiveFlagReturnLamports BigInt   @default(5000)
-  objectiveAssistLamports     BigInt   @default(2000)
-  maxPlayerMatchLamports      BigInt   @default(50000)
-  maxMatchPayoutLamports      BigInt   @default(250000)
-  treasuryReserveLamports     BigInt   @default(0)
-  payoutBatchSize             Int      @default(100)
-  rankedBrCombatRewardsEnabled Boolean @default(true)
-  rankedBrCombatRewardsShadowMode Boolean @default(false)
-  rankedBrDamageLamportsPerHp BigInt   @default(250)
-  rankedBrKillLamports        BigInt   @default(100000)
-  rankedBrBotTargetRewardBps  Int      @default(7000)
-  rankedBrSourceVictimDamageCapHp Int   @default(315)
-  rankedBrMaxPlayerMatchLamports BigInt @default(750000)
-  rankedBrMaxPlayerDailyLamports BigInt @default(2500000)
-  rankedBrMaxMatchLamports    BigInt   @default(5000000)
-  rankedBrTreasuryExposureBps Int      @default(10000)
-  rankedBrClientRewardTextMinLamports BigInt @default(1000)
-  minPayoutUsdCents           Int      @default(1500)
-  payoutPriceQuoteTtlMs       Int      @default(300000)
-  updatedByUserId             String?
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
+  id                                  String   @id @default("default")
+  enabled                             Boolean  @default(true)
+  settingsVersion                     Int      @default(1)
+  dailyRankedDripLamports             BigInt   @default(20000)
+  dailyRankedDripMaxMatches           Int      @default(5)
+  minMatchDurationMs                  Int      @default(180000)
+  objectiveWinLamports                BigInt   @default(10000)
+  objectiveFlagCaptureLamports        BigInt   @default(15000)
+  objectiveFlagReturnLamports         BigInt   @default(5000)
+  objectiveAssistLamports             BigInt   @default(2000)
+  maxPlayerMatchLamports              BigInt   @default(50000)
+  maxMatchPayoutLamports              BigInt   @default(250000)
+  treasuryReserveLamports             BigInt   @default(0)
+  payoutBatchSize                     Int      @default(100)
+  rankedBrCombatRewardsEnabled        Boolean  @default(true)
+  rankedBrCombatRewardsShadowMode     Boolean  @default(false)
+  rankedBrDamageLamportsPerHp         BigInt   @default(250)
+  rankedBrKillLamports                BigInt   @default(100000)
+  rankedBrBotTargetRewardBps          Int      @default(7000)
+  rankedBrSourceVictimDamageCapHp     Int      @default(315)
+  rankedBrMaxPlayerMatchLamports      BigInt   @default(750000)
+  rankedBrMaxPlayerDailyLamports      BigInt   @default(2500000)
+  rankedBrMaxMatchLamports            BigInt   @default(5000000)
+  rankedBrTreasuryExposureBps         Int      @default(10000)
+  rankedBrClientRewardTextMinLamports BigInt   @default(1000)
+  minPayoutUsdCents                   Int      @default(1500)
+  payoutPriceQuoteTtlMs               Int      @default(300000)
+  updatedByUserId                     String?
+  createdAt                           DateTime @default(now())
+  updatedAt                           DateTime @updatedAt
 }
 
 // Temporary event biome toggle (e.g. the 4th-of-July "Independence Day" map theme).
@@ -932,10 +1142,10 @@ model PlayerReward {
   updatedAt       DateTime           @updatedAt
   paidAt          DateTime?
 
-  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  match                GameMatch?           @relation(fields: [matchId], references: [id], onDelete: SetNull)
-  payout               PlayerRewardPayout?  @relation(fields: [payoutId], references: [id], onDelete: SetNull)
-  missionRewardGrants  MissionRewardGrant[]
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match               GameMatch?           @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  payout              PlayerRewardPayout?  @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  missionRewardGrants MissionRewardGrant[]
 
   @@index([userId, status, createdAt])
   @@index([kind, createdAt])
@@ -946,22 +1156,22 @@ model PlayerReward {
 }
 
 model DailyMissionDefinition {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   displayName     String
-  description     String   @default("")
-  enabled         Boolean  @default(true)
-  sortOrder       Int      @default(0)
+  description     String    @default("")
+  enabled         Boolean   @default(true)
+  sortOrder       Int       @default(0)
   activeStartsAt  DateTime?
   activeEndsAt    DateTime?
-  resetPolicy     String   @default("utc")
+  resetPolicy     String    @default("utc")
   criteria        Json
   rewards         Json
   eligibility     Json
   createdByUserId String?
   updatedByUserId String?
   archivedAt      DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   progress      UserDailyMissionProgress[]
   contributions UserDailyMissionContribution[]
@@ -973,16 +1183,16 @@ model DailyMissionDefinition {
 }
 
 model UserDailyMissionProgress {
-  id                 String    @id @default(cuid())
-  userId             String
-  missionId          String
-  dayKey             String
-  progress           Json
-  completedAt        DateTime?
-  grantedAt          DateTime?
+  id                      String    @id @default(cuid())
+  userId                  String
+  missionId               String
+  dayKey                  String
+  progress                Json
+  completedAt             DateTime?
+  grantedAt               DateTime?
   lastContributingMatchId String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   user    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   mission DailyMissionDefinition @relation(fields: [missionId], references: [id], onDelete: Cascade)
@@ -1040,41 +1250,44 @@ model MissionRewardGrant {
 }
 
 model GameTokenPayout {
-  id                   String                @id @default(cuid())
-  userId               String
-  walletAddress        String?
-  tokenMintAddress     String
-  tokenSymbol          String
-  tokenAmountBaseUnits BigInt
-  recipientAmountBaseUnits BigInt?
-  burnAmountBaseUnits BigInt?
-  playerShareBps      Int                   @default(10000)
-  burnShareBps        Int                   @default(0)
-  rewardUsdCents      Int?
-  rewardSolLamports   BigInt?
-  solUsdPriceMicroUsd BigInt?
-  priceSource         String?
-  priceObservedAt     DateTime?
-  tokenDecimals        Int?
-  tokenProgramId       String?
-  treasuryTokenAccount String?
-  recipientTokenAccount String?
-  status               GameTokenPayoutStatus @default(pending)
-  signature            String?               @unique
-  conversionSignature  String?               @unique
-  convertedTokenBaseUnits BigInt?
-  burnSignature        String?               @unique
-  idempotencyKey       String                @unique
-  attemptCount         Int                   @default(0)
-  lastError            String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  submittedAt          DateTime?
-  grantedAt            DateTime?
-  failedAt             DateTime?
+  id                             String                @id @default(cuid())
+  userId                         String
+  walletAddress                  String?
+  tokenMintAddress               String
+  tokenSymbol                    String
+  tokenAmountBaseUnits           BigInt
+  recipientAmountBaseUnits       BigInt?
+  burnAmountBaseUnits            BigInt?
+  playerShareBps                 Int                   @default(10000)
+  burnShareBps                   Int                   @default(0)
+  rewardUsdCents                 Int?
+  rewardSolLamports              BigInt?
+  solUsdPriceMicroUsd            BigInt?
+  priceSource                    String?
+  priceObservedAt                DateTime?
+  tokenDecimals                  Int?
+  tokenProgramId                 String?
+  treasuryTokenAccount           String?
+  recipientTokenAccount          String?
+  status                         GameTokenPayoutStatus @default(pending)
+  signature                      String?               @unique
+  lastValidBlockHeight           BigInt?
+  conversionSignature            String?               @unique
+  conversionLastValidBlockHeight BigInt?
+  convertedTokenBaseUnits        BigInt?
+  burnSignature                  String?               @unique
+  idempotencyKey                 String                @unique
+  attemptCount                   Int                   @default(0)
+  lastError                      String?
+  createdAt                      DateTime              @default(now())
+  updatedAt                      DateTime              @updatedAt
+  submittedAt                    DateTime?
+  grantedAt                      DateTime?
+  failedAt                       DateTime?
 
-  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  missionRewardGrant  MissionRewardGrant?
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  missionRewardGrant MissionRewardGrant?
+  lootboxOpenIntent  LootboxOpenIntent?
 
   @@index([userId, status, createdAt])
   @@index([status, createdAt])
@@ -1082,21 +1295,21 @@ model GameTokenPayout {
 }
 
 model PlayerRewardPayout {
-  id             String                  @id @default(cuid())
-  userId         String
-  walletAddress  String
-  amountLamports BigInt
-  status         PlayerRewardPayoutStatus @default(pending)
-  signature      String?                 @unique
-  priceSource    String?
+  id                  String                   @id @default(cuid())
+  userId              String
+  walletAddress       String
+  amountLamports      BigInt
+  status              PlayerRewardPayoutStatus @default(pending)
+  signature           String?                  @unique
+  priceSource         String?
   solUsdPriceMicroUsd BigInt?
-  priceObservedAt DateTime?
-  lastError      String?
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
-  submittedAt    DateTime?
-  confirmedAt    DateTime?
-  failedAt       DateTime?
+  priceObservedAt     DateTime?
+  lastError           String?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  submittedAt         DateTime?
+  confirmedAt         DateTime?
+  failedAt            DateTime?
 
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   rewards PlayerReward[]
@@ -1118,14 +1331,14 @@ model RankedSeasonSettings {
 }
 
 model RankedEntryGateSettings {
-  id                     String              @id @default("default")
-  mode                   RankedEntryGateMode @default(locked)
-  tokenMintAddress       String?
-  tokenSymbol            String              @default("")
-  requiredTokenAmount    String              @default("0")
-  updatedByUserId        String?
-  createdAt              DateTime            @default(now())
-  updatedAt              DateTime            @updatedAt
+  id                  String              @id @default("default")
+  mode                RankedEntryGateMode @default(locked)
+  tokenMintAddress    String?
+  tokenSymbol         String              @default("")
+  requiredTokenAmount String              @default("0")
+  updatedByUserId     String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 }
 
 model RankedSeasonUserStats {
