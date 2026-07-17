@@ -498,6 +498,8 @@ model LootboxSettings {
   id                         String   @id @default("default")
   enabled                    Boolean  @default(false)
   priceTokens                String   @default("75000")
+  // Historical value retained in the database without exposing it to the client.
+  archivedOwnedSkinChanceBps Int      @default(6000) @ignore
   directTokenRewardChanceBps Int      @default(6000)
   directTokenRewardMinTokens String   @default("5000")
   directTokenRewardMaxTokens String   @default("75000")
@@ -524,6 +526,8 @@ model LootboxOpenIntent {
   userId                           String
   walletAddress                    String
   quotedPriceTokens                String
+  // Historical value retained in the database without exposing it to the client.
+  archivedQuotedOwnedSkinChanceBps Int                     @default(0) @ignore
   // Immutable rarity weights quoted when this open was created. Crediting
   // must never read mutable admin settings after the player has paid.
   quotedCommonWeightBps            Int
